@@ -4,26 +4,37 @@ pragma solidity ^0.8.20;
 import "forge-std/Test.sol";
 import "forge-std/StdInvariant.sol";
 import "../src/DynamicImpactCredit.sol";
+import "../src/ProjectRegistry.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 // Handler contract to perform actions on the credit contract
 contract CreditHandler is Test {
     DynamicImpactCredit credit;
+    ProjectRegistry registry;
     address admin;
     address minter;
+    address verifier;
     address[] users;
-    mapping(address => mapping(uint256 => uint256)) public userBalances;
-    mapping(uint256 => uint256) public totalSupply;
-    mapping(uint256 => uint256) public retiredAmount;
+    mapping(address => mapping(bytes32 => uint256)) public userBalances;
+    mapping(bytes32 => uint256) public totalSupply;
+    mapping(bytes32 => uint256) public retiredAmount;
     
     // Track which token IDs have been minted
-    uint256[] public mintedTokenIds;
-    mapping(uint256 => bool) public tokenIdExists;
+    bytes32[] public mintedTokenIds;
+    mapping(bytes32 => bool) public tokenIdExists;
     
-    constructor(DynamicImpactCredit _credit, address _admin, address _minter) {
+    constructor(
+        DynamicImpactCredit _credit,
+        ProjectRegistry _registry,
+        address _admin,
+        address _minter,
+        address _verifier
+    ) {
         credit = _credit;
+        registry = _registry;
         admin = _admin;
         minter = _minter;
+        verifier = _verifier;
         
         // Create a set of test users
         for (uint i = 0; i < 5; i++) {
@@ -39,23 +50,34 @@ contract CreditHandler is Test {
     // Mint credits to a random user
     function mintCredits(uint256 tokenIdSeed, uint256 amount, string calldata uri) public {
         // Ensure tokenId is a reasonable value and not zero
-        uint256 tokenId = (tokenIdSeed % 100) + 1;
+        bytes32 projectId = keccak256(abi.encodePacked("project", tokenIdSeed % 10));
         amount = bound(amount, 1, 10000);
         
         // Select a random user
         address user = users[tokenIdSeed % users.length];
         
+        // Register and approve the project first
+        if (!tokenIdExists[projectId]) {
+            vm.prank(user); // Project owner registers
+            registry.registerProject(projectId, "ipfs://meta.json");
+            vm.prank(verifier);
+            registry.setProjectStatus(
+                projectId,
+                ProjectRegistry.ProjectStatus.Active
+            );
+        }
+        
         vm.prank(minter);
-        credit.mintCredits(user, tokenId, amount, uri);
+        credit.mintCredits(user, projectId, amount, uri);
         
         // Track state for invariant testing
-        userBalances[user][tokenId] += amount;
-        totalSupply[tokenId] += amount;
+        userBalances[user][projectId] += amount;
+        totalSupply[projectId] += amount;
         
         // Track this token ID
-        if (!tokenIdExists[tokenId]) {
-            mintedTokenIds.push(tokenId);
-            tokenIdExists[tokenId] = true;
+        if (!tokenIdExists[projectId]) {
+            mintedTokenIds.push(projectId);
+            tokenIdExists[projectId] = true;
         }
     }
     
@@ -65,22 +87,22 @@ contract CreditHandler is Test {
         
         // Select an existing token ID
         uint256 tokenIndex = tokenIdSeed % mintedTokenIds.length;
-        uint256 tokenId = mintedTokenIds[tokenIndex];
+        bytes32 projectId = mintedTokenIds[tokenIndex];
         
         // Select a user who might have this token
         address user = users[tokenIdSeed % users.length];
         
         // Skip if user has no tokens
-        if (userBalances[user][tokenId] == 0) return;
+        if (userBalances[user][projectId] == 0) return;
         
         // Determine retire amount (cannot exceed balance)
-        uint256 retireAmount = (amountSeed % userBalances[user][tokenId]) + 1;
+        uint256 retireAmount = (amountSeed % userBalances[user][projectId]) + 1;
         
         vm.prank(user);
-        try credit.retire(user, tokenId, retireAmount) {
+        try credit.retire(user, projectId, retireAmount) {
             // Track state changes
-            userBalances[user][tokenId] -= retireAmount;
-            retiredAmount[tokenId] += retireAmount;
+            userBalances[user][projectId] -= retireAmount;
+            retiredAmount[projectId] += retireAmount;
         } catch {
             // If retire fails, that's okay - we're just testing invariants
         }
@@ -92,7 +114,7 @@ contract CreditHandler is Test {
         
         // Select an existing token ID
         uint256 tokenIndex = tokenIdSeed % mintedTokenIds.length;
-        uint256 tokenId = mintedTokenIds[tokenIndex];
+        bytes32 projectId = mintedTokenIds[tokenIndex];
         
         // Select different from/to users
         address from = users[fromUserSeed % users.length];
@@ -100,16 +122,16 @@ contract CreditHandler is Test {
         if (from == to) to = users[(toUserSeed + 2) % users.length];
         
         // Skip if from user has no tokens
-        if (userBalances[from][tokenId] == 0) return;
+        if (userBalances[from][projectId] == 0) return;
         
         // Determine transfer amount (cannot exceed balance)
-        uint256 transferAmount = (amountSeed % userBalances[from][tokenId]) + 1;
+        uint256 transferAmount = (amountSeed % userBalances[from][projectId]) + 1;
         
         vm.prank(from);
-        try credit.safeTransferFrom(from, to, tokenId, transferAmount, "") {
+        try credit.safeTransferFrom(from, to, uint256(projectId), transferAmount, "") {
             // Track state changes
-            userBalances[from][tokenId] -= transferAmount;
-            userBalances[to][tokenId] += transferAmount;
+            userBalances[from][projectId] -= transferAmount;
+            userBalances[to][projectId] += transferAmount;
         } catch {
             // If transfer fails, that's okay - we're just testing invariants
         }
@@ -121,17 +143,17 @@ contract CreditHandler is Test {
         
         // Select an existing token ID
         uint256 tokenIndex = tokenIdSeed % mintedTokenIds.length;
-        uint256 tokenId = mintedTokenIds[tokenIndex];
+        bytes32 projectId = mintedTokenIds[tokenIndex];
         
         vm.prank(admin);
-        credit.setTokenURI(tokenId, newURI);
+        credit.setTokenURI(projectId, newURI);
     }
     
     // Helper function to get total minted credits across all users
-    function getTotalUserBalance(uint256 tokenId) public view returns (uint256) {
+    function getTotalUserBalance(bytes32 projectId) public view returns (uint256) {
         uint256 total = 0;
         for (uint i = 0; i < users.length; i++) {
-            total += userBalances[users[i]][tokenId];
+            total += userBalances[users[i]][projectId];
         }
         return total;
     }
@@ -143,14 +165,23 @@ contract DynamicImpactCreditInvariantTest is StdInvariant, Test {
     CreditHandler handler;
     address admin = address(0xA11CE);
     address minter = address(0xB01D);
+    address verifier = address(0xC1E4);
     
     function setUp() public {
         vm.startPrank(admin);
+        // Deploy Registry
+        ProjectRegistry registryImpl = new ProjectRegistry();
+        bytes memory registryInitData = abi.encodeCall(ProjectRegistry.initialize, ());
+        ERC1967Proxy registryProxy = new ERC1967Proxy(address(registryImpl), registryInitData);
+        ProjectRegistry registry = ProjectRegistry(address(registryProxy));
+        registry.grantRole(registry.VERIFIER_ROLE(), verifier);
+        
+        // Deploy Credit Contract
         DynamicImpactCredit impl = new DynamicImpactCredit();
         
         bytes memory initData = abi.encodeCall(
             DynamicImpactCredit.initialize,
-            ("ipfs://contract-metadata.json")
+            ("ipfs://contract-metadata.json", address(registry))
         );
         
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
@@ -161,27 +192,27 @@ contract DynamicImpactCreditInvariantTest is StdInvariant, Test {
         vm.stopPrank();
         
         // Create handler and target it for invariant testing
-        handler = new CreditHandler(credit, admin, minter);
+        handler = new CreditHandler(credit, registry, admin, minter, verifier);
         targetContract(address(handler));
     }
     
     // Invariant: For each token ID, the sum of all user balances should equal total supply minus retired amount
-    function invariant_balancesMatchSupply() public {
+    function invariant_balancesMatchSupply() public view {
         uint256 numTokens = handler.getMintedTokenIdsLength();
         for (uint i = 0; i < numTokens; i++) {
-            uint256 tokenId = handler.mintedTokenIds(i);
-            uint256 onChainTotalBalance = handler.getTotalUserBalance(tokenId);
+            bytes32 projectId = handler.mintedTokenIds(i);
+            uint256 onChainTotalBalance = handler.getTotalUserBalance(projectId);
             
             assertEq(
-                onChainTotalBalance + handler.retiredAmount(tokenId),
-                handler.totalSupply(tokenId),
+                onChainTotalBalance + handler.retiredAmount(projectId),
+                handler.totalSupply(projectId),
                 "Total balances + retired should equal total supply"
             );
         }
     }
     
     // Invariant: User balances tracked in the handler should match balances on the contract
-    function invariant_handlerBalancesMatchContract() public {
+    function invariant_handlerBalancesMatchContract() public view {
         address[] memory users = new address[](5);
         for (uint i = 0; i < 5; i++) {
             users[i] = address(uint160(0x1000 + i));
@@ -189,13 +220,13 @@ contract DynamicImpactCreditInvariantTest is StdInvariant, Test {
         
         uint256 numTokens = handler.getMintedTokenIdsLength();
         for (uint i = 0; i < numTokens; i++) {
-            uint256 tokenId = handler.mintedTokenIds(i);
+            bytes32 projectId = handler.mintedTokenIds(i);
             
             for (uint j = 0; j < users.length; j++) {
                 address user = users[j];
                 assertEq(
-                    handler.userBalances(user, tokenId),
-                    credit.balanceOf(user, tokenId),
+                    handler.userBalances(user, projectId),
+                    credit.balanceOf(user, uint256(projectId)),
                     "Handler balances should match contract balances"
                 );
             }
@@ -203,7 +234,7 @@ contract DynamicImpactCreditInvariantTest is StdInvariant, Test {
     }
     
     // Invariant: Admin role should never change
-    function invariant_adminRoleNeverChanges() public {
+    function invariant_adminRoleNeverChanges() public view {
         assertTrue(
             credit.hasRole(credit.DEFAULT_ADMIN_ROLE(), admin),
             "Admin should always have admin role"
@@ -211,7 +242,7 @@ contract DynamicImpactCreditInvariantTest is StdInvariant, Test {
     }
     
     // Invariant: Minter role should never change
-    function invariant_minterRoleNeverChanges() public {
+    function invariant_minterRoleNeverChanges() public view {
         assertTrue(
             credit.hasRole(credit.MINTER_ROLE(), minter),
             "Minter should always have minter role"
