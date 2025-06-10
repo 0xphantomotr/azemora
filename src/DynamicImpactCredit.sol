@@ -36,21 +36,19 @@ contract DynamicImpactCredit is
     /* ---------- mint / batchMint ---------- */
     function mintCredits(
         address to,
-        bytes32 id,
+        bytes32 projectId,
         uint256 amount,
-        string calldata uri_
-    ) external onlyRole(DMRV_MANAGER_ROLE)
-    {
-        require(
-            projectRegistry.isProjectActive(id),
-            "DIC: PROJECT_NOT_ACTIVE"
-        );
-        uint256 tokenId = uint256(id);
+        string calldata newUri
+    ) external onlyRole(DMRV_MANAGER_ROLE) {
+        require(projectRegistry.isProjectActive(projectId), "NOT_ACTIVE");
+        
+        uint256 tokenId = uint256(projectId);
         _mint(to, tokenId, amount, "");
-        if (_tokenURIs[tokenId].length == 0) {
-            _tokenURIs[tokenId].push(uri_);
-            emit URI(uri_, tokenId);       // ERC-1155 event
-        }
+        
+        // Always update the URI by pushing to the history array
+        _tokenURIs[tokenId].push(newUri);
+        
+        emit URI(newUri, tokenId);
     }
 
     /* ---------- metadata update ---------- */

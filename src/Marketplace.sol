@@ -1,0 +1,336 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC1155/utils/ERC1155HolderUpgradeable.sol";
+
+// --- Custom Interfaces to avoid import issues ---
+
+interface IERC165Upgradeable {
+    function supportsInterface(bytes4 interfaceId) external view returns (bool);
+}
+
+// Interface for ERC1155 functionality
+interface IERC1155Upgradeable is IERC165Upgradeable {
+    event TransferSingle(
+        address indexed operator,
+        address indexed from,
+        address indexed to,
+        uint256 id,
+        uint256 value
+    );
+    event TransferBatch(
+        address indexed operator,
+        address indexed from,
+        address indexed to,
+        uint256[] ids,
+        uint256[] values
+    );
+    event ApprovalForAll(
+        address indexed account,
+        address indexed operator,
+        bool approved
+    );
+    event URI(string value, uint256 indexed id);
+
+    function balanceOf(address account, uint256 id) external view returns (uint256);
+
+    function balanceOfBatch(
+        address[] calldata accounts,
+        uint256[] calldata ids
+    ) external view returns (uint256[] memory);
+
+    function setApprovalForAll(address operator, bool approved) external;
+
+    function isApprovedForAll(
+        address account,
+        address operator
+    ) external view returns (bool);
+
+    function safeTransferFrom(
+        address from,
+        address to,
+        uint256 id,
+        uint256 amount,
+        bytes calldata data
+    ) external;
+
+    function safeBatchTransferFrom(
+        address from,
+        address to,
+        uint256[] calldata ids,
+        uint256[] calldata amounts,
+        bytes calldata data
+    ) external;
+}
+
+// Interface for ERC20 functionality, included directly to avoid import issues.
+interface IERC20Upgradeable {
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    event Approval(
+        address indexed owner,
+        address indexed spender,
+        uint256 value
+    );
+
+    function totalSupply() external view returns (uint256);
+
+    function balanceOf(address account) external view returns (uint256);
+
+    function transfer(address to, uint256 amount) external returns (bool);
+
+    function allowance(
+        address owner,
+        address spender
+    ) external view returns (uint256);
+
+    function approve(address spender, uint256 amount) external returns (bool);
+
+    function transferFrom(
+        address from,
+        address to,
+        uint256 amount
+    ) external returns (bool);
+}
+
+contract Marketplace is
+    Initializable,
+    AccessControlUpgradeable,
+    UUPSUpgradeable,
+    ReentrancyGuardUpgradeable,
+    ERC1155HolderUpgradeable
+{
+    // --- State ---
+    IERC1155Upgradeable public creditContract;
+    IERC20Upgradeable public paymentToken;
+    address public feeRecipient;
+    uint256 public feeBps; // Fee in basis points (e.g., 250 = 2.5%)
+
+    struct Listing {
+        uint256 id;
+        address seller;
+        uint256 tokenId;
+        uint256 amount;
+        uint256 pricePerUnit; // Price per single unit of the token
+        bool active;
+    }
+
+    mapping(uint256 => Listing) public listings;
+    uint256 public listingIdCounter;
+    uint256 public activeListingCount;
+
+    // --- Events ---
+    event Listed(
+        uint256 indexed listingId,
+        address indexed seller,
+        uint256 indexed tokenId,
+        uint256 amount,
+        uint256 pricePerUnit
+    );
+    event Sold(
+        uint256 indexed listingId,
+        address indexed buyer,
+        uint256 amount,
+        uint256 totalPrice
+    );
+    event Cancelled(uint256 indexed listingId);
+    event PriceUpdated(uint256 indexed listingId, uint256 newPricePerUnit);
+    event FeeRecipientUpdated(address indexed newFeeRecipient);
+    event FeeUpdated(uint256 newFeeBps);
+    event PartialSold(
+        uint256 indexed listingId,
+        address indexed buyer,
+        uint256 amount,
+        uint256 totalPrice
+    );
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(
+        address creditContract_,
+        address paymentToken_
+    ) public initializer {
+        __AccessControl_init();
+        __UUPSUpgradeable_init();
+        __ReentrancyGuard_init();
+        __ERC1155Holder_init();
+
+        _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
+
+        creditContract = IERC1155Upgradeable(creditContract_);
+        paymentToken = IERC20Upgradeable(paymentToken_);
+    }
+
+    function list(
+        uint256 tokenId,
+        uint256 amount,
+        uint256 pricePerUnit
+    ) external nonReentrant returns (uint256 listingId) {
+        require(amount > 0, "Marketplace: Amount must be > 0");
+        require(pricePerUnit > 0, "Marketplace: Price must be > 0");
+
+        // Custodial model: Transfer tokens from seller to this contract
+        creditContract.safeTransferFrom(
+            _msgSender(),
+            address(this),
+            tokenId,
+            amount,
+            ""
+        );
+
+        listingId = listingIdCounter++;
+        listings[listingId] = Listing({
+            id: listingId,
+            seller: _msgSender(),
+            tokenId: tokenId,
+            amount: amount,
+            pricePerUnit: pricePerUnit,
+            active: true
+        });
+
+        activeListingCount++;
+
+        emit Listed(listingId, _msgSender(), tokenId, amount, pricePerUnit);
+        return listingId;
+    }
+
+    function buy(
+        uint256 listingId,
+        uint256 amountToBuy
+    ) external nonReentrant {
+        Listing storage listing = listings[listingId];
+        // --- CHECKS ---
+        require(listing.active, "Marketplace: Listing not active");
+        require(amountToBuy > 0, "Marketplace: Amount must be > 0");
+        require(
+            listing.amount >= amountToBuy,
+            "Marketplace: Not enough items in listing"
+        );
+
+        uint256 totalPrice = amountToBuy * listing.pricePerUnit;
+        uint256 fee = (totalPrice * feeBps) / 10000;
+        uint256 sellerProceeds = totalPrice - fee;
+
+        // --- EFFECTS ---
+        listing.amount -= amountToBuy;
+        if (listing.amount == 0) {
+            listing.active = false;
+            activeListingCount--;
+            emit Sold(listingId, _msgSender(), amountToBuy, totalPrice);
+        } else {
+            emit PartialSold(listingId, _msgSender(), amountToBuy, totalPrice);
+        }
+
+        // --- INTERACTIONS ---
+        // Transfer payment to seller and fee recipient
+        require(
+            paymentToken.transferFrom(
+                _msgSender(),
+                listing.seller,
+                sellerProceeds
+            ),
+            "Marketplace: Seller payment failed"
+        );
+        if (fee > 0) {
+            require(
+                paymentToken.transferFrom(_msgSender(), feeRecipient, fee),
+                "Marketplace: Fee payment failed"
+            );
+        }
+
+        // Transfer the NFT from the marketplace to the buyer
+        creditContract.safeTransferFrom(
+            address(this),
+            _msgSender(),
+            listing.tokenId,
+            amountToBuy,
+            ""
+        );
+    }
+
+    function cancel(uint256 listingId) external nonReentrant {
+        Listing storage listing = listings[listingId];
+        require(listing.active, "Marketplace: Listing not active");
+        require(listing.seller == _msgSender(), "Marketplace: Not the seller");
+
+        listing.active = false;
+        activeListingCount--;
+
+        // Return the unsold tokens to the seller
+        creditContract.safeTransferFrom(
+            address(this),
+            listing.seller,
+            listing.tokenId,
+            listing.amount,
+            ""
+        );
+
+        emit Cancelled(listingId);
+    }
+
+    function updatePrice(
+        uint256 listingId,
+        uint256 newPricePerUnit
+    ) external {
+        Listing storage listing = listings[listingId];
+        require(
+            listing.seller == _msgSender(),
+            "Marketplace: Not the seller"
+        );
+        require(listing.active, "Marketplace: Listing not active");
+        require(
+            newPricePerUnit > 0,
+            "Marketplace: Price must be > 0"
+        );
+
+        listing.pricePerUnit = newPricePerUnit;
+        emit PriceUpdated(listingId, newPricePerUnit);
+    }
+
+    function setFeeRecipient(address newFeeRecipient)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
+        require(
+            newFeeRecipient != address(0),
+            "Marketplace: Zero address"
+        );
+        feeRecipient = newFeeRecipient;
+        emit FeeRecipientUpdated(newFeeRecipient);
+    }
+
+    function setFee(uint256 newFeeBps) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(newFeeBps <= 1000, "Marketplace: Fee cannot exceed 10%"); // Capped at 10%
+        feeBps = newFeeBps;
+        emit FeeUpdated(newFeeBps);
+    }
+
+    function getListing(
+        uint256 listingId
+    ) external view returns (Listing memory) {
+        return listings[listingId];
+    }
+
+    // --- Interface Support ---
+    function supportsInterface(bytes4 interfaceId)
+        public
+        view
+        override(AccessControlUpgradeable, ERC1155HolderUpgradeable)
+        returns (bool)
+    {
+        return super.supportsInterface(interfaceId);
+    }
+
+    /* ---------- upgrade auth ---------- */
+    function _authorizeUpgrade(address newImplementation)
+        internal
+        override
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {}
+} 
