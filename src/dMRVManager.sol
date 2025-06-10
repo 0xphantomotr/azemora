@@ -179,15 +179,13 @@ contract DMRVManager is
         pure 
         returns (VerificationData memory) 
     {
-        // For MVP purposes, we'll use a simple encoding scheme:
-        // [32 bytes creditAmount][32 bytes updateMetadataOnly flag][32 bytes signature][remaining bytes: metadataURI]
-        
-        require(data.length >= 96, "DMRVManager: Invalid data format");
-        
-        uint256 creditAmount = abi.decode(data[0:32], (uint256));
-        bool updateMetadataOnly = abi.decode(data[32:64], (bool));
-        bytes32 signature = abi.decode(data[64:96], (bytes32));
-        string memory metadataURI = string(data[96:]);
+        // A more robust decoding scheme.
+        (
+            uint256 creditAmount,
+            bool updateMetadataOnly,
+            bytes32 signature,
+            string memory metadataURI
+        ) = abi.decode(data, (uint256, bool, bytes32, string));
         
         return VerificationData({
             creditAmount: creditAmount,

@@ -14,7 +14,7 @@ contract DynamicImpactCredit is
     bytes32 public constant DMRV_MANAGER_ROLE      = keccak256("DMRV_MANAGER_ROLE");
     bytes32 public constant METADATA_UPDATER_ROLE  = keccak256("METADATA_UPDATER_ROLE");
 
-    mapping(uint256 => string) private _tokenURIs;
+    mapping(uint256 => string[]) private _tokenURIs;
     string private _contractURI;
     IProjectRegistry public projectRegistry;
 
@@ -47,8 +47,8 @@ contract DynamicImpactCredit is
         );
         uint256 tokenId = uint256(id);
         _mint(to, tokenId, amount, "");
-        if (bytes(_tokenURIs[tokenId]).length == 0) {
-            _tokenURIs[tokenId] = uri_;
+        if (_tokenURIs[tokenId].length == 0) {
+            _tokenURIs[tokenId].push(uri_);
             emit URI(uri_, tokenId);       // ERC-1155 event
         }
     }
@@ -59,11 +59,17 @@ contract DynamicImpactCredit is
         onlyRole(METADATA_UPDATER_ROLE)
     {
         uint256 tokenId = uint256(id);
-        _tokenURIs[tokenId] = newUri;
+        _tokenURIs[tokenId].push(newUri);
         emit URI(newUri, tokenId);
     }
 
     function uri(uint256 id) public view override returns (string memory) {
+        string[] storage uris = _tokenURIs[id];
+        require(uris.length > 0, "URI not set for token");
+        return uris[uris.length - 1];
+    }
+
+    function getTokenURIHistory(uint256 id) public view returns (string[] memory) {
         return _tokenURIs[id];
     }
 
@@ -122,8 +128,8 @@ contract DynamicImpactCredit is
         _mintBatch(to, tokenIds, amounts, "");
 
         for (uint256 i = 0; i < ids.length; ++i) {
-            if (bytes(_tokenURIs[tokenIds[i]]).length == 0) {
-                _tokenURIs[tokenIds[i]] = uris[i];
+            if (_tokenURIs[tokenIds[i]].length == 0) {
+                _tokenURIs[tokenIds[i]].push(uris[i]);
                 emit URI(uris[i], tokenIds[i]);
             }
         }

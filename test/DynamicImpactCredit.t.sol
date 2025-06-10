@@ -126,13 +126,20 @@ contract DynamicImpactCreditTest is Test {
         vm.prank(verifier);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
         
+        string memory oldURI = "ipfs://old.json";
         vm.startPrank(dmrvManager);
-        credit.mintCredits(user, projectId, 1, "ipfs://old.json");
+        credit.mintCredits(user, projectId, 1, oldURI);
         vm.stopPrank();
 
         vm.prank(admin);
-        credit.setTokenURI(projectId, "ipfs://new.json");
-        assertEq(credit.uri(uint256(projectId)), "ipfs://new.json");
+        string memory newURI = "ipfs://new.json";
+        credit.setTokenURI(projectId, newURI);
+        assertEq(credit.uri(uint256(projectId)), newURI);
+
+        string[] memory history = credit.getTokenURIHistory(uint256(projectId));
+        assertEq(history.length, 2);
+        assertEq(history[0], oldURI);
+        assertEq(history[1], newURI);
     }
 
     /* ---------- retire flow ---------- */

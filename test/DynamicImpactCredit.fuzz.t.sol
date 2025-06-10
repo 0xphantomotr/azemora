@@ -159,5 +159,11 @@ contract DynamicImpactCreditFuzzTest is Test {
 
         // Verify the URI was updated
         assertEq(credit.uri(uint256(projectId)), updatedURI);
+
+        // Verify history
+        string[] memory history = credit.getTokenURIHistory(uint256(projectId));
+        assertEq(history.length, 2, "History length should be 2");
+        assertEq(history[0], initialURI, "Initial URI mismatch in history");
+        assertEq(history[1], updatedURI, "Updated URI mismatch in history");
     }
 } 

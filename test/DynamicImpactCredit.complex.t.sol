@@ -173,12 +173,17 @@ contract DynamicImpactCreditComplexTest is Test {
         vm.startPrank(admin);
         
         // Update metadata for project 0 to reflect new verification data
-        credit.setTokenURI(projects[0].id, string(abi.encodePacked(projects[0].baseURI, "v2-verified.json")));
+        string memory newURI = string(abi.encodePacked(projects[0].baseURI, "v2-verified.json"));
+        credit.setTokenURI(projects[0].id, newURI);
         
         vm.stopPrank();
         
         // Verify metadata was updated
-        assertEq(credit.uri(uint256(projects[0].id)), string(abi.encodePacked(projects[0].baseURI, "v2-verified.json")));
+        assertEq(credit.uri(uint256(projects[0].id)), newURI);
+        string[] memory history = credit.getTokenURIHistory(uint256(projects[0].id));
+        assertEq(history.length, 2);
+        assertEq(history[0], string(abi.encodePacked(projects[0].baseURI, "v1.json")));
+        assertEq(history[1], newURI);
         
         // STEP 4: Users retire some credits
         vm.prank(user2);

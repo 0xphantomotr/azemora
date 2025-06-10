@@ -65,7 +65,7 @@ contract DMRVManagerTest is Test {
     
     /* ---------- Basic Functionality Tests ---------- */
     
-    function test_Initialization() public {
+    function test_Initialization() public view {
         assertEq(address(manager.projectRegistry()), address(registry));
         assertEq(address(manager.creditContract()), address(credit));
         assertTrue(manager.hasRole(manager.ORACLE_ROLE(), oracle));
@@ -94,12 +94,7 @@ contract DMRVManagerTest is Test {
         bytes32 signature = keccak256(abi.encodePacked("test-signature"));
         
         // 3. Encode the data according to our expected format
-        bytes memory data = abi.encodePacked(
-            abi.encode(creditAmount),
-            abi.encode(updateMetadataOnly),
-            abi.encode(signature),
-            bytes(metadataURI)
-        );
+        bytes memory data = abi.encode(creditAmount, updateMetadataOnly, signature, metadataURI);
         
         // 4. Oracle fulfills the verification
         vm.prank(oracle);
@@ -116,11 +111,11 @@ contract DMRVManagerTest is Test {
         bytes32 initialRequestId = manager.requestVerification(projectId);
         
         // Set up initial minting data
-        bytes memory initialData = abi.encodePacked(
-            abi.encode(uint256(100)),       // creditAmount
-            abi.encode(false),              // updateMetadataOnly
-            abi.encode(bytes32(0)),         // signature
-            bytes("ipfs://initial.json")    // metadataURI
+        bytes memory initialData = abi.encode(
+            uint256(100),            // creditAmount
+            false,                   // updateMetadataOnly
+            bytes32(0),              // signature
+            "ipfs://initial.json"    // metadataURI
         );
         
         vm.prank(oracle);
@@ -139,12 +134,7 @@ contract DMRVManagerTest is Test {
         bytes32 signature = keccak256(abi.encodePacked("test-signature-2"));
         
         // 4. Encode the data
-        bytes memory data = abi.encodePacked(
-            abi.encode(creditAmount),
-            abi.encode(updateMetadataOnly),
-            abi.encode(signature),
-            bytes(metadataURI)
-        );
+        bytes memory data = abi.encode(creditAmount, updateMetadataOnly, signature, metadataURI);
         
         // 5. Oracle fulfills the verification
         vm.prank(oracle);
@@ -193,11 +183,11 @@ contract DMRVManagerTest is Test {
         bytes32 requestId = manager.requestVerification(projectId);
         
         // 2. Prepare some data
-        bytes memory data = abi.encodePacked(
-            abi.encode(uint256(100)),
-            abi.encode(false),
-            abi.encode(bytes32(0)),
-            bytes("ipfs://test.json")
+        bytes memory data = abi.encode(
+            uint256(100),
+            false,
+            bytes32(0),
+            "ipfs://test.json"
         );
         
         // 3. Attempt to fulfill from non-oracle account
@@ -212,11 +202,11 @@ contract DMRVManagerTest is Test {
         bytes32 requestId = manager.requestVerification(projectId);
         
         // 2. Prepare some data
-        bytes memory data = abi.encodePacked(
-            abi.encode(uint256(100)),
-            abi.encode(false),
-            abi.encode(bytes32(0)),
-            bytes("ipfs://test.json")
+        bytes memory data = abi.encode(
+            uint256(100),
+            false,
+            bytes32(0),
+            "ipfs://test.json"
         );
         
         // 3. Oracle fulfills the verification
