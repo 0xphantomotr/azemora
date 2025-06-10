@@ -12,7 +12,7 @@ contract CreditHandler is Test {
     DynamicImpactCredit credit;
     ProjectRegistry registry;
     address admin;
-    address minter;
+    address dmrvManager;
     address verifier;
     address[] users;
     mapping(address => mapping(bytes32 => uint256)) public userBalances;
@@ -27,13 +27,13 @@ contract CreditHandler is Test {
         DynamicImpactCredit _credit,
         ProjectRegistry _registry,
         address _admin,
-        address _minter,
+        address _dmrvManager,
         address _verifier
     ) {
         credit = _credit;
         registry = _registry;
         admin = _admin;
-        minter = _minter;
+        dmrvManager = _dmrvManager;
         verifier = _verifier;
         
         // Create a set of test users
@@ -67,7 +67,7 @@ contract CreditHandler is Test {
             );
         }
         
-        vm.prank(minter);
+        vm.prank(dmrvManager);
         credit.mintCredits(user, projectId, amount, uri);
         
         // Track state for invariant testing
@@ -164,7 +164,7 @@ contract DynamicImpactCreditInvariantTest is StdInvariant, Test {
     DynamicImpactCredit credit;
     CreditHandler handler;
     address admin = address(0xA11CE);
-    address minter = address(0xB01D);
+    address dmrvManager = address(0xB01D);
     address verifier = address(0xC1E4);
     
     function setUp() public {
@@ -187,12 +187,12 @@ contract DynamicImpactCreditInvariantTest is StdInvariant, Test {
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         credit = DynamicImpactCredit(address(proxy));
         
-        credit.grantRole(credit.MINTER_ROLE(), minter);
+        credit.grantRole(credit.DMRV_MANAGER_ROLE(), dmrvManager);
         credit.grantRole(credit.METADATA_UPDATER_ROLE(), admin);
         vm.stopPrank();
         
         // Create handler and target it for invariant testing
-        handler = new CreditHandler(credit, registry, admin, minter, verifier);
+        handler = new CreditHandler(credit, registry, admin, dmrvManager, verifier);
         targetContract(address(handler));
     }
     
@@ -241,11 +241,11 @@ contract DynamicImpactCreditInvariantTest is StdInvariant, Test {
         );
     }
     
-    // Invariant: Minter role should never change
-    function invariant_minterRoleNeverChanges() public view {
+    // Invariant: DMRV Manager role should never change
+    function invariant_dmrvManagerRoleNeverChanges() public view {
         assertTrue(
-            credit.hasRole(credit.MINTER_ROLE(), minter),
-            "Minter should always have minter role"
+            credit.hasRole(credit.DMRV_MANAGER_ROLE(), dmrvManager),
+            "DMRV Manager should always have its role"
         );
     }
 } 

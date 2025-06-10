@@ -20,7 +20,7 @@ contract DynamicImpactCreditTest is Test {
     ProjectRegistry registry;
 
     address admin  = address(0xA11CE);
-    address minter = address(0xB01D);
+    address dmrvManager = address(0xB01D);
     address user   = address(0xCAFE);
     address other  = address(0xD00D);
     address verifier = address(0xC1E4);
@@ -47,7 +47,7 @@ contract DynamicImpactCreditTest is Test {
         ERC1967Proxy creditProxy = new ERC1967Proxy(address(creditImpl), creditInitData);
         credit = DynamicImpactCredit(address(creditProxy));
 
-        credit.grantRole(credit.MINTER_ROLE(), minter);
+        credit.grantRole(credit.DMRV_MANAGER_ROLE(), dmrvManager);
         credit.grantRole(credit.METADATA_UPDATER_ROLE(), admin);
 
         vm.stopPrank();
@@ -58,10 +58,10 @@ contract DynamicImpactCreditTest is Test {
         bytes32 projectId = keccak256("Project-1");
         vm.prank(user);
         registry.registerProject(projectId, "ipfs://project1.json");
-        vm.prank(admin);
+        vm.prank(verifier);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
 
-        vm.prank(minter);
+        vm.prank(dmrvManager);
         credit.mintCredits(user, projectId, 100, "ipfs://t1.json");
 
         assertEq(credit.balanceOf(user, uint256(projectId)), 100);
@@ -93,7 +93,7 @@ contract DynamicImpactCreditTest is Test {
         registry.setProjectStatus(ids[1], ProjectRegistry.ProjectStatus.Active);
         vm.stopPrank();
 
-        vm.prank(minter);
+        vm.prank(dmrvManager);
         credit.batchMintCredits(user, ids, amounts, uris);
 
         assertEq(credit.balanceOf(user, uint256(ids[0])), 5);
@@ -106,10 +106,15 @@ contract DynamicImpactCreditTest is Test {
         bytes32 projectId = keccak256("Project-2");
         vm.prank(user);
         registry.registerProject(projectId, "p2.json");
-        vm.prank(admin);
+        vm.prank(verifier);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
 
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSignature(
+            "AccessControlUnauthorizedAccount(address,bytes32)",
+            other,
+            credit.DMRV_MANAGER_ROLE()
+        ));
+        vm.prank(other);
         credit.mintCredits(user, projectId, 1, "ipfs://fail.json");
     }
 
@@ -118,10 +123,10 @@ contract DynamicImpactCreditTest is Test {
         bytes32 projectId = keccak256("Project-3");
         vm.prank(user);
         registry.registerProject(projectId, "p3.json");
-        vm.prank(admin);
+        vm.prank(verifier);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
         
-        vm.startPrank(minter);
+        vm.startPrank(dmrvManager);
         credit.mintCredits(user, projectId, 1, "ipfs://old.json");
         vm.stopPrank();
 
@@ -135,10 +140,10 @@ contract DynamicImpactCreditTest is Test {
         bytes32 projectId = keccak256("Project-4");
         vm.prank(user);
         registry.registerProject(projectId, "p4.json");
-        vm.prank(admin);
+        vm.prank(verifier);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
         
-        vm.prank(minter);
+        vm.prank(dmrvManager);
         credit.mintCredits(user, projectId, 10, "ipfs://t.json");
 
         vm.prank(user);
@@ -152,10 +157,10 @@ contract DynamicImpactCreditTest is Test {
         bytes32 projectId = keccak256("Project-5");
         vm.prank(user);
         registry.registerProject(projectId, "p5.json");
-        vm.prank(admin);
+        vm.prank(verifier);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
 
-        vm.prank(minter);
+        vm.prank(dmrvManager);
         credit.mintCredits(user, projectId, 1, "ipfs://t.json");
 
         vm.prank(user);
@@ -174,10 +179,10 @@ contract DynamicImpactCreditTest is Test {
         bytes32 projectId = keccak256("Project-7");
         vm.prank(user);
         registry.registerProject(projectId, "p7.json");
-        vm.prank(admin);
+        vm.prank(verifier);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
 
-        vm.prank(minter);
+        vm.prank(dmrvManager);
         credit.mintCredits(user, projectId, 42, "ipfs://state.json");
 
         // deploy V2 with new variable
@@ -207,7 +212,7 @@ contract DynamicImpactCreditV2 is DynamicImpactCredit {
     uint256 public constant VERSION = 2;
     
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() DynamicImpactCredit() {
+    constructor() {
         // constructor is called but implementation remains uninitialized
     }
 }

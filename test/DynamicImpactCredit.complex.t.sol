@@ -60,7 +60,7 @@ contract DynamicImpactCreditComplexTest is Test {
     DynamicImpactCredit credit;
     ProjectRegistry registry;
     address admin = address(0xA11CE);
-    address minter = address(0xB01D);
+    address dmrvManager = address(0xB01D);
     address verifier = address(0xC1E4);
     
     // Create multiple user addresses
@@ -98,7 +98,7 @@ contract DynamicImpactCreditComplexTest is Test {
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         credit = DynamicImpactCredit(address(proxy));
         
-        credit.grantRole(credit.MINTER_ROLE(), minter);
+        credit.grantRole(credit.DMRV_MANAGER_ROLE(), dmrvManager);
         credit.grantRole(credit.METADATA_UPDATER_ROLE(), admin);
         vm.stopPrank();
         
@@ -136,7 +136,7 @@ contract DynamicImpactCreditComplexTest is Test {
             registry.setProjectStatus(projects[i].id, ProjectRegistry.ProjectStatus.Active);
         }
         
-        vm.startPrank(minter);
+        vm.startPrank(dmrvManager);
         
         for (uint i = 0; i < projects.length; i++) {
             // Mint initial credits to user1
@@ -226,7 +226,7 @@ contract DynamicImpactCreditComplexTest is Test {
         vm.prank(verifier);
         registry.setProjectStatus(newProjectId, ProjectRegistry.ProjectStatus.Active);
         
-        vm.prank(minter);
+        vm.prank(dmrvManager);
         creditV2.mintCredits(user1, newProjectId, 1000, "ipfs://new-project/metadata.json");
         
         assertEq(creditV2.balanceOf(user1, uint256(newProjectId)), 1000);
@@ -250,7 +250,7 @@ contract DynamicImpactCreditComplexTest is Test {
             registry.setProjectStatus(ids[i], ProjectRegistry.ProjectStatus.Active);
         }
         
-        vm.prank(minter);
+        vm.prank(dmrvManager);
         credit.batchMintCredits(user1, ids, amounts, uris);
         
         // Verify all credits were minted

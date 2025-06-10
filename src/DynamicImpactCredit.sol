@@ -11,7 +11,7 @@ contract DynamicImpactCredit is
     AccessControlUpgradeable,
     UUPSUpgradeable
 {
-    bytes32 public constant MINTER_ROLE            = keccak256("MINTER_ROLE");
+    bytes32 public constant DMRV_MANAGER_ROLE      = keccak256("DMRV_MANAGER_ROLE");
     bytes32 public constant METADATA_UPDATER_ROLE  = keccak256("METADATA_UPDATER_ROLE");
 
     mapping(uint256 => string) private _tokenURIs;
@@ -39,7 +39,7 @@ contract DynamicImpactCredit is
         bytes32 id,
         uint256 amount,
         string calldata uri_
-    ) external onlyRole(MINTER_ROLE)
+    ) external onlyRole(DMRV_MANAGER_ROLE)
     {
         require(
             projectRegistry.isProjectActive(id),
@@ -106,7 +106,7 @@ contract DynamicImpactCredit is
     bytes32[] calldata ids,
     uint256[] calldata amounts,
     string[] calldata uris   // 1-to-1 with ids
-    ) external onlyRole(MINTER_ROLE)
+    ) external onlyRole(DMRV_MANAGER_ROLE)
     {
         require(ids.length == amounts.length && ids.length == uris.length, "LENGTH_MISMATCH");
         

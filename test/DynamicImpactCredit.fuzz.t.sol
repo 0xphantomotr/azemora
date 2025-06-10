@@ -10,7 +10,7 @@ contract DynamicImpactCreditFuzzTest is Test {
     DynamicImpactCredit credit;
     ProjectRegistry registry;
     address admin = address(0xA11CE);
-    address minter = address(0xB01D);
+    address dmrvManager = address(0xB01D);
     address user = address(0xCAFE);
     address verifier = address(0xC1E4);
 
@@ -34,7 +34,7 @@ contract DynamicImpactCreditFuzzTest is Test {
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         credit = DynamicImpactCredit(address(proxy));
 
-        credit.grantRole(credit.MINTER_ROLE(), minter);
+        credit.grantRole(credit.DMRV_MANAGER_ROLE(), dmrvManager);
         credit.grantRole(credit.METADATA_UPDATER_ROLE(), admin);
         vm.stopPrank();
     }
@@ -74,7 +74,7 @@ contract DynamicImpactCreditFuzzTest is Test {
             );
         }
 
-        vm.prank(minter);
+        vm.prank(dmrvManager);
         credit.batchMintCredits(user, ids, amounts, uris);
 
         // Verify all tokens were minted with correct amounts and URIs
@@ -113,7 +113,7 @@ contract DynamicImpactCreditFuzzTest is Test {
         );
 
         // Mint the tokens
-        vm.prank(minter);
+        vm.prank(dmrvManager);
         credit.mintCredits(
             user,
             projectId,
@@ -150,7 +150,7 @@ contract DynamicImpactCreditFuzzTest is Test {
         );
 
         // Mint with initial URI
-        vm.prank(minter);
+        vm.prank(dmrvManager);
         credit.mintCredits(user, projectId, 100, initialURI);
 
         // Update URI

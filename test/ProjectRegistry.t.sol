@@ -1,0 +1,176 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+import "../src/ProjectRegistry.sol";
+import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+
+contract ProjectRegistryTest is Test {
+    ProjectRegistry registry;
+
+    address admin = address(0xA11CE);
+    address verifier = address(0xC1E4);
+    address projectOwner = address(0x044E);
+    address anotherUser = address(0xBEEF);
+
+    bytes32 projectId = keccak256("Test Project");
+
+    function setUp() public {
+        vm.startPrank(admin);
+        ProjectRegistry registryImpl = new ProjectRegistry();
+        bytes memory registryInitData = abi.encodeCall(ProjectRegistry.initialize, ());
+        ERC1967Proxy registryProxy = new ERC1967Proxy(address(registryImpl), registryInitData);
+        registry = ProjectRegistry(address(registryProxy));
+
+        // Grant verifier role
+        registry.grantRole(registry.VERIFIER_ROLE(), verifier);
+        vm.stopPrank();
+
+        // Register a project for testing state-changing functions
+        vm.prank(projectOwner);
+        registry.registerProject(projectId, "ipfs://initial.json");
+    }
+
+    /* ----------------- */
+    /*     Registration  */
+    /* ----------------- */
+
+    function test_Register_WritesStructAndEmitsEvent() public {
+        bytes32 newId = keccak256("New Project");
+        string memory uri = "ipfs://new.json";
+
+        vm.prank(anotherUser);
+        vm.expectEmit(true, true, true, true, address(registry));
+        emit ProjectRegistry.ProjectRegistered(newId, anotherUser, uri);
+        registry.registerProject(newId, uri);
+
+        ProjectRegistry.Project memory project = registry.getProject(newId);
+        assertEq(project.id, newId);
+        assertEq(project.owner, anotherUser);
+        assertEq(uint8(project.status), uint8(ProjectRegistry.ProjectStatus.Pending));
+        assertEq(project.metaURI, uri);
+    }
+
+    function test_Register_RevertsOnDuplicateId() public {
+        vm.prank(anotherUser);
+        vm.expectRevert("ProjectRegistry: ID already exists");
+        registry.registerProject(projectId, "ipfs://duplicate.json");
+    }
+
+    /* ----------------- */
+    /*    Status Changes */
+    /* ----------------- */
+
+    function test_SetStatus_VerifierCanApprove() public {
+        vm.prank(verifier);
+        vm.expectEmit(true, true, true, true, address(registry));
+        emit ProjectRegistry.ProjectStatusChanged(
+            projectId,
+            ProjectRegistry.ProjectStatus.Pending,
+            ProjectRegistry.ProjectStatus.Active
+        );
+        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        assertTrue(registry.isProjectActive(projectId));
+    }
+    
+    function test_SetStatus_AdminCanPauseAndArchive() public {
+        // First, activate the project
+        vm.prank(verifier);
+        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        
+        // Then, admin can pause it
+        vm.startPrank(admin);
+        vm.expectEmit(true, true, true, true, address(registry));
+        emit ProjectRegistry.ProjectStatusChanged(
+            projectId,
+            ProjectRegistry.ProjectStatus.Active,
+            ProjectRegistry.ProjectStatus.Paused
+        );
+        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Paused);
+        assertEq(uint8(registry.getProject(projectId).status), uint8(ProjectRegistry.ProjectStatus.Paused));
+
+        // And admin can archive it
+        vm.expectEmit(true, true, true, true, address(registry));
+        emit ProjectRegistry.ProjectStatusChanged(
+            projectId,
+            ProjectRegistry.ProjectStatus.Paused,
+            ProjectRegistry.ProjectStatus.Archived
+        );
+        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Archived);
+        vm.stopPrank();
+        
+        assertEq(uint8(registry.getProject(projectId).status), uint8(ProjectRegistry.ProjectStatus.Archived));
+        assertFalse(registry.isProjectActive(projectId));
+    }
+
+    function test_SetStatus_RevertsForNonVerifier() public {
+        vm.prank(anotherUser);
+        vm.expectRevert("ProjectRegistry: Caller is not a verifier");
+        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+    }
+
+    function test_SetStatus_RevertsForNonAdmin() public {
+        vm.prank(anotherUser);
+        vm.expectRevert("ProjectRegistry: Caller is not an admin");
+        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Paused);
+
+        vm.expectRevert("ProjectRegistry: Caller is not an admin");
+        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Archived);
+    }
+
+    function test_SetStatus_RevertsOnInvalidTransition() public {
+        vm.prank(admin);
+        vm.expectRevert("ProjectRegistry: Invalid status transition");
+        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Pending);
+    }
+    
+    /* ----------------- */
+    /*     Ownership     */
+    /* ----------------- */
+
+    function test_SetMetaURI_OnlyOwnerCanUpdate() public {
+        string memory newURI = "ipfs://updated.json";
+        
+        // Owner should succeed
+        vm.prank(projectOwner);
+        vm.expectEmit(true, true, true, true, address(registry));
+        emit ProjectRegistry.ProjectMetaURIUpdated(projectId, newURI);
+        registry.setMetaURI(projectId, newURI);
+        assertEq(registry.getProject(projectId).metaURI, newURI);
+
+        // Others should fail
+        vm.prank(anotherUser);
+        vm.expectRevert("ProjectRegistry: Caller is not the project owner");
+        registry.setMetaURI(projectId, "ipfs://fail.json");
+    }
+
+    function test_TransferOwnership_OnlyOwnerCanTransfer() public {
+        // Owner should succeed
+        vm.prank(projectOwner);
+        vm.expectEmit(true, true, true, true, address(registry));
+        emit ProjectRegistry.ProjectOwnershipTransferred(projectId, projectOwner, anotherUser);
+        registry.transferOwnership(projectId, anotherUser);
+        assertEq(registry.getProject(projectId).owner, anotherUser);
+
+        // Old owner should fail
+        vm.prank(projectOwner);
+        vm.expectRevert("ProjectRegistry: Caller is not the project owner");
+        registry.transferOwnership(projectId, admin);
+    }
+
+    function test_Fuzz_AccessControls(address caller, address newOwner, string calldata uri) public {
+        vm.assume(caller != projectOwner);
+        vm.assume(caller != admin);
+        vm.assume(caller != verifier);
+
+        // Test setMetaURI
+        vm.prank(caller);
+        vm.expectRevert("ProjectRegistry: Caller is not the project owner");
+        registry.setMetaURI(projectId, uri);
+        
+        // Test transferOwnership
+        vm.prank(caller);
+        vm.expectRevert("ProjectRegistry: Caller is not the project owner");
+        registry.transferOwnership(projectId, newOwner);
+    }
+} 
