@@ -2,8 +2,10 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
-import "../src/DynamicImpactCredit.sol";
-import "../src/ProjectRegistry.sol";
+import "../dynamicImpactCredit/DynamicImpactCredit.t.sol";
+import "../../src/core/ProjectRegistry.sol";
+import "../../src/core/DynamicImpactCredit.sol";
+import "../../src/core/dMRVManager.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
@@ -51,14 +53,10 @@ contract DynamicImpactCreditExtendedV2 is DynamicImpactCredit {
     }
 }
 
-interface IUUPS {
-    function upgradeTo(address newImplementation) external;
-    function upgradeToAndCall(address newImplementation, bytes calldata data) external payable;
-}
-
 contract DynamicImpactCreditComplexTest is Test {
     DynamicImpactCredit credit;
     ProjectRegistry registry;
+    DMRVManager manager;
     address admin = address(0xA11CE);
     address dmrvManager = address(0xB01D);
     address verifier = address(0xC1E4);

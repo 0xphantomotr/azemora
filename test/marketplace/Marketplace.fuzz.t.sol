@@ -2,10 +2,11 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
-import "../src/ProjectRegistry.sol";
-import "../src/DynamicImpactCredit.sol";
-import "../src/Marketplace.sol";
-import "./Marketplace.t.sol"; // Using MockERC20 from here
+import "./Marketplace.t.sol"; // Re-use mocks
+import "../../src/core/ProjectRegistry.sol";
+import "../../src/core/dMRVManager.sol";
+import "../../src/core/DynamicImpactCredit.sol";
+import "../../src/marketplace/Marketplace.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 contract MarketplaceFuzzTest is Test {

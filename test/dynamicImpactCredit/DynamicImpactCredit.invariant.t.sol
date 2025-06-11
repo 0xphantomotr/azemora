@@ -2,10 +2,13 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
-import "forge-std/StdInvariant.sol";
-import "../src/DynamicImpactCredit.sol";
-import "../src/ProjectRegistry.sol";
+import "./DynamicImpactCredit.t.sol";
+import "../../src/core/ProjectRegistry.sol";
+import "../../src/core/DynamicImpactCredit.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+
+/*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+/*                       INVARIANT TESTING                      */
 
 // Handler contract to perform actions on the credit contract
 contract CreditHandler is Test {

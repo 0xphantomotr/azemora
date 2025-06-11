@@ -2,10 +2,10 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
-import "../src/dMRVManager.sol";
-import "../src/ProjectRegistry.sol";
-import "../src/DynamicImpactCredit.sol";
-import "../src/Marketplace.sol";
+import "../../src/marketplace/Marketplace.sol";
+import "../../src/core/ProjectRegistry.sol";
+import "../../src/core/dMRVManager.sol";
+import "../../src/core/DynamicImpactCredit.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 // Minimal mock ERC20 to avoid dependency on forge-std/mocks
