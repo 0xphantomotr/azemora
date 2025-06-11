@@ -31,12 +31,7 @@ contract MarketplaceFuzzTest is Test {
         vm.startPrank(admin);
 
         registry = ProjectRegistry(
-            address(
-                new ERC1967Proxy(
-                    address(new ProjectRegistry()),
-                    abi.encodeCall(ProjectRegistry.initialize, ())
-                )
-            )
+            address(new ERC1967Proxy(address(new ProjectRegistry()), abi.encodeCall(ProjectRegistry.initialize, ())))
         );
         registry.grantRole(registry.VERIFIER_ROLE(), verifier);
 
@@ -44,10 +39,7 @@ contract MarketplaceFuzzTest is Test {
             address(
                 new ERC1967Proxy(
                     address(new DynamicImpactCredit()),
-                    abi.encodeCall(
-                        DynamicImpactCredit.initialize,
-                        ("ipfs://meta.json", address(registry))
-                    )
+                    abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://meta.json", address(registry)))
                 )
             )
         );
@@ -57,10 +49,7 @@ contract MarketplaceFuzzTest is Test {
             address(
                 new ERC1967Proxy(
                     address(new Marketplace()),
-                    abi.encodeCall(
-                        Marketplace.initialize,
-                        (address(credit), address(paymentToken))
-                    )
+                    abi.encodeCall(Marketplace.initialize, (address(credit), address(paymentToken)))
                 )
             )
         );
@@ -70,12 +59,7 @@ contract MarketplaceFuzzTest is Test {
         vm.stopPrank();
     }
 
-    function testFuzz_ListAndBuy(
-        uint64 seed,
-        uint256 listAmount,
-        uint256 buyAmount,
-        uint256 price
-    ) public {
+    function testFuzz_ListAndBuy(uint64 seed, uint256 listAmount, uint256 buyAmount, uint256 price) public {
         bytes32 projectId = keccak256(abi.encodePacked("project", seed));
         uint256 tokenId = uint256(projectId);
 
@@ -85,10 +69,7 @@ contract MarketplaceFuzzTest is Test {
         vm.prank(seller);
         registry.registerProject(projectId, "ipfs://fuzz.json");
         vm.prank(verifier);
-        registry.setProjectStatus(
-            projectId,
-            ProjectRegistry.ProjectStatus.Active
-        );
+        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
         vm.prank(dmrvManager);
         credit.mintCredits(seller, projectId, mintAmount, "ipfs://fuzz-c.json");
 
@@ -119,27 +100,13 @@ contract MarketplaceFuzzTest is Test {
 
         // --- Assert Final State ---
         // Assert NFT balances
+        assertEq(credit.balanceOf(seller, tokenId), mintAmount - listAmount, "Seller NFT balance incorrect");
+        assertEq(credit.balanceOf(buyer, tokenId), buyAmount, "Buyer NFT balance incorrect");
         assertEq(
-            credit.balanceOf(seller, tokenId),
-            mintAmount - listAmount,
-            "Seller NFT balance incorrect"
-        );
-        assertEq(
-            credit.balanceOf(buyer, tokenId),
-            buyAmount,
-            "Buyer NFT balance incorrect"
-        );
-        assertEq(
-            credit.balanceOf(address(marketplace), tokenId),
-            listAmount - buyAmount,
-            "Marketplace NFT balance incorrect"
+            credit.balanceOf(address(marketplace), tokenId), listAmount - buyAmount, "Marketplace NFT balance incorrect"
         );
 
         // Assert payment token balances
-        assertEq(
-            paymentToken.balanceOf(seller),
-            sellerProceeds,
-            "Seller payment balance incorrect"
-        );
+        assertEq(paymentToken.balanceOf(seller), sellerProceeds, "Seller payment balance incorrect");
     }
-} 
+}

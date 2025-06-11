@@ -57,12 +57,12 @@ contract MarketplaceHandler is Test {
         feeRecipient = _feeRecipient;
 
         // Create test users
-        for (uint i = 0; i < 4; i++) {
+        for (uint256 i = 0; i < 4; i++) {
             users.push(address(uint160(uint256(keccak256(abi.encodePacked("user", i))))));
         }
 
         // Fund users and track initial balances
-        for (uint i = 0; i < users.length; i++) {
+        for (uint256 i = 0; i < users.length; i++) {
             uint256 initialBalance = 1_000_000 * 1e6;
             paymentToken.mint(users[i], initialBalance);
             userPaymentTokenBalances[users[i]] = initialBalance;
@@ -120,7 +120,7 @@ contract MarketplaceHandler is Test {
 
         // 1. Get a buyer (cannot be the seller)
         address buyer;
-        uint i = 0;
+        uint256 i = 0;
         do {
             buyer = users[(seed + i) % users.length];
             i++;
@@ -149,19 +149,19 @@ contract MarketplaceHandler is Test {
 
     // Action: A random seller cancels their listing
     function cancel(uint256 listingId) public {
-       uint256 listingCounter = marketplace.listingIdCounter();
-       if(listingCounter == 0) return;
-       listingId = bound(listingId, 0, listingCounter-1);
-       
-       Marketplace.Listing memory l = marketplace.getListing(listingId);
-       if(!l.active) return;
+        uint256 listingCounter = marketplace.listingIdCounter();
+        if (listingCounter == 0) return;
+        listingId = bound(listingId, 0, listingCounter - 1);
 
-       vm.prank(l.seller);
-       try marketplace.cancel(listingId) {
-          // success is okay
-       } catch {
-          // revert is okay
-       }
+        Marketplace.Listing memory l = marketplace.getListing(listingId);
+        if (!l.active) return;
+
+        vm.prank(l.seller);
+        try marketplace.cancel(listingId) {
+            // success is okay
+        } catch {
+            // revert is okay
+        }
     }
 }
 
@@ -175,7 +175,7 @@ contract MarketplaceInvariantTest is StdInvariant, Test {
         address verifier = address(0xC1E4);
         address dmrvManager = address(0xB01D);
         address feeRecipient = address(0xFE35);
-        
+
         vm.startPrank(admin);
         ProjectRegistry registry = ProjectRegistry(
             address(new ERC1967Proxy(address(new ProjectRegistry()), abi.encodeCall(ProjectRegistry.initialize, ())))
@@ -191,7 +191,7 @@ contract MarketplaceInvariantTest is StdInvariant, Test {
             )
         );
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), dmrvManager);
-        
+
         MockERC20 paymentToken = new MockERC20("USD Coin", "USDC", 6);
         Marketplace marketplace = Marketplace(
             address(
@@ -207,16 +207,9 @@ contract MarketplaceInvariantTest is StdInvariant, Test {
 
         // --- Set up Handler ---
         handler = new MarketplaceHandler(
-            registry,
-            credit,
-            marketplace,
-            paymentToken,
-            admin,
-            verifier,
-            dmrvManager,
-            feeRecipient
+            registry, credit, marketplace, paymentToken, admin, verifier, dmrvManager, feeRecipient
         );
-        
+
         // Target the handler so that fuzz inputs are sent to its public functions
         targetContract(address(handler));
     }
@@ -229,12 +222,12 @@ contract MarketplaceInvariantTest is StdInvariant, Test {
         uint256 totalActualBalance = 0;
 
         uint256 usersLength = handler.getUsersLength();
-        for (uint i = 0; i < usersLength; i++) {
+        for (uint256 i = 0; i < usersLength; i++) {
             address user = handler.users(i);
             totalTrackedBalance += handler.userPaymentTokenBalances(user);
             totalActualBalance += handler.paymentToken().balanceOf(user);
         }
-        
+
         address feeRecipient = handler.feeRecipient();
         totalTrackedBalance += handler.userPaymentTokenBalances(feeRecipient);
         totalActualBalance += handler.paymentToken().balanceOf(feeRecipient);
@@ -245,6 +238,8 @@ contract MarketplaceInvariantTest is StdInvariant, Test {
     // INVARIANT 2: Marketplace holds no payment tokens.
     // The marketplace contract should only be a conduit for payment tokens, not hold them.
     function invariant_marketplaceHoldsNoPaymentTokens() public view {
-        assertEq(handler.paymentToken().balanceOf(address(handler.marketplace())), 0, "Marketplace holds payment tokens");
+        assertEq(
+            handler.paymentToken().balanceOf(address(handler.marketplace())), 0, "Marketplace holds payment tokens"
+        );
     }
-} 
+}

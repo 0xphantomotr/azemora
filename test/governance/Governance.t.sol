@@ -10,10 +10,7 @@ import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 interface IUUPS {
     function upgradeTo(address newImplementation) external;
-    function upgradeToAndCall(
-        address newImplementation,
-        bytes calldata data
-    ) external payable;
+    function upgradeToAndCall(address newImplementation, bytes calldata data) external payable;
 }
 
 contract GovernanceTest is Test {
@@ -30,38 +27,21 @@ contract GovernanceTest is Test {
 
         // 1. Deploy Registry
         ProjectRegistry registryImpl = new ProjectRegistry();
-        bytes memory registryInitData = abi.encodeCall(
-            ProjectRegistry.initialize,
-            ()
-        );
-        ERC1967Proxy registryProxy = new ERC1967Proxy(
-            address(registryImpl),
-            registryInitData
-        );
+        bytes memory registryInitData = abi.encodeCall(ProjectRegistry.initialize, ());
+        ERC1967Proxy registryProxy = new ERC1967Proxy(address(registryImpl), registryInitData);
         registry = ProjectRegistry(address(registryProxy));
 
         // 2. Deploy DynamicImpactCredit
         DynamicImpactCredit creditImpl = new DynamicImpactCredit();
-        bytes memory creditInitData = abi.encodeCall(
-            DynamicImpactCredit.initialize,
-            ("ipfs://contract-metadata.json", address(registry))
-        );
-        ERC1967Proxy creditProxy = new ERC1967Proxy(
-            address(creditImpl),
-            creditInitData
-        );
+        bytes memory creditInitData =
+            abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://contract-metadata.json", address(registry)));
+        ERC1967Proxy creditProxy = new ERC1967Proxy(address(creditImpl), creditInitData);
         credit = DynamicImpactCredit(address(creditProxy));
 
         // 3. Deploy DMRVManager
         DMRVManager managerImpl = new DMRVManager();
-        bytes memory managerInitData = abi.encodeCall(
-            DMRVManager.initialize,
-            (address(registry), address(credit))
-        );
-        ERC1967Proxy managerProxy = new ERC1967Proxy(
-            address(managerImpl),
-            managerInitData
-        );
+        bytes memory managerInitData = abi.encodeCall(DMRVManager.initialize, (address(registry), address(credit)));
+        ERC1967Proxy managerProxy = new ERC1967Proxy(address(managerImpl), managerInitData);
         manager = DMRVManager(address(managerProxy));
 
         vm.stopPrank();
@@ -117,4 +97,4 @@ contract GovernanceTest is Test {
         vm.expectRevert(); // Reverts, but not due to an access control error
         IUUPS(address(manager)).upgradeTo(newImpl);
     }
-} 
+}

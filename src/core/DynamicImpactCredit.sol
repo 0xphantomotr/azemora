@@ -6,13 +6,9 @@ import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol"
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./ProjectRegistry.sol";
 
-contract DynamicImpactCredit is
-    ERC1155Upgradeable,
-    AccessControlUpgradeable,
-    UUPSUpgradeable
-{
-    bytes32 public constant DMRV_MANAGER_ROLE      = keccak256("DMRV_MANAGER_ROLE");
-    bytes32 public constant METADATA_UPDATER_ROLE  = keccak256("METADATA_UPDATER_ROLE");
+contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgradeable {
+    bytes32 public constant DMRV_MANAGER_ROLE = keccak256("DMRV_MANAGER_ROLE");
+    bytes32 public constant METADATA_UPDATER_ROLE = keccak256("METADATA_UPDATER_ROLE");
 
     mapping(uint256 => string[]) private _tokenURIs;
     string private _contractURI;
@@ -20,11 +16,11 @@ contract DynamicImpactCredit is
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
-        _disableInitializers();      // protect the impl
+        _disableInitializers(); // protect the impl
     }
 
     function initialize(string memory contractURI_, address projectRegistry_) public initializer {
-        __ERC1155_init("");          // base URI empty – each token has its own
+        __ERC1155_init(""); // base URI empty – each token has its own
         __AccessControl_init();
         __UUPSUpgradeable_init();
 
@@ -34,28 +30,23 @@ contract DynamicImpactCredit is
     }
 
     /* ---------- mint / batchMint ---------- */
-    function mintCredits(
-        address to,
-        bytes32 projectId,
-        uint256 amount,
-        string calldata newUri
-    ) external onlyRole(DMRV_MANAGER_ROLE) {
+    function mintCredits(address to, bytes32 projectId, uint256 amount, string calldata newUri)
+        external
+        onlyRole(DMRV_MANAGER_ROLE)
+    {
         require(projectRegistry.isProjectActive(projectId), "NOT_ACTIVE");
-        
+
         uint256 tokenId = uint256(projectId);
         _mint(to, tokenId, amount, "");
-        
+
         // Always update the URI by pushing to the history array
         _tokenURIs[tokenId].push(newUri);
-        
+
         emit URI(newUri, tokenId);
     }
 
     /* ---------- metadata update ---------- */
-    function setTokenURI(bytes32 id, string calldata newUri)
-        external
-        onlyRole(METADATA_UPDATER_ROLE)
-    {
+    function setTokenURI(bytes32 id, string calldata newUri) external onlyRole(METADATA_UPDATER_ROLE) {
         uint256 tokenId = uint256(id);
         _tokenURIs[tokenId].push(newUri);
         emit URI(newUri, tokenId);
@@ -72,14 +63,8 @@ contract DynamicImpactCredit is
     }
 
     /* ---------- retire / burn ---------- */
-    function retire(address from, bytes32 id, uint256 amount)
-        external
-        virtual
-    {
-        require(
-            from == _msgSender() || isApprovedForAll(from, _msgSender()),
-            "NOT_AUTHORIZED"
-        );
+    function retire(address from, bytes32 id, uint256 amount) external virtual {
+        require(from == _msgSender() || isApprovedForAll(from, _msgSender()), "NOT_AUTHORIZED");
         uint256 tokenId = uint256(id);
         _burn(from, tokenId, amount);
         emit CreditsRetired(from, id, amount);
@@ -88,12 +73,7 @@ contract DynamicImpactCredit is
     event CreditsRetired(address indexed from, bytes32 indexed id, uint256 amount);
 
     /* ---------- upgrade auth ---------- */
-    function _authorizeUpgrade(address /* newImpl */)
-        internal
-        virtual
-        override
-        onlyRole(DEFAULT_ADMIN_ROLE)
-    {}
+    function _authorizeUpgrade(address /* newImpl */ ) internal virtual override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     /* ---------- interface fan-in ---------- */
     function supportsInterface(bytes4 interfaceId)
@@ -106,23 +86,19 @@ contract DynamicImpactCredit is
     }
 
     function batchMintCredits(
-    address to,
-    bytes32[] calldata ids,
-    uint256[] calldata amounts,
-    string[] calldata uris   // 1-to-1 with ids
-    ) external onlyRole(DMRV_MANAGER_ROLE)
-    {
+        address to,
+        bytes32[] calldata ids,
+        uint256[] calldata amounts,
+        string[] calldata uris // 1-to-1 with ids
+    ) external onlyRole(DMRV_MANAGER_ROLE) {
         require(ids.length == amounts.length && ids.length == uris.length, "LENGTH_MISMATCH");
-        
+
         uint256[] memory tokenIds = new uint256[](ids.length);
         for (uint256 i = 0; i < ids.length; ++i) {
-            require(
-                projectRegistry.isProjectActive(ids[i]),
-                "DIC: PROJECT_NOT_ACTIVE"
-            );
+            require(projectRegistry.isProjectActive(ids[i]), "DIC: PROJECT_NOT_ACTIVE");
             tokenIds[i] = uint256(ids[i]);
         }
-        
+
         _mintBatch(to, tokenIds, amounts, "");
 
         for (uint256 i = 0; i < ids.length; ++i) {
@@ -137,11 +113,7 @@ contract DynamicImpactCredit is
         return _contractURI;
     }
 
-    function setContractURI(string calldata newUri)
-        external
-        onlyRole(DEFAULT_ADMIN_ROLE)
-    {
+    function setContractURI(string calldata newUri) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _contractURI = newUri;
     }
-
 }

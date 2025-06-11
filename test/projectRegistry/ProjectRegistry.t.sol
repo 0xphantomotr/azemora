@@ -65,26 +65,22 @@ contract ProjectRegistryTest is Test {
         vm.prank(verifier);
         vm.expectEmit(true, true, true, true, address(registry));
         emit ProjectRegistry.ProjectStatusChanged(
-            projectId,
-            ProjectRegistry.ProjectStatus.Pending,
-            ProjectRegistry.ProjectStatus.Active
+            projectId, ProjectRegistry.ProjectStatus.Pending, ProjectRegistry.ProjectStatus.Active
         );
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
         assertTrue(registry.isProjectActive(projectId));
     }
-    
+
     function test_SetStatus_AdminCanPauseAndArchive() public {
         // First, activate the project
         vm.prank(verifier);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
-        
+
         // Then, admin can pause it
         vm.startPrank(admin);
         vm.expectEmit(true, true, true, true, address(registry));
         emit ProjectRegistry.ProjectStatusChanged(
-            projectId,
-            ProjectRegistry.ProjectStatus.Active,
-            ProjectRegistry.ProjectStatus.Paused
+            projectId, ProjectRegistry.ProjectStatus.Active, ProjectRegistry.ProjectStatus.Paused
         );
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Paused);
         assertEq(uint8(registry.getProject(projectId).status), uint8(ProjectRegistry.ProjectStatus.Paused));
@@ -92,13 +88,11 @@ contract ProjectRegistryTest is Test {
         // And admin can archive it
         vm.expectEmit(true, true, true, true, address(registry));
         emit ProjectRegistry.ProjectStatusChanged(
-            projectId,
-            ProjectRegistry.ProjectStatus.Paused,
-            ProjectRegistry.ProjectStatus.Archived
+            projectId, ProjectRegistry.ProjectStatus.Paused, ProjectRegistry.ProjectStatus.Archived
         );
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Archived);
         vm.stopPrank();
-        
+
         assertEq(uint8(registry.getProject(projectId).status), uint8(ProjectRegistry.ProjectStatus.Archived));
         assertFalse(registry.isProjectActive(projectId));
     }
@@ -123,14 +117,14 @@ contract ProjectRegistryTest is Test {
         vm.expectRevert("ProjectRegistry: Invalid status transition");
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Pending);
     }
-    
+
     /* ----------------- */
     /*     Ownership     */
     /* ----------------- */
 
     function test_SetMetaURI_OnlyOwnerCanUpdate() public {
         string memory newURI = "ipfs://updated.json";
-        
+
         // Owner should succeed
         vm.prank(projectOwner);
         vm.expectEmit(true, true, true, true, address(registry));
@@ -167,10 +161,10 @@ contract ProjectRegistryTest is Test {
         vm.prank(caller);
         vm.expectRevert("ProjectRegistry: Caller is not the project owner");
         registry.setMetaURI(projectId, uri);
-        
+
         // Test transferOwnership
         vm.prank(caller);
         vm.expectRevert("ProjectRegistry: Caller is not the project owner");
         registry.transferOwnership(projectId, newOwner);
     }
-} 
+}

@@ -24,19 +24,15 @@ interface IProjectRegistry {
  * and AccessControl for role-based permissions, allowing for permissionless registration
  * with a subsequent verification step.
  */
-contract ProjectRegistry is
-    Initializable,
-    AccessControlUpgradeable,
-    UUPSUpgradeable,
-    ReentrancyGuardUpgradeable
-{
+contract ProjectRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable, ReentrancyGuardUpgradeable {
     bytes32 public constant VERIFIER_ROLE = keccak256("VERIFIER_ROLE");
 
     enum ProjectStatus {
         Pending, // Newly registered, awaiting verification
-        Active,  // Verified and eligible for credit minting
-        Paused,  // Temporarily suspended by admin
+        Active, // Verified and eligible for credit minting
+        Paused, // Temporarily suspended by admin
         Archived // Permanently archived, not active
+
     }
 
     struct Project {
@@ -50,22 +46,10 @@ contract ProjectRegistry is
 
     // --- Events ---
 
-    event ProjectRegistered(
-        bytes32 indexed projectId,
-        address indexed owner,
-        string metaURI
-    );
-    event ProjectStatusChanged(
-        bytes32 indexed projectId,
-        ProjectStatus oldStatus,
-        ProjectStatus newStatus
-    );
+    event ProjectRegistered(bytes32 indexed projectId, address indexed owner, string metaURI);
+    event ProjectStatusChanged(bytes32 indexed projectId, ProjectStatus oldStatus, ProjectStatus newStatus);
     event ProjectMetaURIUpdated(bytes32 indexed projectId, string newMetaURI);
-    event ProjectOwnershipTransferred(
-        bytes32 indexed projectId,
-        address indexed oldOwner,
-        address indexed newOwner
-    );
+    event ProjectOwnershipTransferred(bytes32 indexed projectId, address indexed oldOwner, address indexed newOwner);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -91,21 +75,11 @@ contract ProjectRegistry is
      * @param projectId The unique identifier for the project.
      * @param metaURI A URI pointing to an off-chain JSON file with project details.
      */
-    function registerProject(bytes32 projectId, string calldata metaURI)
-        external
-        nonReentrant
-    {
-        require(
-            _projects[projectId].id == 0,
-            "ProjectRegistry: ID already exists"
-        );
+    function registerProject(bytes32 projectId, string calldata metaURI) external nonReentrant {
+        require(_projects[projectId].id == 0, "ProjectRegistry: ID already exists");
 
-        _projects[projectId] = Project({
-            id: projectId,
-            owner: _msgSender(),
-            status: ProjectStatus.Pending,
-            metaURI: metaURI
-        });
+        _projects[projectId] =
+            Project({id: projectId, owner: _msgSender(), status: ProjectStatus.Pending, metaURI: metaURI});
 
         emit ProjectRegistered(projectId, _msgSender(), metaURI);
     }
@@ -117,25 +91,14 @@ contract ProjectRegistry is
      * @param projectId The ID of the project to update.
      * @param newStatus The new status for the project.
      */
-    function setProjectStatus(bytes32 projectId, ProjectStatus newStatus)
-        external
-        nonReentrant
-    {
+    function setProjectStatus(bytes32 projectId, ProjectStatus newStatus) external nonReentrant {
         Project storage project = _projects[projectId];
         require(project.id != 0, "ProjectRegistry: Project not found");
 
         if (newStatus == ProjectStatus.Active) {
-            require(
-                hasRole(VERIFIER_ROLE, _msgSender()),
-                "ProjectRegistry: Caller is not a verifier"
-            );
-        } else if (
-            newStatus == ProjectStatus.Paused || newStatus == ProjectStatus.Archived
-        ) {
-            require(
-                hasRole(DEFAULT_ADMIN_ROLE, _msgSender()),
-                "ProjectRegistry: Caller is not an admin"
-            );
+            require(hasRole(VERIFIER_ROLE, _msgSender()), "ProjectRegistry: Caller is not a verifier");
+        } else if (newStatus == ProjectStatus.Paused || newStatus == ProjectStatus.Archived) {
+            require(hasRole(DEFAULT_ADMIN_ROLE, _msgSender()), "ProjectRegistry: Caller is not an admin");
         } else {
             revert("ProjectRegistry: Invalid status transition");
         }
@@ -149,10 +112,7 @@ contract ProjectRegistry is
      * @param projectId The ID of the project to update.
      * @param newMetaURI The new metadata URI.
      */
-    function setMetaURI(bytes32 projectId, string calldata newMetaURI)
-        external
-        nonReentrant
-    {
+    function setMetaURI(bytes32 projectId, string calldata newMetaURI) external nonReentrant {
         _checkProjectOwner(projectId);
         _projects[projectId].metaURI = newMetaURI;
         emit ProjectMetaURIUpdated(projectId, newMetaURI);
@@ -163,15 +123,9 @@ contract ProjectRegistry is
      * @param projectId The ID of the project being transferred.
      * @param newOwner The address of the new owner.
      */
-    function transferOwnership(bytes32 projectId, address newOwner)
-        external
-        nonReentrant
-    {
+    function transferOwnership(bytes32 projectId, address newOwner) external nonReentrant {
         _checkProjectOwner(projectId);
-        require(
-            newOwner != address(0),
-            "ProjectRegistry: New owner is the zero address"
-        );
+        require(newOwner != address(0), "ProjectRegistry: New owner is the zero address");
 
         address oldOwner = _projects[projectId].owner;
         _projects[projectId].owner = newOwner;
@@ -185,15 +139,8 @@ contract ProjectRegistry is
      * @param projectId The ID of the project.
      * @return A Project struct containing all project data.
      */
-    function getProject(bytes32 projectId)
-        external
-        view
-        returns (Project memory)
-    {
-        require(
-            _projects[projectId].id != 0,
-            "ProjectRegistry: Project not found"
-        );
+    function getProject(bytes32 projectId) external view returns (Project memory) {
+        require(_projects[projectId].id != 0, "ProjectRegistry: Project not found");
         return _projects[projectId];
     }
 
@@ -214,30 +161,13 @@ contract ProjectRegistry is
      * @dev Reverts if the caller is not the owner of the specified project.
      */
     function _checkProjectOwner(bytes32 projectId) internal view {
-        require(
-            _projects[projectId].id != 0,
-            "ProjectRegistry: Project not found"
-        );
-        require(
-            _projects[projectId].owner == _msgSender(),
-            "ProjectRegistry: Caller is not the project owner"
-        );
+        require(_projects[projectId].id != 0, "ProjectRegistry: Project not found");
+        require(_projects[projectId].owner == _msgSender(), "ProjectRegistry: Caller is not the project owner");
     }
 
-    function _authorizeUpgrade(address newImplementation)
-        internal
-        override
-        onlyRole(DEFAULT_ADMIN_ROLE)
-    {}
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
-    function supportsInterface(bytes4 interfaceId)
-        public
-        view
-        override(AccessControlUpgradeable)
-        returns (bool)
-    {
-        return
-            interfaceId == type(IProjectRegistry).interfaceId ||
-            super.supportsInterface(interfaceId);
+    function supportsInterface(bytes4 interfaceId) public view override(AccessControlUpgradeable) returns (bool) {
+        return interfaceId == type(IProjectRegistry).interfaceId || super.supportsInterface(interfaceId);
     }
-} 
+}

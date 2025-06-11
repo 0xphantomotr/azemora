@@ -16,13 +16,13 @@ interface IUUPS {
 
 contract DynamicImpactCreditTest is Test {
     DynamicImpactCredit creditImpl;
-    DynamicImpactCredit credit;   // proxy cast
+    DynamicImpactCredit credit; // proxy cast
     ProjectRegistry registry;
 
-    address admin  = address(0xA11CE);
+    address admin = address(0xA11CE);
     address dmrvManager = address(0xB01D);
-    address user   = address(0xCAFE);
-    address other  = address(0xD00D);
+    address user = address(0xCAFE);
+    address other = address(0xD00D);
     address verifier = address(0xC1E4);
 
     /* ---------- set-up ---------- */
@@ -39,10 +39,8 @@ contract DynamicImpactCreditTest is Test {
         // Deploy Credit Contract
         creditImpl = new DynamicImpactCredit();
 
-        bytes memory creditInitData = abi.encodeCall(
-            DynamicImpactCredit.initialize,
-            ("ipfs://contract-metadata.json", address(registry))
-        );
+        bytes memory creditInitData =
+            abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://contract-metadata.json", address(registry)));
 
         ERC1967Proxy creditProxy = new ERC1967Proxy(address(creditImpl), creditInitData);
         credit = DynamicImpactCredit(address(creditProxy));
@@ -84,10 +82,10 @@ contract DynamicImpactCreditTest is Test {
         // Register and activate projects - FIX: separate prank calls for each registration
         vm.prank(user);
         registry.registerProject(ids[0], "p10.json");
-        
+
         vm.prank(user);
         registry.registerProject(ids[1], "p11.json");
-        
+
         vm.startPrank(verifier);
         registry.setProjectStatus(ids[0], ProjectRegistry.ProjectStatus.Active);
         registry.setProjectStatus(ids[1], ProjectRegistry.ProjectStatus.Active);
@@ -109,11 +107,11 @@ contract DynamicImpactCreditTest is Test {
         vm.prank(verifier);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
 
-        vm.expectRevert(abi.encodeWithSignature(
-            "AccessControlUnauthorizedAccount(address,bytes32)",
-            other,
-            credit.DMRV_MANAGER_ROLE()
-        ));
+        vm.expectRevert(
+            abi.encodeWithSignature(
+                "AccessControlUnauthorizedAccount(address,bytes32)", other, credit.DMRV_MANAGER_ROLE()
+            )
+        );
         vm.prank(other);
         credit.mintCredits(user, projectId, 1, "ipfs://fail.json");
     }
@@ -125,7 +123,7 @@ contract DynamicImpactCreditTest is Test {
         registry.registerProject(projectId, "p3.json");
         vm.prank(verifier);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
-        
+
         string memory oldURI = "ipfs://old.json";
         vm.startPrank(dmrvManager);
         credit.mintCredits(user, projectId, 1, oldURI);
@@ -149,7 +147,7 @@ contract DynamicImpactCreditTest is Test {
         registry.registerProject(projectId, "p4.json");
         vm.prank(verifier);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
-        
+
         vm.prank(dmrvManager);
         credit.mintCredits(user, projectId, 10, "ipfs://t.json");
 
@@ -194,7 +192,7 @@ contract DynamicImpactCreditTest is Test {
 
         // deploy V2 with new variable
         DynamicImpactCreditV2 v2 = new DynamicImpactCreditV2();
-        
+
         vm.startPrank(admin);
         // Empty bytes for data since we don't need initialization logic
         IUUPS(address(credit)).upgradeToAndCall(address(v2), "");
@@ -217,7 +215,7 @@ contract DynamicImpactCreditTest is Test {
 /* ---------- dummy V2 impl for upgrade test ---------- */
 contract DynamicImpactCreditV2 is DynamicImpactCredit {
     uint256 public constant VERSION = 2;
-    
+
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         // constructor is called but implementation remains uninitialized

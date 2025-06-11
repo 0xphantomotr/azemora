@@ -26,10 +26,8 @@ contract DynamicImpactCreditFuzzTest is Test {
         // Deploy Credit Contract
         DynamicImpactCredit impl = new DynamicImpactCredit();
 
-        bytes memory initData = abi.encodeCall(
-            DynamicImpactCredit.initialize,
-            ("ipfs://contract-metadata.json", address(registry))
-        );
+        bytes memory initData =
+            abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://contract-metadata.json", address(registry)));
 
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         credit = DynamicImpactCredit(address(proxy));
@@ -53,25 +51,15 @@ contract DynamicImpactCreditFuzzTest is Test {
         for (uint8 i = 0; i < arraySize; i++) {
             // Ensure unique IDs by using the index
             ids[i] = keccak256(abi.encode(seed, i + 1));
-            amounts[i] =
-                uint256(keccak256(abi.encode(seed, "amount", i))) % 1000 +
-                1;
+            amounts[i] = uint256(keccak256(abi.encode(seed, "amount", i))) % 1000 + 1;
             uris[i] = string(
-                abi.encodePacked(
-                    "ipfs://",
-                    vm.toString(
-                        uint256(keccak256(abi.encode(seed, "uri", i))) % 1000000
-                    )
-                )
+                abi.encodePacked("ipfs://", vm.toString(uint256(keccak256(abi.encode(seed, "uri", i))) % 1000000))
             );
             // Register and activate project
             vm.prank(user);
             registry.registerProject(ids[i], "meta.json");
             vm.prank(verifier);
-            registry.setProjectStatus(
-                ids[i],
-                ProjectRegistry.ProjectStatus.Active
-            );
+            registry.setProjectStatus(ids[i], ProjectRegistry.ProjectStatus.Active);
         }
 
         vm.prank(dmrvManager);
@@ -79,25 +67,13 @@ contract DynamicImpactCreditFuzzTest is Test {
 
         // Verify all tokens were minted with correct amounts and URIs
         for (uint8 i = 0; i < arraySize; i++) {
-            assertEq(
-                credit.balanceOf(user, uint256(ids[i])),
-                amounts[i],
-                "Balance mismatch for token ID"
-            );
-            assertEq(
-                credit.uri(uint256(ids[i])),
-                uris[i],
-                "URI mismatch for token ID"
-            );
+            assertEq(credit.balanceOf(user, uint256(ids[i])), amounts[i], "Balance mismatch for token ID");
+            assertEq(credit.uri(uint256(ids[i])), uris[i], "URI mismatch for token ID");
         }
     }
 
     // Fuzz test: Retirement with random amounts
-    function testFuzz_Retire(
-        uint256 seed,
-        uint256 mintAmount,
-        uint256 retireAmount
-    ) public {
+    function testFuzz_Retire(uint256 seed, uint256 mintAmount, uint256 retireAmount) public {
         bytes32 projectId = keccak256(abi.encode(seed));
         // Constrain values to reasonable ranges
         mintAmount = bound(mintAmount, 1, 1000000);
@@ -107,47 +83,29 @@ contract DynamicImpactCreditFuzzTest is Test {
         vm.prank(user);
         registry.registerProject(projectId, "meta.json");
         vm.prank(verifier);
-        registry.setProjectStatus(
-            projectId,
-            ProjectRegistry.ProjectStatus.Active
-        );
+        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
 
         // Mint the tokens
         vm.prank(dmrvManager);
-        credit.mintCredits(
-            user,
-            projectId,
-            mintAmount,
-            string(abi.encodePacked("ipfs://token", vm.toString(seed)))
-        );
+        credit.mintCredits(user, projectId, mintAmount, string(abi.encodePacked("ipfs://token", vm.toString(seed))));
 
         // Retire some tokens
         vm.prank(user);
         credit.retire(user, projectId, retireAmount);
 
         // Verify the remaining balance
-        assertEq(
-            credit.balanceOf(user, uint256(projectId)),
-            mintAmount - retireAmount
-        );
+        assertEq(credit.balanceOf(user, uint256(projectId)), mintAmount - retireAmount);
     }
 
     // Fuzz test: URI updates with random strings
-    function testFuzz_URIUpdates(
-        uint256 seed,
-        string calldata initialURI,
-        string calldata updatedURI
-    ) public {
+    function testFuzz_URIUpdates(uint256 seed, string calldata initialURI, string calldata updatedURI) public {
         bytes32 projectId = keccak256(abi.encode(seed));
 
         // Register and activate project
         vm.prank(user);
         registry.registerProject(projectId, "meta.json");
         vm.prank(verifier);
-        registry.setProjectStatus(
-            projectId,
-            ProjectRegistry.ProjectStatus.Active
-        );
+        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
 
         // Mint with initial URI
         vm.prank(dmrvManager);
@@ -166,4 +124,4 @@ contract DynamicImpactCreditFuzzTest is Test {
         assertEq(history[0], initialURI, "Initial URI mismatch in history");
         assertEq(history[1], updatedURI, "Updated URI mismatch in history");
     }
-} 
+}

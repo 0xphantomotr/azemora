@@ -47,12 +47,7 @@ contract MarketplaceComplexTest is Test {
 
         // Deploy Registry, Credit, and Marketplace contracts
         registry = ProjectRegistry(
-            address(
-                new ERC1967Proxy(
-                    address(new ProjectRegistry()),
-                    abi.encodeCall(ProjectRegistry.initialize, ())
-                )
-            )
+            address(new ERC1967Proxy(address(new ProjectRegistry()), abi.encodeCall(ProjectRegistry.initialize, ())))
         );
         registry.grantRole(registry.VERIFIER_ROLE(), verifier);
 
@@ -60,10 +55,7 @@ contract MarketplaceComplexTest is Test {
             address(
                 new ERC1967Proxy(
                     address(new DynamicImpactCredit()),
-                    abi.encodeCall(
-                        DynamicImpactCredit.initialize,
-                        ("ipfs://meta.json", address(registry))
-                    )
+                    abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://meta.json", address(registry)))
                 )
             )
         );
@@ -73,10 +65,7 @@ contract MarketplaceComplexTest is Test {
             address(
                 new ERC1967Proxy(
                     address(new Marketplace()),
-                    abi.encodeCall(
-                        Marketplace.initialize,
-                        (address(credit), address(paymentToken))
-                    )
+                    abi.encodeCall(Marketplace.initialize, (address(credit), address(paymentToken)))
                 )
             )
         );
@@ -90,10 +79,7 @@ contract MarketplaceComplexTest is Test {
         vm.prank(seller1);
         registry.registerProject(projectId1, "ipfs://alpha.json");
         vm.prank(verifier);
-        registry.setProjectStatus(
-            projectId1,
-            ProjectRegistry.ProjectStatus.Active
-        );
+        registry.setProjectStatus(projectId1, ProjectRegistry.ProjectStatus.Active);
         vm.prank(dmrvManager);
         credit.mintCredits(seller1, projectId1, 500, "ipfs://c-alpha.json");
 
@@ -101,10 +87,7 @@ contract MarketplaceComplexTest is Test {
         vm.prank(seller2);
         registry.registerProject(projectId2, "ipfs://beta.json");
         vm.prank(verifier);
-        registry.setProjectStatus(
-            projectId2,
-            ProjectRegistry.ProjectStatus.Active
-        );
+        registry.setProjectStatus(projectId2, ProjectRegistry.ProjectStatus.Active);
         vm.prank(dmrvManager);
         credit.mintCredits(seller2, projectId2, 1000, "ipfs://c-beta.json");
     }
@@ -161,10 +144,7 @@ contract MarketplaceComplexTest is Test {
         assertFalse(listing1.active);
         assertEq(credit.balanceOf(buyer2, tokenId1), buyAmount2);
         assertEq(credit.balanceOf(address(marketplace), tokenId1), 0);
-        assertEq(
-            paymentToken.balanceOf(seller1),
-            seller1InitialPayment + proceeds2
-        );
+        assertEq(paymentToken.balanceOf(seller1), seller1InitialPayment + proceeds2);
 
         // STEP 5: Buyer1 buys the entire listing from seller2
         uint256 buyAmount3 = 500;
@@ -212,9 +192,6 @@ contract MarketplaceComplexTest is Test {
         marketplace.buy(listingId4, buyAmount4);
         vm.stopPrank();
 
-        assertEq(
-            paymentToken.balanceOf(feeRecipient),
-            feeRecipientInitialBalance + newFee
-        );
+        assertEq(paymentToken.balanceOf(feeRecipient), feeRecipientInitialBalance + newFee);
     }
-} 
+}

@@ -11,11 +11,7 @@ import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 // Minimal mock ERC20 to avoid dependency on forge-std/mocks
 contract MockERC20 {
     event Transfer(address indexed from, address indexed to, uint256 value);
-    event Approval(
-        address indexed owner,
-        address indexed spender,
-        uint256 value
-    );
+    event Approval(address indexed owner, address indexed spender, uint256 value);
 
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
@@ -36,15 +32,8 @@ contract MockERC20 {
         return true;
     }
 
-    function transferFrom(
-        address from,
-        address to,
-        uint256 amount
-    ) public returns (bool) {
-        require(
-            allowance[from][msg.sender] >= amount,
-            "ERC20: insufficient allowance"
-        );
+    function transferFrom(address from, address to, uint256 amount) public returns (bool) {
+        require(allowance[from][msg.sender] >= amount, "ERC20: insufficient allowance");
         if (allowance[from][msg.sender] != type(uint256).max) {
             allowance[from][msg.sender] -= amount;
         }
@@ -95,10 +84,8 @@ contract MarketplaceTest is Test {
 
         // 1. Deploy Registry
         ProjectRegistry registryImpl = new ProjectRegistry();
-        ERC1967Proxy registryProxy = new ERC1967Proxy(
-            address(registryImpl),
-            abi.encodeCall(ProjectRegistry.initialize, ())
-        );
+        ERC1967Proxy registryProxy =
+            new ERC1967Proxy(address(registryImpl), abi.encodeCall(ProjectRegistry.initialize, ()));
         registry = ProjectRegistry(address(registryProxy));
         registry.grantRole(registry.VERIFIER_ROLE(), verifier);
 
@@ -106,10 +93,7 @@ contract MarketplaceTest is Test {
         DynamicImpactCredit creditImpl = new DynamicImpactCredit();
         ERC1967Proxy creditProxy = new ERC1967Proxy(
             address(creditImpl),
-            abi.encodeCall(
-                DynamicImpactCredit.initialize,
-                ("ipfs://contract-metadata.json", address(registry))
-            )
+            abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://contract-metadata.json", address(registry)))
         );
         credit = DynamicImpactCredit(address(creditProxy));
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), dmrvManager);
@@ -117,11 +101,7 @@ contract MarketplaceTest is Test {
         // 3. Deploy Marketplace
         Marketplace marketplaceImpl = new Marketplace();
         ERC1967Proxy marketplaceProxy = new ERC1967Proxy(
-            address(marketplaceImpl),
-            abi.encodeCall(
-                Marketplace.initialize,
-                (address(credit), address(paymentToken))
-            )
+            address(marketplaceImpl), abi.encodeCall(Marketplace.initialize, (address(credit), address(paymentToken)))
         );
         marketplace = Marketplace(address(marketplaceProxy));
         marketplace.setFeeRecipient(feeRecipient);
@@ -134,10 +114,7 @@ contract MarketplaceTest is Test {
         vm.prank(seller);
         registry.registerProject(projectId, "ipfs://project.json");
         vm.prank(verifier);
-        registry.setProjectStatus(
-            projectId,
-            ProjectRegistry.ProjectStatus.Active
-        );
+        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
 
         // 2. Mint some credits to the seller
         vm.prank(dmrvManager);
@@ -164,21 +141,10 @@ contract MarketplaceTest is Test {
         vm.stopPrank();
 
         uint256 finalSellerBalance = credit.balanceOf(seller, tokenId);
-        uint256 marketplaceBalance = credit.balanceOf(
-            address(marketplace),
-            tokenId
-        );
+        uint256 marketplaceBalance = credit.balanceOf(address(marketplace), tokenId);
 
-        assertEq(
-            initialSellerBalance - finalSellerBalance,
-            100,
-            "Seller should send tokens to marketplace"
-        );
-        assertEq(
-            marketplaceBalance,
-            100,
-            "Marketplace should receive tokens"
-        );
+        assertEq(initialSellerBalance - finalSellerBalance, 100, "Seller should send tokens to marketplace");
+        assertEq(marketplaceBalance, 100, "Marketplace should receive tokens");
 
         Marketplace.Listing memory listing = marketplace.getListing(listingId);
 
@@ -211,14 +177,8 @@ contract MarketplaceTest is Test {
         assertEq(credit.balanceOf(buyer, tokenId), amountToBuy);
 
         // Check payment balances
-        assertEq(
-            paymentToken.balanceOf(seller),
-            sellerInitialPaymentBalance + sellerProceeds
-        );
-        assertEq(
-            paymentToken.balanceOf(feeRecipient),
-            feeRecipientInitialBalance + fee
-        );
+        assertEq(paymentToken.balanceOf(seller), sellerInitialPaymentBalance + sellerProceeds);
+        assertEq(paymentToken.balanceOf(feeRecipient), feeRecipientInitialBalance + fee);
 
         // Check listing state
         Marketplace.Listing memory listing = marketplace.getListing(listingId);
@@ -246,10 +206,7 @@ contract MarketplaceTest is Test {
     function test_CancelListing() public {
         uint256 listingId = _list();
         uint256 sellerInitialBalance = credit.balanceOf(seller, tokenId);
-        uint256 marketplaceBalance = credit.balanceOf(
-            address(marketplace),
-            tokenId
-        );
+        uint256 marketplaceBalance = credit.balanceOf(address(marketplace), tokenId);
         assertEq(marketplaceBalance, 100);
 
         vm.prank(seller);
@@ -257,10 +214,7 @@ contract MarketplaceTest is Test {
 
         Marketplace.Listing memory listing = marketplace.getListing(listingId);
         assertFalse(listing.active);
-        assertEq(
-            credit.balanceOf(seller, tokenId),
-            sellerInitialBalance + 100
-        );
+        assertEq(credit.balanceOf(seller, tokenId), sellerInitialBalance + 100);
         assertEq(credit.balanceOf(address(marketplace), tokenId), 0);
     }
 
@@ -268,9 +222,7 @@ contract MarketplaceTest is Test {
         vm.startPrank(seller);
         vm.expectRevert(
             abi.encodeWithSelector(
-                bytes4(keccak256("ERC1155MissingApprovalForAll(address,address)")),
-                address(marketplace),
-                seller
+                bytes4(keccak256("ERC1155MissingApprovalForAll(address,address)")), address(marketplace), seller
             )
         );
         marketplace.list(tokenId, 100, 5 * 1e6);
@@ -295,4 +247,4 @@ contract MarketplaceTest is Test {
         vm.expectRevert("Marketplace: Not the seller");
         marketplace.cancel(listingId);
     }
-} 
+}
