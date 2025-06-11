@@ -5,6 +5,7 @@ import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol"
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 
 /**
  * @title IProjectRegistry
@@ -24,15 +25,21 @@ interface IProjectRegistry {
  * and AccessControl for role-based permissions, allowing for permissionless registration
  * with a subsequent verification step.
  */
-contract ProjectRegistry is Initializable, AccessControlUpgradeable, UUPSUpgradeable, ReentrancyGuardUpgradeable {
+contract ProjectRegistry is
+    Initializable,
+    AccessControlUpgradeable,
+    UUPSUpgradeable,
+    ReentrancyGuardUpgradeable,
+    PausableUpgradeable
+{
     bytes32 public constant VERIFIER_ROLE = keccak256("VERIFIER_ROLE");
+    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     enum ProjectStatus {
         Pending, // Newly registered, awaiting verification
         Active, // Verified and eligible for credit minting
         Paused, // Temporarily suspended by admin
         Archived // Permanently archived, not active
-
     }
 
     struct Project {
@@ -60,9 +67,11 @@ contract ProjectRegistry is Initializable, AccessControlUpgradeable, UUPSUpgrade
         __AccessControl_init();
         __UUPSUpgradeable_init();
         __ReentrancyGuard_init();
+        __Pausable_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
         _grantRole(VERIFIER_ROLE, _msgSender());
+        _grantRole(PAUSER_ROLE, _msgSender());
     }
 
     // --- State-Changing Functions ---
@@ -75,7 +84,7 @@ contract ProjectRegistry is Initializable, AccessControlUpgradeable, UUPSUpgrade
      * @param projectId The unique identifier for the project.
      * @param metaURI A URI pointing to an off-chain JSON file with project details.
      */
-    function registerProject(bytes32 projectId, string calldata metaURI) external nonReentrant {
+    function registerProject(bytes32 projectId, string calldata metaURI) external nonReentrant whenNotPaused {
         require(_projects[projectId].id == 0, "ProjectRegistry: ID already exists");
 
         _projects[projectId] =
@@ -91,7 +100,7 @@ contract ProjectRegistry is Initializable, AccessControlUpgradeable, UUPSUpgrade
      * @param projectId The ID of the project to update.
      * @param newStatus The new status for the project.
      */
-    function setProjectStatus(bytes32 projectId, ProjectStatus newStatus) external nonReentrant {
+    function setProjectStatus(bytes32 projectId, ProjectStatus newStatus) external nonReentrant whenNotPaused {
         Project storage project = _projects[projectId];
         require(project.id != 0, "ProjectRegistry: Project not found");
 
@@ -112,7 +121,7 @@ contract ProjectRegistry is Initializable, AccessControlUpgradeable, UUPSUpgrade
      * @param projectId The ID of the project to update.
      * @param newMetaURI The new metadata URI.
      */
-    function setMetaURI(bytes32 projectId, string calldata newMetaURI) external nonReentrant {
+    function setMetaURI(bytes32 projectId, string calldata newMetaURI) external nonReentrant whenNotPaused {
         _checkProjectOwner(projectId);
         _projects[projectId].metaURI = newMetaURI;
         emit ProjectMetaURIUpdated(projectId, newMetaURI);
@@ -123,7 +132,7 @@ contract ProjectRegistry is Initializable, AccessControlUpgradeable, UUPSUpgrade
      * @param projectId The ID of the project being transferred.
      * @param newOwner The address of the new owner.
      */
-    function transferOwnership(bytes32 projectId, address newOwner) external nonReentrant {
+    function transferOwnership(bytes32 projectId, address newOwner) external nonReentrant whenNotPaused {
         _checkProjectOwner(projectId);
         require(newOwner != address(0), "ProjectRegistry: New owner is the zero address");
 
@@ -153,6 +162,14 @@ contract ProjectRegistry is Initializable, AccessControlUpgradeable, UUPSUpgrade
      */
     function isProjectActive(bytes32 projectId) public view returns (bool) {
         return _projects[projectId].status == ProjectStatus.Active;
+    }
+
+    function pause() external onlyRole(PAUSER_ROLE) {
+        _pause();
+    }
+
+    function unpause() external onlyRole(PAUSER_ROLE) {
+        _unpause();
     }
 
     // --- Internal & Auth Functions ---

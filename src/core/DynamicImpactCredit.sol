@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts-upgradeable/token/ERC1155/ERC1155Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "./ProjectRegistry.sol";
 
 /**
@@ -16,9 +17,10 @@ import "./ProjectRegistry.sol";
  * the `DMRVManager` contract, ensuring credits are only created based on validated impact.
  * It is upgradeable using the UUPS pattern.
  */
-contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgradeable {
+contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgradeable, PausableUpgradeable {
     bytes32 public constant DMRV_MANAGER_ROLE = keccak256("DMRV_MANAGER_ROLE");
     bytes32 public constant METADATA_UPDATER_ROLE = keccak256("METADATA_UPDATER_ROLE");
+    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     mapping(uint256 => string[]) private _tokenURIs;
     string private _contractURI;
@@ -33,8 +35,10 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
         __ERC1155_init(""); // base URI empty – each token has its own
         __AccessControl_init();
         __UUPSUpgradeable_init();
+        __Pausable_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, _msgSender()); // This is required to make the initializer the admin.
+        _grantRole(PAUSER_ROLE, _msgSender());
         _contractURI = contractURI_;
         projectRegistry = IProjectRegistry(projectRegistry_);
     }
@@ -52,6 +56,7 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
     function mintCredits(address to, bytes32 projectId, uint256 amount, string calldata newUri)
         external
         onlyRole(DMRV_MANAGER_ROLE)
+        whenNotPaused
     {
         require(projectRegistry.isProjectActive(projectId), "NOT_ACTIVE");
 
@@ -71,7 +76,7 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
      * @param id The project ID of the token to update.
      * @param newUri The new metadata URI to add to the token's history.
      */
-    function setTokenURI(bytes32 id, string calldata newUri) external onlyRole(METADATA_UPDATER_ROLE) {
+    function setTokenURI(bytes32 id, string calldata newUri) external onlyRole(METADATA_UPDATER_ROLE) whenNotPaused {
         uint256 tokenId = uint256(id);
         _tokenURIs[tokenId].push(newUri);
         emit URI(newUri, tokenId);
@@ -109,7 +114,7 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
      * @param id The project ID of the credits to retire.
      * @param amount The quantity of credits to retire.
      */
-    function retire(address from, bytes32 id, uint256 amount) external virtual {
+    function retire(address from, bytes32 id, uint256 amount) external virtual whenNotPaused {
         require(from == _msgSender() || isApprovedForAll(from, _msgSender()), "NOT_AUTHORIZED");
         uint256 tokenId = uint256(id);
         _burn(from, tokenId, amount);
@@ -117,6 +122,14 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
     }
 
     event CreditsRetired(address indexed from, bytes32 indexed id, uint256 amount);
+
+    function pause() external onlyRole(PAUSER_ROLE) {
+        _pause();
+    }
+
+    function unpause() external onlyRole(PAUSER_ROLE) {
+        _unpause();
+    }
 
     /* ---------- upgrade auth ---------- */
     function _authorizeUpgrade(address /* newImpl */ ) internal virtual override onlyRole(DEFAULT_ADMIN_ROLE) {}
@@ -145,7 +158,7 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
         bytes32[] calldata ids,
         uint256[] calldata amounts,
         string[] calldata uris // 1-to-1 with ids
-    ) external onlyRole(DMRV_MANAGER_ROLE) {
+    ) external onlyRole(DMRV_MANAGER_ROLE) whenNotPaused {
         require(ids.length == amounts.length && ids.length == uris.length, "LENGTH_MISMATCH");
 
         uint256[] memory tokenIds = new uint256[](ids.length);

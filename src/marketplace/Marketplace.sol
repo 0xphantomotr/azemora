@@ -6,6 +6,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC1155/utils/ERC1155HolderUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 
 // --- Custom Interfaces to avoid import issues ---
 
@@ -76,8 +77,12 @@ contract Marketplace is
     AccessControlUpgradeable,
     UUPSUpgradeable,
     ReentrancyGuardUpgradeable,
-    ERC1155HolderUpgradeable
+    ERC1155HolderUpgradeable,
+    PausableUpgradeable
 {
+    // --- Roles ---
+    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
+
     // --- State ---
     IERC1155Upgradeable public creditContract;
     IERC20Upgradeable public paymentToken;
@@ -107,6 +112,7 @@ contract Marketplace is
     event FeeRecipientUpdated(address indexed newFeeRecipient);
     event FeeUpdated(uint256 newFeeBps);
     event PartialSold(uint256 indexed listingId, address indexed buyer, uint256 amount, uint256 totalPrice);
+    event FeePaid(address indexed recipient, uint256 amount);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -118,8 +124,10 @@ contract Marketplace is
         __UUPSUpgradeable_init();
         __ReentrancyGuard_init();
         __ERC1155Holder_init();
+        __Pausable_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
+        _grantRole(PAUSER_ROLE, _msgSender());
 
         creditContract = IERC1155Upgradeable(creditContract_);
         paymentToken = IERC20Upgradeable(paymentToken_);
@@ -137,6 +145,7 @@ contract Marketplace is
     function list(uint256 tokenId, uint256 amount, uint256 pricePerUnit)
         external
         nonReentrant
+        whenNotPaused
         returns (uint256 listingId)
     {
         require(amount > 0, "Marketplace: Amount must be > 0");
@@ -169,7 +178,7 @@ contract Marketplace is
      * @param listingId The ID of the listing to buy from.
      * @param amountToBuy The quantity of tokens to purchase from the listing.
      */
-    function buy(uint256 listingId, uint256 amountToBuy) external nonReentrant {
+    function buy(uint256 listingId, uint256 amountToBuy) external nonReentrant whenNotPaused {
         Listing storage listing = listings[listingId];
         // --- CHECKS ---
         require(listing.active, "Marketplace: Listing not active");
@@ -198,6 +207,7 @@ contract Marketplace is
         );
         if (fee > 0) {
             require(paymentToken.transferFrom(_msgSender(), feeRecipient, fee), "Marketplace: Fee payment failed");
+            emit FeePaid(feeRecipient, fee);
         }
 
         // Transfer the NFT from the marketplace to the buyer
@@ -210,7 +220,7 @@ contract Marketplace is
      * returned from custody to the seller.
      * @param listingId The ID of the listing to cancel.
      */
-    function cancel(uint256 listingId) external nonReentrant {
+    function cancel(uint256 listingId) external nonReentrant whenNotPaused {
         Listing storage listing = listings[listingId];
         require(listing.active, "Marketplace: Listing not active");
         require(listing.seller == _msgSender(), "Marketplace: Not the seller");
@@ -230,7 +240,7 @@ contract Marketplace is
      * @param listingId The ID of the listing to update.
      * @param newPricePerUnit The new price for each unit in the listing.
      */
-    function updatePrice(uint256 listingId, uint256 newPricePerUnit) external {
+    function updatePrice(uint256 listingId, uint256 newPricePerUnit) external whenNotPaused {
         Listing storage listing = listings[listingId];
         require(listing.seller == _msgSender(), "Marketplace: Not the seller");
         require(listing.active, "Marketplace: Listing not active");
@@ -269,6 +279,22 @@ contract Marketplace is
      */
     function getListing(uint256 listingId) external view returns (Listing memory) {
         return listings[listingId];
+    }
+
+    /**
+     * @notice Pauses the contract, halting all listing, buying, and cancelling.
+     * @dev Can only be called by an address with the PAUSER_ROLE.
+     */
+    function pause() external onlyRole(PAUSER_ROLE) {
+        _pause();
+    }
+
+    /**
+     * @notice Unpauses the contract, resuming normal operation.
+     * @dev Can only be called by an address with the PAUSER_ROLE.
+     */
+    function unpause() external onlyRole(PAUSER_ROLE) {
+        _unpause();
     }
 
     // --- Interface Support ---

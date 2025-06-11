@@ -198,4 +198,43 @@ contract DMRVManagerTest is Test {
         vm.expectRevert("DMRVManager: Request already fulfilled");
         manager.fulfillVerification(requestId, data);
     }
+
+    /* ---------- Pausable Tests ---------- */
+
+    function test_PauseAndUnpause() public {
+        bytes32 pauserRole = manager.PAUSER_ROLE();
+
+        vm.startPrank(admin);
+        // Admin has pauser role by default from setUp
+        manager.pause();
+        assertTrue(manager.paused());
+        manager.unpause();
+        assertFalse(manager.paused());
+        vm.stopPrank();
+
+        // Non-pauser cannot pause
+        vm.prank(projectOwner);
+        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)")), projectOwner, pauserRole));
+        manager.pause();
+    }
+
+    function test_RevertsWhenPaused() public {
+        vm.prank(admin);
+        manager.pause();
+
+        bytes4 expectedRevert = bytes4(keccak256("EnforcedPause()"));
+
+        vm.prank(projectOwner);
+        vm.expectRevert(expectedRevert);
+        manager.requestVerification(projectId);
+
+        vm.prank(oracle);
+        bytes memory data = abi.encode(1, false, bytes32(0), "ipfs://fail.json");
+        vm.expectRevert(expectedRevert);
+        manager.fulfillVerification(bytes32(0), data);
+
+        vm.prank(admin);
+        vm.expectRevert(expectedRevert);
+        manager.adminSetVerification(projectId, 1, "ipfs://fail.json", false);
+    }
 }

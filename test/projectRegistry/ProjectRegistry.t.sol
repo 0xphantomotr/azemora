@@ -167,4 +167,49 @@ contract ProjectRegistryTest is Test {
         vm.expectRevert("ProjectRegistry: Caller is not the project owner");
         registry.transferOwnership(projectId, newOwner);
     }
+
+    /* ----------------- */
+    /*      Pausable     */
+    /* ----------------- */
+
+    function test_PauseAndUnpause() public {
+        bytes32 pauserRole = registry.PAUSER_ROLE();
+
+        vm.startPrank(admin);
+        // Admin has pauser role by default from setUp
+        registry.pause();
+        assertTrue(registry.paused());
+        registry.unpause();
+        assertFalse(registry.paused());
+        vm.stopPrank();
+
+        // Non-pauser cannot pause
+        vm.prank(anotherUser);
+        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)")), anotherUser, pauserRole));
+        registry.pause();
+    }
+
+    function test_RevertsWhenPaused() public {
+        vm.prank(admin);
+        registry.pause();
+
+        // Check key functions revert when paused
+        bytes4 expectedRevert = bytes4(keccak256("EnforcedPause()"));
+
+        vm.prank(anotherUser);
+        vm.expectRevert(expectedRevert);
+        registry.registerProject(keccak256("paused project"), "ipfs://paused.json");
+
+        vm.prank(verifier);
+        vm.expectRevert(expectedRevert);
+        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+
+        vm.prank(projectOwner);
+        vm.expectRevert(expectedRevert);
+        registry.setMetaURI(projectId, "ipfs://paused.json");
+
+        vm.prank(projectOwner);
+        vm.expectRevert(expectedRevert);
+        registry.transferOwnership(projectId, anotherUser);
+    }
 }

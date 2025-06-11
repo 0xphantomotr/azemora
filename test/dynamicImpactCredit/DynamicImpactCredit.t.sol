@@ -210,6 +210,54 @@ contract DynamicImpactCreditTest is Test {
         console.log("Admin has DEFAULT_ADMIN_ROLE:", credit.hasRole(credit.DEFAULT_ADMIN_ROLE(), admin));
         console.log("Test contract has DEFAULT_ADMIN_ROLE:", credit.hasRole(credit.DEFAULT_ADMIN_ROLE(), address(this)));
     }
+
+    /* ---------- Pausable Tests ---------- */
+
+    function test_PauseAndUnpause() public {
+        bytes32 pauserRole = credit.PAUSER_ROLE();
+
+        vm.startPrank(admin);
+        // Admin has pauser role by default from setUp
+        credit.pause();
+        assertTrue(credit.paused());
+        credit.unpause();
+        assertFalse(credit.paused());
+        vm.stopPrank();
+
+        // Non-pauser cannot pause
+        vm.prank(other);
+        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)")), other, pauserRole));
+        credit.pause();
+    }
+
+    function test_RevertsWhenPaused() public {
+        bytes32 projectId = keccak256("Project-Pausable");
+        vm.prank(user);
+        registry.registerProject(projectId, "p-pausable.json");
+        vm.prank(verifier);
+        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        vm.prank(dmrvManager);
+        credit.mintCredits(user, projectId, 100, "ipfs://pausable.json");
+
+        // Pause the contract
+        vm.prank(admin);
+        credit.pause();
+
+        // Check key functions revert
+        bytes4 expectedRevert = bytes4(keccak256("EnforcedPause()"));
+
+        vm.prank(dmrvManager);
+        vm.expectRevert(expectedRevert);
+        credit.mintCredits(user, projectId, 1, "ipfs://fail.json");
+
+        vm.prank(admin);
+        vm.expectRevert(expectedRevert);
+        credit.setTokenURI(projectId, "ipfs://fail.json");
+
+        vm.prank(user);
+        vm.expectRevert(expectedRevert);
+        credit.retire(user, projectId, 1);
+    }
 }
 
 /* ---------- dummy V2 impl for upgrade test ---------- */

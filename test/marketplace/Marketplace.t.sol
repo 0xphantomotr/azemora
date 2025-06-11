@@ -218,6 +218,26 @@ contract MarketplaceTest is Test {
         assertEq(credit.balanceOf(address(marketplace), tokenId), 0);
     }
 
+    /* ---------- Event Tests ---------- */
+
+    function test_EmitFeePaidEvent() public {
+        uint256 listingId = _list();
+        uint256 amountToBuy = 50;
+        uint256 totalPrice = amountToBuy * 5 * 1e6;
+        uint256 fee = (totalPrice * 250) / 10000;
+
+        vm.prank(buyer);
+        paymentToken.approve(address(marketplace), totalPrice);
+
+        vm.expectEmit(true, true, true, true);
+        emit Marketplace.FeePaid(feeRecipient, fee);
+
+        vm.prank(buyer);
+        marketplace.buy(listingId, amountToBuy);
+    }
+
+    /* ---------- Access Control & Failure Tests ---------- */
+
     function test_Fail_ListWithoutApproval() public {
         vm.startPrank(seller);
         vm.expectRevert(
@@ -246,5 +266,51 @@ contract MarketplaceTest is Test {
         vm.prank(buyer);
         vm.expectRevert("Marketplace: Not the seller");
         marketplace.cancel(listingId);
+    }
+
+    /* ---------- Pausable Tests ---------- */
+
+    function test_PauseAndUnpause() public {
+        bytes32 pauserRole = marketplace.PAUSER_ROLE();
+
+        vm.startPrank(admin);
+        // Admin can pause and unpause
+        marketplace.pause();
+        assertTrue(marketplace.paused());
+        marketplace.unpause();
+        assertFalse(marketplace.paused());
+        vm.stopPrank();
+
+        // Non-pauser cannot pause
+        vm.prank(seller);
+        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)")), seller, pauserRole));
+        marketplace.pause();
+    }
+
+    function test_RevertsWhenPaused() public {
+        uint256 listingId = _list();
+
+        vm.startPrank(admin);
+        marketplace.pause();
+        vm.stopPrank();
+
+        // Check key functions revert when paused
+        bytes4 expectedRevert = bytes4(keccak256("EnforcedPause()"));
+
+        vm.prank(seller);
+        vm.expectRevert(expectedRevert);
+        marketplace.list(tokenId, 10, 1e6);
+
+        vm.prank(buyer);
+        vm.expectRevert(expectedRevert);
+        marketplace.buy(listingId, 1);
+
+        vm.prank(seller);
+        vm.expectRevert(expectedRevert);
+        marketplace.cancel(listingId);
+
+        vm.prank(seller);
+        vm.expectRevert(expectedRevert);
+        marketplace.updatePrice(listingId, 6e6);
     }
 }

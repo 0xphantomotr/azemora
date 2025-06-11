@@ -5,6 +5,7 @@ import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol"
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "./ProjectRegistry.sol";
 import "./DynamicImpactCredit.sol";
 
@@ -17,9 +18,16 @@ import "./DynamicImpactCredit.sol";
  * ensuring that only verified environmental impact results in token creation.
  * It is upgradeable using the UUPS pattern.
  */
-contract DMRVManager is Initializable, AccessControlUpgradeable, UUPSUpgradeable, ReentrancyGuardUpgradeable {
+contract DMRVManager is
+    Initializable,
+    AccessControlUpgradeable,
+    UUPSUpgradeable,
+    ReentrancyGuardUpgradeable,
+    PausableUpgradeable
+{
     // --- Roles ---
     bytes32 public constant ORACLE_ROLE = keccak256("ORACLE_ROLE");
+    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     // --- State variables ---
     ProjectRegistry public projectRegistry;
@@ -60,10 +68,12 @@ contract DMRVManager is Initializable, AccessControlUpgradeable, UUPSUpgradeable
         __AccessControl_init();
         __UUPSUpgradeable_init();
         __ReentrancyGuard_init();
+        __Pausable_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
         // In a real deployment, this would be set to trusted oracle addresses
         _grantRole(ORACLE_ROLE, _msgSender());
+        _grantRole(PAUSER_ROLE, _msgSender());
 
         projectRegistry = ProjectRegistry(projectRegistry_);
         creditContract = DynamicImpactCredit(creditContract_);
@@ -77,7 +87,7 @@ contract DMRVManager is Initializable, AccessControlUpgradeable, UUPSUpgradeable
      * @param projectId The unique identifier of the project to verify.
      * @return requestId A unique ID for the verification request.
      */
-    function requestVerification(bytes32 projectId) external nonReentrant returns (bytes32 requestId) {
+    function requestVerification(bytes32 projectId) external nonReentrant whenNotPaused returns (bytes32 requestId) {
         require(projectRegistry.isProjectActive(projectId), "DMRVManager: Project not active");
 
         // For MVP: Generate a simple request ID.
@@ -107,7 +117,12 @@ contract DMRVManager is Initializable, AccessControlUpgradeable, UUPSUpgradeable
      * @param requestId The ID of the verification request being fulfilled.
      * @param data The raw, encoded verification data from the dMRV system.
      */
-    function fulfillVerification(bytes32 requestId, bytes calldata data) external onlyRole(ORACLE_ROLE) nonReentrant {
+    function fulfillVerification(bytes32 requestId, bytes calldata data)
+        external
+        onlyRole(ORACLE_ROLE)
+        nonReentrant
+        whenNotPaused
+    {
         VerificationRequest storage request = _requests[requestId];
         require(request.timestamp > 0, "DMRVManager: Request not found");
         require(!request.fulfilled, "DMRVManager: Request already fulfilled");
@@ -179,7 +194,7 @@ contract DMRVManager is Initializable, AccessControlUpgradeable, UUPSUpgradeable
         uint256 creditAmount,
         string calldata metadataURI,
         bool updateMetadataOnly
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant whenNotPaused {
         require(projectRegistry.isProjectActive(projectId), "DMRVManager: Project not active");
 
         VerificationData memory vData = VerificationData({
@@ -190,6 +205,14 @@ contract DMRVManager is Initializable, AccessControlUpgradeable, UUPSUpgradeable
         });
 
         processVerification(projectId, _msgSender(), vData);
+    }
+
+    function pause() external onlyRole(PAUSER_ROLE) {
+        _pause();
+    }
+
+    function unpause() external onlyRole(PAUSER_ROLE) {
+        _unpause();
     }
 
     /* ---------- upgrade auth ---------- */
