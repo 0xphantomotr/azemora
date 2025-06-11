@@ -268,6 +268,22 @@ contract MarketplaceTest is Test {
         marketplace.cancel(listingId);
     }
 
+    function test_Fail_BuyWithInsufficientBalance() public {
+        uint256 listingId = _list();
+        uint256 amountToBuy = 50;
+        uint256 pricePerUnit = 5 * 1e6;
+        uint256 totalPrice = amountToBuy * pricePerUnit;
+
+        address brokeBuyer = address(0xDEAD);
+        
+        vm.prank(brokeBuyer);
+        paymentToken.approve(address(marketplace), totalPrice);
+
+        vm.prank(brokeBuyer);
+        vm.expectRevert("Marketplace: Insufficient balance");
+        marketplace.buy(listingId, amountToBuy);
+    }
+
     /* ---------- Pausable Tests ---------- */
 
     function test_PauseAndUnpause() public {

@@ -186,6 +186,8 @@ contract Marketplace is
         require(listing.amount >= amountToBuy, "Marketplace: Not enough items in listing");
 
         uint256 totalPrice = amountToBuy * listing.pricePerUnit;
+        require(paymentToken.balanceOf(_msgSender()) >= totalPrice, "Marketplace: Insufficient balance");
+        
         uint256 fee = (totalPrice * feeBps) / 10000;
         uint256 sellerProceeds = totalPrice - fee;
 
@@ -200,17 +202,16 @@ contract Marketplace is
         }
 
         // --- INTERACTIONS ---
-        // Transfer payment to seller and fee recipient
-        require(
-            paymentToken.transferFrom(_msgSender(), listing.seller, sellerProceeds),
-            "Marketplace: Seller payment failed"
-        );
+        // Transfer payment from buyer to seller and fee recipient
+        if (sellerProceeds > 0) {
+            paymentToken.transferFrom(_msgSender(), listing.seller, sellerProceeds);
+        }
         if (fee > 0) {
-            require(paymentToken.transferFrom(_msgSender(), feeRecipient, fee), "Marketplace: Fee payment failed");
+            paymentToken.transferFrom(_msgSender(), feeRecipient, fee);
             emit FeePaid(feeRecipient, fee);
         }
 
-        // Transfer the NFT from the marketplace to the buyer
+        // Transfer the NFT from marketplace to buyer
         creditContract.safeTransferFrom(address(this), _msgSender(), listing.tokenId, amountToBuy, "");
     }
 
