@@ -9,14 +9,13 @@ import "./ProjectRegistry.sol";
 import "./DynamicImpactCredit.sol";
 
 /**
- * @title dMRVManager
+ * @title DMRVManager
+ * @author Genci Mehmeti
  * @dev Manages the retrieval and processing of digital Monitoring, Reporting, and
- * Verification (dMRV) data for climate projects. This contract serves as the bridge between
- * off-chain dMRV systems and on-chain tokens, ensuring that only verified environmental
- * impact is represented in the DynamicImpactCredit tokens.
- *
- * For MVP purposes, this uses a simplified oracle approach, with plans to connect to
- * Chainlink in a future version.
+ * Verification (dMRV) data. This contract acts as the bridge between off-chain
+ * data sources (oracles) and the on-chain minting of `DynamicImpactCredit` tokens,
+ * ensuring that only verified environmental impact results in token creation.
+ * It is upgradeable using the UUPS pattern.
  */
 contract DMRVManager is Initializable, AccessControlUpgradeable, UUPSUpgradeable, ReentrancyGuardUpgradeable {
     // --- Roles ---
@@ -71,11 +70,12 @@ contract DMRVManager is Initializable, AccessControlUpgradeable, UUPSUpgradeable
     }
 
     /**
-     * @notice Requests verification data for a specific project from the oracle network
-     * @dev This initiates the off-chain data retrieval process. In the production version,
-     * this would make an actual Chainlink request.
-     * @param projectId The unique identifier of the project to verify
-     * @return requestId A unique identifier for this verification request
+     * @notice Initiates a request for dMRV data from an oracle for a given project.
+     * @dev For the MVP, this simulates an oracle request by creating a request entry.
+     * In a production environment, this function would be expanded to make a direct
+     * call to a decentralized oracle network like Chainlink.
+     * @param projectId The unique identifier of the project to verify.
+     * @return requestId A unique ID for the verification request.
      */
     function requestVerification(bytes32 projectId) external nonReentrant returns (bytes32 requestId) {
         require(projectRegistry.isProjectActive(projectId), "DMRVManager: Project not active");
@@ -100,10 +100,12 @@ contract DMRVManager is Initializable, AccessControlUpgradeable, UUPSUpgradeable
     }
 
     /**
-     * @notice Callback function for oracles to deliver verification data
-     * @dev Only callable by addresses with the ORACLE_ROLE.
-     * @param requestId The ID of the verification request being fulfilled
-     * @param data The encoded verification data from the dMRV system
+     * @notice Callback function for oracles to deliver verified dMRV data.
+     * @dev This function can only be called by addresses with the `ORACLE_ROLE`.
+     * It marks the request as fulfilled and processes the incoming data to mint
+     * tokens or update metadata accordingly.
+     * @param requestId The ID of the verification request being fulfilled.
+     * @param data The raw, encoded verification data from the dMRV system.
      */
     function fulfillVerification(bytes32 requestId, bytes calldata data) external onlyRole(ORACLE_ROLE) nonReentrant {
         VerificationRequest storage request = _requests[requestId];
@@ -122,12 +124,13 @@ contract DMRVManager is Initializable, AccessControlUpgradeable, UUPSUpgradeable
     }
 
     /**
-     * @notice Processes verified dMRV data and takes appropriate action
-     * @dev This function routes to either token minting or metadata updates
-     * @param projectId The project identifier
-     * @param data The parsed verification data
+     * @dev Internal function to process verified dMRV data. It either mints new
+     * credits to the project owner or updates the metadata URI of the associated token.
+     * @param projectId The project identifier.
+     * @param requestor The original address that requested the verification.
+     * @param data The parsed verification data.
      */
-    function processVerification(bytes32 projectId, address, /* requestor */ VerificationData memory data) internal {
+    function processVerification(bytes32 projectId, address requestor, VerificationData memory data) internal {
         if (data.updateMetadataOnly) {
             // Update metadata only
             creditContract.setTokenURI(projectId, data.metadataURI);
@@ -145,10 +148,9 @@ contract DMRVManager is Initializable, AccessControlUpgradeable, UUPSUpgradeable
     }
 
     /**
-     * @notice Parses raw verification data into a structured format
-     * @dev This is a simplified version for MVP; would be more robust in production
-     * @param data The raw verification data from the oracle
-     * @return Parsed verification data
+     * @dev Parses raw verification data from the oracle into a structured format.
+     * @param data The raw byte data from the oracle.
+     * @return A `VerificationData` struct.
      */
     function parseVerificationData(bytes calldata data) internal pure returns (VerificationData memory) {
         // A more robust decoding scheme.
@@ -164,12 +166,13 @@ contract DMRVManager is Initializable, AccessControlUpgradeable, UUPSUpgradeable
     }
 
     /**
-     * @notice Admin function for manually setting verification data (testing/emergency use)
-     * @dev Only callable by admin, primarily for testing and contingency
-     * @param projectId The project identifier
-     * @param creditAmount Amount of credits to mint
-     * @param metadataURI URI of the metadata to set
-     * @param updateMetadataOnly If true, only update metadata without minting
+     * @notice Admin function for manually submitting verification data.
+     * @dev This function provides a bypass for the oracle flow, intended for
+     * testing, emergency interventions, or manual data entry by an admin.
+     * @param projectId The project identifier.
+     * @param creditAmount Amount of credits to mint (can be 0).
+     * @param metadataURI The new metadata URI to set.
+     * @param updateMetadataOnly If true, only updates metadata without minting.
      */
     function adminSetVerification(
         bytes32 projectId,

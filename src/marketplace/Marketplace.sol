@@ -62,6 +62,15 @@ interface IERC20Upgradeable {
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
 }
 
+/**
+ * @title Marketplace
+ * @author Genci Mehmeti
+ * @dev A custodial marketplace for trading ERC1155-based environmental assets.
+ * Sellers list their assets by transferring them to this contract. Buyers can then
+ * purchase these assets using a designated ERC20 payment token. The contract
+ * supports partial purchases and includes a platform fee on sales.
+ * It is upgradeable using the UUPS pattern.
+ */
 contract Marketplace is
     Initializable,
     AccessControlUpgradeable,
@@ -116,6 +125,15 @@ contract Marketplace is
         paymentToken = IERC20Upgradeable(paymentToken_);
     }
 
+    /**
+     * @notice Lists a specified amount of an ERC1155 token for sale.
+     * @dev The seller must first approve the marketplace to transfer their tokens.
+     * The tokens are held in custody by this contract until sold or unlisted.
+     * @param tokenId The ID of the token to list.
+     * @param amount The quantity of the token to list.
+     * @param pricePerUnit The price for each single unit of the token in the payment currency.
+     * @return listingId The unique ID of the newly created listing.
+     */
     function list(uint256 tokenId, uint256 amount, uint256 pricePerUnit)
         external
         nonReentrant
@@ -143,6 +161,14 @@ contract Marketplace is
         return listingId;
     }
 
+    /**
+     * @notice Purchases a specified amount of tokens from an active listing.
+     * @dev The buyer must first approve the marketplace to spend their payment tokens.
+     * The function handles payment transfers to the seller and the fee recipient,
+     * and transfers the purchased tokens to the buyer. Supports partial buys.
+     * @param listingId The ID of the listing to buy from.
+     * @param amountToBuy The quantity of tokens to purchase from the listing.
+     */
     function buy(uint256 listingId, uint256 amountToBuy) external nonReentrant {
         Listing storage listing = listings[listingId];
         // --- CHECKS ---
@@ -178,6 +204,12 @@ contract Marketplace is
         creditContract.safeTransferFrom(address(this), _msgSender(), listing.tokenId, amountToBuy, "");
     }
 
+    /**
+     * @notice Cancels an active listing.
+     * @dev Can only be called by the original seller. Any unsold tokens are
+     * returned from custody to the seller.
+     * @param listingId The ID of the listing to cancel.
+     */
     function cancel(uint256 listingId) external nonReentrant {
         Listing storage listing = listings[listingId];
         require(listing.active, "Marketplace: Listing not active");
@@ -192,6 +224,12 @@ contract Marketplace is
         emit Cancelled(listingId);
     }
 
+    /**
+     * @notice Updates the price of an active listing.
+     * @dev Can only be called by the original seller.
+     * @param listingId The ID of the listing to update.
+     * @param newPricePerUnit The new price for each unit in the listing.
+     */
     function updatePrice(uint256 listingId, uint256 newPricePerUnit) external {
         Listing storage listing = listings[listingId];
         require(listing.seller == _msgSender(), "Marketplace: Not the seller");
@@ -202,18 +240,33 @@ contract Marketplace is
         emit PriceUpdated(listingId, newPricePerUnit);
     }
 
+    /**
+     * @notice Sets the address that will receive platform fees.
+     * @dev Admin-only function.
+     * @param newFeeRecipient The new address for fee collection.
+     */
     function setFeeRecipient(address newFeeRecipient) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(newFeeRecipient != address(0), "Marketplace: Zero address");
         feeRecipient = newFeeRecipient;
         emit FeeRecipientUpdated(newFeeRecipient);
     }
 
+    /**
+     * @notice Sets the platform fee percentage.
+     * @dev Admin-only function. Fee is capped to prevent excessive charges.
+     * @param newFeeBps The new fee in basis points (e.g., 250 for 2.5%).
+     */
     function setFee(uint256 newFeeBps) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(newFeeBps <= 1000, "Marketplace: Fee cannot exceed 10%"); // Capped at 10%
         feeBps = newFeeBps;
         emit FeeUpdated(newFeeBps);
     }
 
+    /**
+     * @notice Retrieves the details of a specific listing.
+     * @param listingId The ID of the listing to query.
+     * @return A `Listing` struct containing the listing's data.
+     */
     function getListing(uint256 listingId) external view returns (Listing memory) {
         return listings[listingId];
     }
