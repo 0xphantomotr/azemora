@@ -125,7 +125,7 @@ contract MarketplaceTest is Test {
     function _list() internal returns (uint256 listingId) {
         vm.startPrank(seller);
         credit.setApprovalForAll(address(marketplace), true);
-        listingId = marketplace.list(tokenId, 100, 5 * 1e6);
+        listingId = marketplace.list(tokenId, 100, 5 * 1e6, 1 days);
         vm.stopPrank();
         return listingId;
     }
@@ -137,7 +137,7 @@ contract MarketplaceTest is Test {
         credit.setApprovalForAll(address(marketplace), true);
 
         uint256 initialSellerBalance = credit.balanceOf(seller, tokenId);
-        uint256 listingId = marketplace.list(tokenId, 100, 5 * 1e6);
+        uint256 listingId = marketplace.list(tokenId, 100, 5 * 1e6, 1 days);
         vm.stopPrank();
 
         uint256 finalSellerBalance = credit.balanceOf(seller, tokenId);
@@ -245,7 +245,7 @@ contract MarketplaceTest is Test {
                 bytes4(keccak256("ERC1155MissingApprovalForAll(address,address)")), address(marketplace), seller
             )
         );
-        marketplace.list(tokenId, 100, 5 * 1e6);
+        marketplace.list(tokenId, 100, 5 * 1e6, 1 days);
         vm.stopPrank();
     }
 
@@ -315,7 +315,7 @@ contract MarketplaceTest is Test {
 
         vm.prank(seller);
         vm.expectRevert(expectedRevert);
-        marketplace.list(tokenId, 10, 1e6);
+        marketplace.list(tokenId, 10, 1e6, 1 days);
 
         vm.prank(buyer);
         vm.expectRevert(expectedRevert);

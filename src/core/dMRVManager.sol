@@ -29,12 +29,16 @@ contract DMRVManager is
     bytes32 public constant ORACLE_ROLE = keccak256("ORACLE_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
+    bytes32[] private _roles;
+
     // --- State variables ---
     ProjectRegistry public projectRegistry;
     DynamicImpactCredit public creditContract;
 
     // Mapping to track verification requests by request ID
     mapping(bytes32 => VerificationRequest) private _requests;
+
+    uint256[50] private __gap;
 
     // Structure for tracking verification requests
     struct VerificationRequest {
@@ -77,6 +81,10 @@ contract DMRVManager is
 
         projectRegistry = ProjectRegistry(projectRegistry_);
         creditContract = DynamicImpactCredit(creditContract_);
+
+        _roles.push(DEFAULT_ADMIN_ROLE);
+        _roles.push(ORACLE_ROLE);
+        _roles.push(PAUSER_ROLE);
     }
 
     /**
@@ -217,4 +225,28 @@ contract DMRVManager is
 
     /* ---------- upgrade auth ---------- */
     function _authorizeUpgrade(address /* newImpl */ ) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
+
+    /**
+     * @notice Gets all the roles held by a specific account.
+     * @dev Provides an easy way for UIs and other tools to check permissions.
+     * @param account The address to check.
+     * @return A list of role identifiers held by the account.
+     */
+    function getRoles(address account) external view returns (bytes32[] memory) {
+        uint256 count = 0;
+        for (uint256 i = 0; i < _roles.length; i++) {
+            if (hasRole(_roles[i], account)) {
+                count++;
+            }
+        }
+
+        bytes32[] memory roles = new bytes32[](count);
+        uint256 index = 0;
+        for (uint256 i = 0; i < _roles.length; i++) {
+            if (hasRole(_roles[i], account)) {
+                roles[index++] = _roles[i];
+            }
+        }
+        return roles;
+    }
 }

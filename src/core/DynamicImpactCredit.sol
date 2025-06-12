@@ -22,9 +22,13 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
     bytes32 public constant METADATA_UPDATER_ROLE = keccak256("METADATA_UPDATER_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
+    bytes32[] private _roles;
+
     mapping(uint256 => string[]) private _tokenURIs;
     string private _contractURI;
     IProjectRegistry public projectRegistry;
+
+    uint256[50] private __gap;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -41,6 +45,11 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
         _grantRole(PAUSER_ROLE, _msgSender());
         _contractURI = contractURI_;
         projectRegistry = IProjectRegistry(projectRegistry_);
+
+        _roles.push(DEFAULT_ADMIN_ROLE);
+        _roles.push(DMRV_MANAGER_ROLE);
+        _roles.push(METADATA_UPDATER_ROLE);
+        _roles.push(PAUSER_ROLE);
     }
 
     /**
@@ -121,6 +130,30 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
         emit CreditsRetired(from, id, amount);
     }
 
+    /**
+     * @notice Gets all the roles held by a specific account.
+     * @dev Provides an easy way for UIs and other tools to check permissions.
+     * @param account The address to check.
+     * @return A list of role identifiers held by the account.
+     */
+    function getRoles(address account) external view returns (bytes32[] memory) {
+        uint256 count = 0;
+        for (uint256 i = 0; i < _roles.length; i++) {
+            if (hasRole(_roles[i], account)) {
+                count++;
+            }
+        }
+
+        bytes32[] memory roles = new bytes32[](count);
+        uint256 index = 0;
+        for (uint256 i = 0; i < _roles.length; i++) {
+            if (hasRole(_roles[i], account)) {
+                roles[index++] = _roles[i];
+            }
+        }
+        return roles;
+    }
+
     event CreditsRetired(address indexed from, bytes32 indexed id, uint256 amount);
 
     function pause() external onlyRole(PAUSER_ROLE) {
@@ -162,17 +195,23 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
         require(ids.length == amounts.length && ids.length == uris.length, "LENGTH_MISMATCH");
 
         uint256[] memory tokenIds = new uint256[](ids.length);
-        for (uint256 i = 0; i < ids.length; ++i) {
+        for (uint256 i = 0; i < ids.length; ) {
             require(projectRegistry.isProjectActive(ids[i]), "DIC: PROJECT_NOT_ACTIVE");
             tokenIds[i] = uint256(ids[i]);
+            unchecked {
+                ++i;
+            }
         }
 
         _mintBatch(to, tokenIds, amounts, "");
 
-        for (uint256 i = 0; i < ids.length; ++i) {
+        for (uint256 i = 0; i < ids.length; ) {
             if (_tokenURIs[tokenIds[i]].length == 0) {
                 _tokenURIs[tokenIds[i]].push(uris[i]);
                 emit URI(uris[i], tokenIds[i]);
+            }
+            unchecked {
+                ++i;
             }
         }
     }

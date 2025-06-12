@@ -86,7 +86,7 @@ contract MarketplaceFuzzTest is Test {
         // 4. Seller lists the item
         vm.startPrank(seller);
         credit.setApprovalForAll(address(marketplace), true);
-        uint256 listingId = marketplace.list(tokenId, listAmount, price);
+        uint256 listingId = marketplace.list(tokenId, listAmount, price, 1 days);
         vm.stopPrank();
 
         // 5. Buyer approves payment and buys the item
@@ -94,7 +94,7 @@ contract MarketplaceFuzzTest is Test {
         uint256 sellerProceeds = totalPrice - fee;
 
         vm.startPrank(buyer);
-        paymentToken.approve(address(marketplace), totalPrice);
+        paymentToken.approve(address(marketplace), type(uint256).max);
         marketplace.buy(listingId, buyAmount);
         vm.stopPrank();
 

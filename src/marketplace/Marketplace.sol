@@ -83,6 +83,8 @@ contract Marketplace is
     // --- Roles ---
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
+    bytes32[] private _roles;
+
     // --- State ---
     IERC1155Upgradeable public creditContract;
     IERC20Upgradeable public paymentToken;
@@ -95,12 +97,15 @@ contract Marketplace is
         uint256 tokenId;
         uint256 amount;
         uint256 pricePerUnit; // Price per single unit of the token
+        uint256 expiryTimestamp; // Timestamp when the listing expires
         bool active;
     }
 
     mapping(uint256 => Listing) public listings;
     uint256 public listingIdCounter;
     uint256 public activeListingCount;
+
+    uint256[50] private __gap;
 
     // --- Events ---
     event Listed(
@@ -131,6 +136,9 @@ contract Marketplace is
 
         creditContract = IERC1155Upgradeable(creditContract_);
         paymentToken = IERC20Upgradeable(paymentToken_);
+
+        _roles.push(DEFAULT_ADMIN_ROLE);
+        _roles.push(PAUSER_ROLE);
     }
 
     /**
@@ -140,9 +148,10 @@ contract Marketplace is
      * @param tokenId The ID of the token to list.
      * @param amount The quantity of the token to list.
      * @param pricePerUnit The price for each single unit of the token in the payment currency.
+     * @param expiryDuration The duration in seconds after which the listing will expire.
      * @return listingId The unique ID of the newly created listing.
      */
-    function list(uint256 tokenId, uint256 amount, uint256 pricePerUnit)
+    function list(uint256 tokenId, uint256 amount, uint256 pricePerUnit, uint256 expiryDuration)
         external
         nonReentrant
         whenNotPaused
@@ -150,6 +159,7 @@ contract Marketplace is
     {
         require(amount > 0, "Marketplace: Amount must be > 0");
         require(pricePerUnit > 0, "Marketplace: Price must be > 0");
+        require(expiryDuration > 0, "Marketplace: Expiry must be > 0");
 
         // Custodial model: Transfer tokens from seller to this contract
         creditContract.safeTransferFrom(_msgSender(), address(this), tokenId, amount, "");
@@ -161,6 +171,7 @@ contract Marketplace is
             tokenId: tokenId,
             amount: amount,
             pricePerUnit: pricePerUnit,
+            expiryTimestamp: block.timestamp + expiryDuration,
             active: true
         });
 
@@ -182,6 +193,7 @@ contract Marketplace is
         Listing storage listing = listings[listingId];
         // --- CHECKS ---
         require(listing.active, "Marketplace: Listing not active");
+        require(block.timestamp < listing.expiryTimestamp, "Marketplace: Listing expired");
         require(amountToBuy > 0, "Marketplace: Amount must be > 0");
         require(listing.amount >= amountToBuy, "Marketplace: Not enough items in listing");
 
@@ -225,6 +237,26 @@ contract Marketplace is
         Listing storage listing = listings[listingId];
         require(listing.active, "Marketplace: Listing not active");
         require(listing.seller == _msgSender(), "Marketplace: Not the seller");
+
+        listing.active = false;
+        activeListingCount--;
+
+        // Return the unsold tokens to the seller
+        creditContract.safeTransferFrom(address(this), listing.seller, listing.tokenId, listing.amount, "");
+
+        emit Cancelled(listingId);
+    }
+
+    /**
+     * @notice Cancels an expired listing.
+     * @dev Can be called by anyone to clean up an expired listing. The unsold
+     * tokens are returned from custody to the seller.
+     * @param listingId The ID of the expired listing to cancel.
+     */
+    function cancelExpiredListing(uint256 listingId) external nonReentrant whenNotPaused {
+        Listing storage listing = listings[listingId];
+        require(listing.active, "Marketplace: Listing not active");
+        require(block.timestamp >= listing.expiryTimestamp, "Marketplace: Listing not expired yet");
 
         listing.active = false;
         activeListingCount--;
@@ -280,6 +312,30 @@ contract Marketplace is
      */
     function getListing(uint256 listingId) external view returns (Listing memory) {
         return listings[listingId];
+    }
+
+    /**
+     * @notice Gets all the roles held by a specific account.
+     * @dev Provides an easy way for UIs and other tools to check permissions.
+     * @param account The address to check.
+     * @return A list of role identifiers held by the account.
+     */
+    function getRoles(address account) external view returns (bytes32[] memory) {
+        uint256 count = 0;
+        for (uint256 i = 0; i < _roles.length; i++) {
+            if (hasRole(_roles[i], account)) {
+                count++;
+            }
+        }
+
+        bytes32[] memory roles = new bytes32[](count);
+        uint256 index = 0;
+        for (uint256 i = 0; i < _roles.length; i++) {
+            if (hasRole(_roles[i], account)) {
+                roles[index++] = _roles[i];
+            }
+        }
+        return roles;
     }
 
     /**

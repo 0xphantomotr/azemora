@@ -11,8 +11,8 @@ import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 // Handler contract to perform random actions on the Marketplace
 contract MarketplaceHandler is Test {
-    ProjectRegistry registry;
-    DynamicImpactCredit credit;
+    ProjectRegistry public registry;
+    DynamicImpactCredit public credit;
     Marketplace public marketplace;
     MockERC20 public paymentToken;
 
@@ -35,6 +35,10 @@ contract MarketplaceHandler is Test {
 
     function getUsersLength() public view returns (uint256) {
         return users.length;
+    }
+
+    function getProjectIdsLength() public view returns (uint256) {
+        return projectIds.length;
     }
 
     constructor(
@@ -69,6 +73,9 @@ contract MarketplaceHandler is Test {
         }
         // Fee recipient starts with 0
         userPaymentTokenBalances[feeRecipient] = 0;
+
+        // Target the handler so that fuzz inputs are sent to its public functions
+        targetContract(address(this));
     }
 
     /* --- ACTIONS --- */
@@ -104,7 +111,7 @@ contract MarketplaceHandler is Test {
         // 4. Execute: List the item
         vm.startPrank(seller);
         credit.setApprovalForAll(address(marketplace), true);
-        marketplace.list(uint256(projectId), listAmount, price);
+        marketplace.list(uint256(projectId), listAmount, price, 1 days);
         vm.stopPrank();
     }
 
@@ -241,5 +248,35 @@ contract MarketplaceInvariantTest is StdInvariant, Test {
         assertEq(
             handler.paymentToken().balanceOf(address(handler.marketplace())), 0, "Marketplace holds payment tokens"
         );
+    }
+
+    // INVARIANT 3: Credit tokens are conserved.
+    // The total number of tokens for each project ID should remain constant across
+    // all users and the marketplace itself.
+    function invariant_creditTokenIsConserved() public view {
+        uint256 projectsLength = handler.getProjectIdsLength();
+        for (uint256 i = 0; i < projectsLength; i++) {
+            bytes32 projectId = handler.projectIds(i);
+            uint256 tokenId = uint256(projectId);
+
+            // Get the initial total supply that was minted for this project
+            uint256 initialTotalSupply = handler.totalCreditSupply(projectId);
+
+            // Calculate the current total supply held by all actors
+            uint256 currentTotalSupply = 0;
+
+            // Add balances of all users
+            uint256 usersLength = handler.getUsersLength();
+            for (uint256 j = 0; j < usersLength; j++) {
+                address user = handler.users(j);
+                currentTotalSupply += handler.credit().balanceOf(user, tokenId);
+            }
+
+            // Add balance held by the marketplace contract
+            currentTotalSupply += handler.credit().balanceOf(address(handler.marketplace()), tokenId);
+
+            // The current total supply should always equal the initial total supply
+            assertEq(currentTotalSupply, initialTotalSupply, "Credit token conservation broken");
+        }
     }
 }

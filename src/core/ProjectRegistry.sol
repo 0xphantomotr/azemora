@@ -35,6 +35,8 @@ contract ProjectRegistry is
     bytes32 public constant VERIFIER_ROLE = keccak256("VERIFIER_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
+    bytes32[] private _roles;
+
     enum ProjectStatus {
         Pending, // Newly registered, awaiting verification
         Active, // Verified and eligible for credit minting
@@ -50,6 +52,8 @@ contract ProjectRegistry is
     }
 
     mapping(bytes32 => Project) private _projects;
+
+    uint256[50] private __gap;
 
     // --- Events ---
 
@@ -72,6 +76,10 @@ contract ProjectRegistry is
         _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
         _grantRole(VERIFIER_ROLE, _msgSender());
         _grantRole(PAUSER_ROLE, _msgSender());
+
+        _roles.push(DEFAULT_ADMIN_ROLE);
+        _roles.push(VERIFIER_ROLE);
+        _roles.push(PAUSER_ROLE);
     }
 
     // --- State-Changing Functions ---
@@ -162,6 +170,30 @@ contract ProjectRegistry is
      */
     function isProjectActive(bytes32 projectId) public view returns (bool) {
         return _projects[projectId].status == ProjectStatus.Active;
+    }
+
+    /**
+     * @notice Gets all the roles held by a specific account.
+     * @dev Provides an easy way for UIs and other tools to check permissions.
+     * @param account The address to check.
+     * @return A list of role identifiers held by the account.
+     */
+    function getRoles(address account) external view returns (bytes32[] memory) {
+        uint256 count = 0;
+        for (uint256 i = 0; i < _roles.length; i++) {
+            if (hasRole(_roles[i], account)) {
+                count++;
+            }
+        }
+
+        bytes32[] memory roles = new bytes32[](count);
+        uint256 index = 0;
+        for (uint256 i = 0; i < _roles.length; i++) {
+            if (hasRole(_roles[i], account)) {
+                roles[index++] = _roles[i];
+            }
+        }
+        return roles;
     }
 
     function pause() external onlyRole(PAUSER_ROLE) {

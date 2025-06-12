@@ -96,12 +96,12 @@ contract MarketplaceComplexTest is Test {
         // STEP 1: Both sellers approve the marketplace and list their tokens
         vm.startPrank(seller1);
         credit.setApprovalForAll(address(marketplace), true);
-        uint256 listingId1 = marketplace.list(tokenId1, 200, 10 * 1e6); // 200 tokens at 10 USDC
+        uint256 listingId1 = marketplace.list(tokenId1, 200, 10 * 1e6, 1 days); // 200 tokens at 10 USDC
         vm.stopPrank();
 
         vm.startPrank(seller2);
         credit.setApprovalForAll(address(marketplace), true);
-        uint256 listingId2 = marketplace.list(tokenId2, 500, 15 * 1e6); // 500 tokens at 15 USDC
+        uint256 listingId2 = marketplace.list(tokenId2, 500, 15 * 1e6, 1 days); // 500 tokens at 15 USDC
         vm.stopPrank();
 
         assertEq(credit.balanceOf(address(marketplace), tokenId1), 200);
@@ -162,7 +162,7 @@ contract MarketplaceComplexTest is Test {
 
         // STEP 6: Seller2 lists more tokens, then cancels the listing
         vm.startPrank(seller2);
-        uint256 listingId3 = marketplace.list(tokenId2, 300, 20 * 1e6);
+        uint256 listingId3 = marketplace.list(tokenId2, 300, 20 * 1e6, 1 days);
         assertEq(credit.balanceOf(address(marketplace), tokenId2), 300);
         marketplace.cancel(listingId3);
         vm.stopPrank();
@@ -178,7 +178,7 @@ contract MarketplaceComplexTest is Test {
 
         // Seller1 lists again
         vm.startPrank(seller1);
-        uint256 listingId4 = marketplace.list(tokenId1, 100, 10 * 1e6);
+        uint256 listingId4 = marketplace.list(tokenId1, 100, 10 * 1e6, 1 days);
         vm.stopPrank();
 
         // Buyer1 buys
