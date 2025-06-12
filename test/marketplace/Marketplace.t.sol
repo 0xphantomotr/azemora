@@ -65,7 +65,7 @@ contract MarketplaceTest is Test {
     address buyer = address(0xB4BE);
     address verifier = address(0xC1E4);
     address dmrvManager = address(0xB01D);
-    address feeRecipient = address(0xFE35);
+    address treasury = address(0xFE35);
 
     // Project and Token IDs
     bytes32 projectId = keccak256("Test Project");
@@ -104,7 +104,7 @@ contract MarketplaceTest is Test {
             address(marketplaceImpl), abi.encodeCall(Marketplace.initialize, (address(credit), address(paymentToken)))
         );
         marketplace = Marketplace(address(marketplaceProxy));
-        marketplace.setFeeRecipient(feeRecipient);
+        marketplace.setTreasury(treasury);
         marketplace.setFee(250); // Set a 2.5% fee
 
         vm.stopPrank();
@@ -164,7 +164,7 @@ contract MarketplaceTest is Test {
         uint256 sellerProceeds = totalPrice - fee;
 
         uint256 sellerInitialPaymentBalance = paymentToken.balanceOf(seller);
-        uint256 feeRecipientInitialBalance = paymentToken.balanceOf(feeRecipient);
+        uint256 treasuryInitialBalance = paymentToken.balanceOf(treasury);
 
         vm.prank(buyer);
         paymentToken.approve(address(marketplace), totalPrice);
@@ -178,7 +178,7 @@ contract MarketplaceTest is Test {
 
         // Check payment balances
         assertEq(paymentToken.balanceOf(seller), sellerInitialPaymentBalance + sellerProceeds);
-        assertEq(paymentToken.balanceOf(feeRecipient), feeRecipientInitialBalance + fee);
+        assertEq(paymentToken.balanceOf(treasury), treasuryInitialBalance + fee);
 
         // Check listing state
         Marketplace.Listing memory listing = marketplace.getListing(listingId);
@@ -210,7 +210,7 @@ contract MarketplaceTest is Test {
         assertEq(marketplaceBalance, 100);
 
         vm.prank(seller);
-        marketplace.cancel(listingId);
+        marketplace.cancelListing(listingId);
 
         Marketplace.Listing memory listing = marketplace.getListing(listingId);
         assertFalse(listing.active);
@@ -230,7 +230,7 @@ contract MarketplaceTest is Test {
         paymentToken.approve(address(marketplace), totalPrice);
 
         vm.expectEmit(true, true, true, true);
-        emit Marketplace.FeePaid(feeRecipient, fee);
+        emit Marketplace.FeePaid(treasury, fee);
 
         vm.prank(buyer);
         marketplace.buy(listingId, amountToBuy);
@@ -265,7 +265,7 @@ contract MarketplaceTest is Test {
         uint256 listingId = _list();
         vm.prank(buyer);
         vm.expectRevert("Marketplace: Not the seller");
-        marketplace.cancel(listingId);
+        marketplace.cancelListing(listingId);
     }
 
     function test_Fail_BuyWithInsufficientBalance() public {
@@ -327,10 +327,10 @@ contract MarketplaceTest is Test {
 
         vm.prank(seller);
         vm.expectRevert(expectedRevert);
-        marketplace.cancel(listingId);
+        marketplace.cancelListing(listingId);
 
         vm.prank(seller);
         vm.expectRevert(expectedRevert);
-        marketplace.updatePrice(listingId, 6e6);
+        marketplace.updateListingPrice(listingId, 6e6);
     }
 }

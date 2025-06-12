@@ -88,7 +88,7 @@ contract Marketplace is
     // --- State ---
     IERC1155Upgradeable public creditContract;
     IERC20Upgradeable public paymentToken;
-    address public feeRecipient;
+    address public treasury;
     uint256 public feeBps; // Fee in basis points (e.g., 250 = 2.5%)
 
     struct Listing {
@@ -112,9 +112,9 @@ contract Marketplace is
         uint256 indexed listingId, address indexed seller, uint256 indexed tokenId, uint256 amount, uint256 pricePerUnit
     );
     event Sold(uint256 indexed listingId, address indexed buyer, uint256 amount, uint256 totalPrice);
-    event Cancelled(uint256 indexed listingId);
-    event PriceUpdated(uint256 indexed listingId, uint256 newPricePerUnit);
-    event FeeRecipientUpdated(address indexed newFeeRecipient);
+    event ListingCancelled(uint256 indexed listingId);
+    event ListingPriceUpdated(uint256 indexed listingId, uint256 newPricePerUnit);
+    event TreasuryUpdated(address indexed newTreasury);
     event FeeUpdated(uint256 newFeeBps);
     event PartialSold(uint256 indexed listingId, address indexed buyer, uint256 amount, uint256 totalPrice);
     event FeePaid(address indexed recipient, uint256 amount);
@@ -219,8 +219,8 @@ contract Marketplace is
             paymentToken.transferFrom(_msgSender(), listing.seller, sellerProceeds);
         }
         if (fee > 0) {
-            paymentToken.transferFrom(_msgSender(), feeRecipient, fee);
-            emit FeePaid(feeRecipient, fee);
+            paymentToken.transferFrom(_msgSender(), treasury, fee);
+            emit FeePaid(treasury, fee);
         }
 
         // Transfer the NFT from marketplace to buyer
@@ -233,7 +233,7 @@ contract Marketplace is
      * returned from custody to the seller.
      * @param listingId The ID of the listing to cancel.
      */
-    function cancel(uint256 listingId) external nonReentrant whenNotPaused {
+    function cancelListing(uint256 listingId) external nonReentrant whenNotPaused {
         Listing storage listing = listings[listingId];
         require(listing.active, "Marketplace: Listing not active");
         require(listing.seller == _msgSender(), "Marketplace: Not the seller");
@@ -244,7 +244,7 @@ contract Marketplace is
         // Return the unsold tokens to the seller
         creditContract.safeTransferFrom(address(this), listing.seller, listing.tokenId, listing.amount, "");
 
-        emit Cancelled(listingId);
+        emit ListingCancelled(listingId);
     }
 
     /**
@@ -264,7 +264,7 @@ contract Marketplace is
         // Return the unsold tokens to the seller
         creditContract.safeTransferFrom(address(this), listing.seller, listing.tokenId, listing.amount, "");
 
-        emit Cancelled(listingId);
+        emit ListingCancelled(listingId);
     }
 
     /**
@@ -273,25 +273,25 @@ contract Marketplace is
      * @param listingId The ID of the listing to update.
      * @param newPricePerUnit The new price for each unit in the listing.
      */
-    function updatePrice(uint256 listingId, uint256 newPricePerUnit) external whenNotPaused {
+    function updateListingPrice(uint256 listingId, uint256 newPricePerUnit) external nonReentrant whenNotPaused {
         Listing storage listing = listings[listingId];
         require(listing.seller == _msgSender(), "Marketplace: Not the seller");
         require(listing.active, "Marketplace: Listing not active");
         require(newPricePerUnit > 0, "Marketplace: Price must be > 0");
 
         listing.pricePerUnit = newPricePerUnit;
-        emit PriceUpdated(listingId, newPricePerUnit);
+        emit ListingPriceUpdated(listingId, newPricePerUnit);
     }
 
     /**
      * @notice Sets the address that will receive platform fees.
      * @dev Admin-only function.
-     * @param newFeeRecipient The new address for fee collection.
+     * @param newTreasury The new address for fee collection.
      */
-    function setFeeRecipient(address newFeeRecipient) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(newFeeRecipient != address(0), "Marketplace: Zero address");
-        feeRecipient = newFeeRecipient;
-        emit FeeRecipientUpdated(newFeeRecipient);
+    function setTreasury(address newTreasury) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(newTreasury != address(0), "Marketplace: Zero address");
+        treasury = newTreasury;
+        emit TreasuryUpdated(newTreasury);
     }
 
     /**

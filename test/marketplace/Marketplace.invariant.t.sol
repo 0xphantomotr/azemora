@@ -25,7 +25,7 @@ contract MarketplaceHandler is Test {
     address public admin;
     address public verifier;
     address public dmrvManager;
-    address public feeRecipient;
+    address public treasury;
     address[] public users; // Sellers and buyers
 
     // --- Available assets ---
@@ -49,7 +49,7 @@ contract MarketplaceHandler is Test {
         address _admin,
         address _verifier,
         address _dmrvManager,
-        address _feeRecipient
+        address _treasury
     ) {
         registry = _registry;
         credit = _credit;
@@ -58,7 +58,7 @@ contract MarketplaceHandler is Test {
         admin = _admin;
         verifier = _verifier;
         dmrvManager = _dmrvManager;
-        feeRecipient = _feeRecipient;
+        treasury = _treasury;
 
         // Create test users
         for (uint256 i = 0; i < 4; i++) {
@@ -72,7 +72,7 @@ contract MarketplaceHandler is Test {
             userPaymentTokenBalances[users[i]] = initialBalance;
         }
         // Fee recipient starts with 0
-        userPaymentTokenBalances[feeRecipient] = 0;
+        userPaymentTokenBalances[treasury] = 0;
 
         // Target the handler so that fuzz inputs are sent to its public functions
         targetContract(address(this));
@@ -145,7 +145,7 @@ contract MarketplaceHandler is Test {
 
         userPaymentTokenBalances[buyer] -= totalPrice;
         userPaymentTokenBalances[l.seller] += sellerProceeds;
-        userPaymentTokenBalances[feeRecipient] += fee;
+        userPaymentTokenBalances[treasury] += fee;
 
         // 4. Execute: Buyer approves and buys
         vm.startPrank(buyer);
@@ -164,7 +164,7 @@ contract MarketplaceHandler is Test {
         if (!l.active) return;
 
         vm.prank(l.seller);
-        try marketplace.cancel(listingId) {
+        try marketplace.cancelListing(listingId) {
             // success is okay
         } catch {
             // revert is okay
@@ -181,7 +181,7 @@ contract MarketplaceInvariantTest is StdInvariant, Test {
         address admin = address(0xA11CE);
         address verifier = address(0xC1E4);
         address dmrvManager = address(0xB01D);
-        address feeRecipient = address(0xFE35);
+        address treasury = address(0xFE35);
 
         vm.startPrank(admin);
         ProjectRegistry registry = ProjectRegistry(
@@ -208,13 +208,13 @@ contract MarketplaceInvariantTest is StdInvariant, Test {
                 )
             )
         );
-        marketplace.setFeeRecipient(feeRecipient);
+        marketplace.setTreasury(treasury);
         marketplace.setFee(250); // 2.5% fee
         vm.stopPrank();
 
         // --- Set up Handler ---
         handler = new MarketplaceHandler(
-            registry, credit, marketplace, paymentToken, admin, verifier, dmrvManager, feeRecipient
+            registry, credit, marketplace, paymentToken, admin, verifier, dmrvManager, treasury
         );
 
         // Target the handler so that fuzz inputs are sent to its public functions
@@ -235,9 +235,9 @@ contract MarketplaceInvariantTest is StdInvariant, Test {
             totalActualBalance += handler.paymentToken().balanceOf(user);
         }
 
-        address feeRecipient = handler.feeRecipient();
-        totalTrackedBalance += handler.userPaymentTokenBalances(feeRecipient);
-        totalActualBalance += handler.paymentToken().balanceOf(feeRecipient);
+        address treasury_ = handler.treasury();
+        totalTrackedBalance += handler.userPaymentTokenBalances(treasury_);
+        totalActualBalance += handler.paymentToken().balanceOf(treasury_);
 
         assertEq(totalTrackedBalance, totalActualBalance, "Payment token conservation broken");
     }

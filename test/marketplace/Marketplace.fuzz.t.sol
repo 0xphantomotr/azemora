@@ -18,7 +18,7 @@ contract MarketplaceFuzzTest is Test {
     address admin = address(0xA11CE);
     address verifier = address(0xC1E4);
     address dmrvManager = address(0xB01D);
-    address feeRecipient = address(0xFE35);
+    address treasury = address(0xFE35);
     address seller = address(0x5E11E1);
     address buyer = address(0xB4BE1);
 
@@ -53,7 +53,7 @@ contract MarketplaceFuzzTest is Test {
                 )
             )
         );
-        marketplace.setFeeRecipient(feeRecipient);
+        marketplace.setTreasury(treasury);
         marketplace.setFee(250); // 2.5% fee
 
         vm.stopPrank();

@@ -143,7 +143,7 @@ contract GovernanceTest is Test {
         targets[0] = address(marketplace);
         uint256[] memory values = new uint256[](1); // No ETH being sent
         bytes[] memory calldatas = new bytes[](1);
-        calldatas[0] = abi.encodeWithSelector(Marketplace.setFeeRecipient.selector, treasuryAddr);
+        calldatas[0] = abi.encodeWithSelector(Marketplace.setTreasury.selector, treasuryAddr);
         string memory description = "Set marketplace fee recipient to Treasury";
         bytes32 descriptionHash = keccak256(bytes(description));
 
@@ -171,7 +171,7 @@ contract GovernanceTest is Test {
         AzemoraGovernor(governorAddr).execute(targets, values, calldatas, descriptionHash);
 
         // --- 5. Verify ---
-        assertEq(marketplace.feeRecipient(), treasuryAddr, "Fee recipient should be the Treasury");
+        assertEq(marketplace.treasury(), treasuryAddr, "Fee recipient should be the Treasury");
     }
 
     function test_Fail_When_Quorum_Not_Met() public {
@@ -180,7 +180,7 @@ contract GovernanceTest is Test {
         targets[0] = address(marketplace);
         uint256[] memory values = new uint256[](1); // No ETH being sent
         bytes[] memory calldatas = new bytes[](1);
-        calldatas[0] = abi.encodeWithSelector(Marketplace.setFeeRecipient.selector, treasuryAddr);
+        calldatas[0] = abi.encodeWithSelector(Marketplace.setTreasury.selector, treasuryAddr);
         string memory description = "Set marketplace fee recipient to Treasury";
 
         // Propose the action with a valid proposer
@@ -207,7 +207,7 @@ contract GovernanceTest is Test {
         targets[0] = address(marketplace);
         uint256[] memory values = new uint256[](1); // No ETH being sent
         bytes[] memory calldatas = new bytes[](1);
-        calldatas[0] = abi.encodeWithSelector(Marketplace.setFeeRecipient.selector, treasuryAddr);
+        calldatas[0] = abi.encodeWithSelector(Marketplace.setTreasury.selector, treasuryAddr);
         string memory description = "Set marketplace fee recipient to Treasury";
 
         // voter proposes
@@ -283,7 +283,7 @@ contract GovernanceTest is Test {
         targets[0] = address(marketplace);
         uint256[] memory values = new uint256[](1);
         bytes[] memory calldatas = new bytes[](1);
-        calldatas[0] = abi.encodeWithSelector(Marketplace.setFeeRecipient.selector, treasuryAddr);
+        calldatas[0] = abi.encodeWithSelector(Marketplace.setTreasury.selector, treasuryAddr);
         string memory description = "This proposal should fail";
 
         vm.expectRevert(
@@ -300,7 +300,7 @@ contract GovernanceTest is Test {
         targets[0] = address(marketplace);
         uint256[] memory values = new uint256[](1);
         bytes[] memory calldatas = new bytes[](1);
-        calldatas[0] = abi.encodeWithSelector(Marketplace.setFeeRecipient.selector, treasuryAddr);
+        calldatas[0] = abi.encodeWithSelector(Marketplace.setTreasury.selector, treasuryAddr);
 
         // --- Scenario 1: Proposer CAN cancel ---
         string memory description1 = "Proposal 1";

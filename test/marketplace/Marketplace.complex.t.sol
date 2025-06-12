@@ -20,7 +20,7 @@ contract MarketplaceComplexTest is Test {
     address admin = address(0xA11CE);
     address verifier = address(0xC1E4);
     address dmrvManager = address(0xB01D);
-    address feeRecipient = address(0xFE35);
+    address treasury = address(0xFE35);
     address seller1 = address(0x5E11E1);
     address seller2 = address(0x5E11E2);
     address buyer1 = address(0xB4BE1);
@@ -69,7 +69,7 @@ contract MarketplaceComplexTest is Test {
                 )
             )
         );
-        marketplace.setFeeRecipient(feeRecipient);
+        marketplace.setTreasury(treasury);
         marketplace.setFee(250); // Initial 2.5% fee
 
         vm.stopPrank();
@@ -123,7 +123,7 @@ contract MarketplaceComplexTest is Test {
 
         // STEP 3: Seller1 decides to update the price of the remaining items
         vm.prank(seller1);
-        marketplace.updatePrice(listingId1, 12 * 1e6); // New price is 12 USDC
+        marketplace.updateListingPrice(listingId1, 12 * 1e6); // New price is 12 USDC
 
         listing1 = marketplace.getListing(listingId1);
         assertEq(listing1.pricePerUnit, 12 * 1e6);
@@ -164,7 +164,7 @@ contract MarketplaceComplexTest is Test {
         vm.startPrank(seller2);
         uint256 listingId3 = marketplace.list(tokenId2, 300, 20 * 1e6, 1 days);
         assertEq(credit.balanceOf(address(marketplace), tokenId2), 300);
-        marketplace.cancel(listingId3);
+        marketplace.cancelListing(listingId3);
         vm.stopPrank();
 
         Marketplace.Listing memory listing3 = marketplace.getListing(listingId3);
@@ -185,13 +185,13 @@ contract MarketplaceComplexTest is Test {
         uint256 buyAmount4 = 10;
         uint256 totalPrice4 = buyAmount4 * 10 * 1e6;
         uint256 newFee = (totalPrice4 * 500) / 10000; // 5%
-        uint256 feeRecipientInitialBalance = paymentToken.balanceOf(feeRecipient);
+        uint256 treasuryInitialBalance = paymentToken.balanceOf(treasury);
 
         vm.startPrank(buyer1);
         paymentToken.approve(address(marketplace), totalPrice4);
         marketplace.buy(listingId4, buyAmount4);
         vm.stopPrank();
 
-        assertEq(paymentToken.balanceOf(feeRecipient), feeRecipientInitialBalance + newFee);
+        assertEq(paymentToken.balanceOf(treasury), treasuryInitialBalance + newFee);
     }
 }

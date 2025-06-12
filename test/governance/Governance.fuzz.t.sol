@@ -141,7 +141,7 @@ contract GovernanceFuzzTest is Test {
         targets[0] = address(marketplace);
         uint256[] memory values = new uint256[](1);
         bytes[] memory calldatas = new bytes[](1);
-        calldatas[0] = abi.encodeWithSelector(Marketplace.setFeeRecipient.selector, treasuryAddr);
+        calldatas[0] = abi.encodeWithSelector(Marketplace.setTreasury.selector, treasuryAddr);
         string memory description = "Fuzz test proposal";
 
         vm.prank(voter);
