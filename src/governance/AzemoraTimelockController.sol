@@ -17,12 +17,11 @@ contract AzemoraTimelockController is Initializable, TimelockControllerUpgradeab
         _disableInitializers();
     }
 
-    function initialize(
-        uint256 minDelay,
-        address[] memory proposers,
-        address[] memory executors,
-        address admin
-    ) public override initializer {
+    function initialize(uint256 minDelay, address[] memory proposers, address[] memory executors, address admin)
+        public
+        override
+        initializer
+    {
         __TimelockController_init(minDelay, proposers, executors, admin);
     }
-} 
+}

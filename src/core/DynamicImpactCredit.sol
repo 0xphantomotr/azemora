@@ -195,7 +195,7 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
         require(ids.length == amounts.length && ids.length == uris.length, "LENGTH_MISMATCH");
 
         uint256[] memory tokenIds = new uint256[](ids.length);
-        for (uint256 i = 0; i < ids.length; ) {
+        for (uint256 i = 0; i < ids.length;) {
             require(projectRegistry.isProjectActive(ids[i]), "DIC: PROJECT_NOT_ACTIVE");
             tokenIds[i] = uint256(ids[i]);
             unchecked {
@@ -205,7 +205,7 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
 
         _mintBatch(to, tokenIds, amounts, "");
 
-        for (uint256 i = 0; i < ids.length; ) {
+        for (uint256 i = 0; i < ids.length;) {
             if (_tokenURIs[tokenIds[i]].length == 0) {
                 _tokenURIs[tokenIds[i]].push(uris[i]);
                 emit URI(uris[i], tokenIds[i]);

@@ -226,7 +226,11 @@ contract DynamicImpactCreditTest is Test {
 
         // Non-pauser cannot pause
         vm.prank(other);
-        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)")), other, pauserRole));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)")), other, pauserRole
+            )
+        );
         credit.pause();
     }
 

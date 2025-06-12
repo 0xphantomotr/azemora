@@ -59,7 +59,13 @@ contract GovernanceComplexTest is Test {
         AzemoraGovernor governorImpl = new AzemoraGovernor();
         bytes memory governorInitData = abi.encodeCall(
             AzemoraGovernor.initialize,
-            (token, AzemoraTimelockController(timelockAddr), uint48(VOTING_DELAY), uint32(VOTING_PERIOD), PROPOSAL_THRESHOLD)
+            (
+                token,
+                AzemoraTimelockController(timelockAddr),
+                uint48(VOTING_DELAY),
+                uint32(VOTING_PERIOD),
+                PROPOSAL_THRESHOLD
+            )
         );
         ERC1967Proxy governorProxy = new ERC1967Proxy(address(governorImpl), governorInitData);
         governorAddr = payable(address(governorProxy));
@@ -157,4 +163,4 @@ contract GovernanceComplexTest is Test {
         assertEq(AzemoraGovernor(governorAddr).votingDelay(), newVotingDelay, "Voting delay should be updated");
         assertEq(AzemoraGovernor(governorAddr).votingPeriod(), newVotingPeriod, "Voting period should be updated");
     }
-} 
+}

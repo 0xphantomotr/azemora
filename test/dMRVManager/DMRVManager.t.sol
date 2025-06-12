@@ -214,7 +214,11 @@ contract DMRVManagerTest is Test {
 
         // Non-pauser cannot pause
         vm.prank(projectOwner);
-        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)")), projectOwner, pauserRole));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)")), projectOwner, pauserRole
+            )
+        );
         manager.pause();
     }
 

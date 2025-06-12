@@ -199,7 +199,7 @@ contract Marketplace is
 
         uint256 totalPrice = amountToBuy * listing.pricePerUnit;
         require(paymentToken.balanceOf(_msgSender()) >= totalPrice, "Marketplace: Insufficient balance");
-        
+
         uint256 fee = (totalPrice * feeBps) / 10000;
         uint256 sellerProceeds = totalPrice - fee;
 

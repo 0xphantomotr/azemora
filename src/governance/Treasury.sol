@@ -29,15 +29,15 @@ contract Treasury is Initializable, OwnableUpgradeable {
     function withdrawETH(address to, uint256 amount) external onlyOwner {
         require(to != address(0), "Cannot send to zero address");
         require(address(this).balance >= amount, "Insufficient ETH balance");
-        (bool success, ) = to.call{value: amount}("");
+        (bool success,) = to.call{value: amount}("");
         require(success, "ETH transfer failed");
         emit ETHWithdrawn(to, amount);
     }
 
     function withdrawERC20(address token, address to, uint256 amount) external onlyOwner {
         require(to != address(0), "Cannot send to zero address");
-        (bool success, ) = token.call(abi.encodeWithSignature("transfer(address,uint256)", to, amount));
+        (bool success,) = token.call(abi.encodeWithSignature("transfer(address,uint256)", to, amount));
         require(success, "ERC20 transfer failed");
         emit ERC20Withdrawn(token, to, amount);
     }
-} 
+}

@@ -11,7 +11,6 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 
-
 /**
  * @title AzemoraGovernor
  * @author Genci Mehmeti
@@ -43,11 +42,7 @@ contract AzemoraGovernor is
         uint256 _proposalThreshold
     ) public initializer {
         __Governor_init("AzemoraGovernor");
-        __GovernorSettings_init(
-            _votingDelay,
-            _votingPeriod,
-            _proposalThreshold
-        );
+        __GovernorSettings_init(_votingDelay, _votingPeriod, _proposalThreshold);
         __GovernorVotes_init(token);
         __GovernorVotesQuorumFraction_init(4); // 4% quorum
         __GovernorTimelockControl_init(timelock);
@@ -59,11 +54,11 @@ contract AzemoraGovernor is
 
     // The following functions are overrides required by Solidity.
 
-    function proposalNeedsQueuing(uint256 proposalId) 
-        public 
-        view 
-        override(GovernorUpgradeable, GovernorTimelockControlUpgradeable) 
-        returns (bool) 
+    function proposalNeedsQueuing(uint256 proposalId)
+        public
+        view
+        override(GovernorUpgradeable, GovernorTimelockControlUpgradeable)
+        returns (bool)
     {
         return super.proposalNeedsQueuing(proposalId);
     }
@@ -115,21 +110,11 @@ contract AzemoraGovernor is
         return super.state(proposalId);
     }
 
-    function votingDelay()
-        public
-        view
-        override(GovernorUpgradeable, GovernorSettingsUpgradeable)
-        returns (uint256)
-    {
+    function votingDelay() public view override(GovernorUpgradeable, GovernorSettingsUpgradeable) returns (uint256) {
         return super.votingDelay();
     }
 
-    function votingPeriod()
-        public
-        view
-        override(GovernorUpgradeable, GovernorSettingsUpgradeable)
-        returns (uint256)
-    {
+    function votingPeriod() public view override(GovernorUpgradeable, GovernorSettingsUpgradeable) returns (uint256) {
         return super.votingPeriod();
     }
 
@@ -141,7 +126,7 @@ contract AzemoraGovernor is
     {
         return super.quorum(blockNumber);
     }
-    
+
     function proposalThreshold()
         public
         view
@@ -160,9 +145,5 @@ contract AzemoraGovernor is
         return super.supportsInterface(interfaceId);
     }
 
-    function _authorizeUpgrade(address newImplementation)
-        internal
-        override
-        onlyRole(DEFAULT_ADMIN_ROLE)
-    {}
-} 
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
+}

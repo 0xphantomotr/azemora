@@ -275,7 +275,7 @@ contract MarketplaceTest is Test {
         uint256 totalPrice = amountToBuy * pricePerUnit;
 
         address brokeBuyer = address(0xDEAD);
-        
+
         vm.prank(brokeBuyer);
         paymentToken.approve(address(marketplace), totalPrice);
 
@@ -299,7 +299,11 @@ contract MarketplaceTest is Test {
 
         // Non-pauser cannot pause
         vm.prank(seller);
-        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)")), seller, pauserRole));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)")), seller, pauserRole
+            )
+        );
         marketplace.pause();
     }
 

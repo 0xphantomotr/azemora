@@ -52,18 +52,9 @@ contract AzemoraToken is
         super._update(from, to, value);
     }
 
-    function nonces(address owner)
-        public
-        view
-        override(ERC20PermitUpgradeable, NoncesUpgradeable)
-        returns (uint256)
-    {
+    function nonces(address owner) public view override(ERC20PermitUpgradeable, NoncesUpgradeable) returns (uint256) {
         return super.nonces(owner);
     }
-    
-    function _authorizeUpgrade(address newImplementation)
-        internal
-        override
-        onlyRole(DEFAULT_ADMIN_ROLE)
-    {}
+
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 }

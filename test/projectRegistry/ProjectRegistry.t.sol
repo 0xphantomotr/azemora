@@ -185,7 +185,11 @@ contract ProjectRegistryTest is Test {
 
         // Non-pauser cannot pause
         vm.prank(anotherUser);
-        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)")), anotherUser, pauserRole));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)")), anotherUser, pauserRole
+            )
+        );
         registry.pause();
     }
 

@@ -61,20 +61,26 @@ contract GovernanceTest is Test {
         // Use temporary direct casting for initialization only
         bytes memory governorInitData = abi.encodeCall(
             AzemoraGovernor.initialize,
-            (token, AzemoraTimelockController(timelockAddr), uint48(VOTING_DELAY), uint32(VOTING_PERIOD), PROPOSAL_THRESHOLD)
+            (
+                token,
+                AzemoraTimelockController(timelockAddr),
+                uint48(VOTING_DELAY),
+                uint32(VOTING_PERIOD),
+                PROPOSAL_THRESHOLD
+            )
         );
         ERC1967Proxy governorProxy = new ERC1967Proxy(address(governorImpl), governorInitData);
         governorAddr = payable(address(governorProxy));
 
         // 4. Deploy Treasury
         Treasury treasuryImpl = new Treasury();
-        bytes memory treasuryInitData = abi.encodeCall(Treasury.initialize, (admin)); 
+        bytes memory treasuryInitData = abi.encodeCall(Treasury.initialize, (admin));
         ERC1967Proxy treasuryProxy = new ERC1967Proxy(address(treasuryImpl), treasuryInitData);
         treasuryAddr = payable(address(treasuryProxy));
 
         // 5. Deploy Marketplace and its dependencies
         paymentToken = new MockERC20ForGovTest();
-        
+
         ProjectRegistry registryImpl = new ProjectRegistry();
         bytes memory registryInitData = abi.encodeCall(ProjectRegistry.initialize, ());
         ERC1967Proxy registryProxy = new ERC1967Proxy(address(registryImpl), registryInitData);
@@ -105,7 +111,7 @@ contract GovernanceTest is Test {
         bytes32 marketplaceAdminRole = marketplace.DEFAULT_ADMIN_ROLE();
         marketplace.grantRole(marketplaceAdminRole, timelockAddr);
         marketplace.renounceRole(marketplaceAdminRole, admin);
-        
+
         // Transfer Treasury ownership to timelock
         Treasury(treasuryAddr).transferOwnership(timelockAddr);
 
@@ -265,12 +271,14 @@ contract GovernanceTest is Test {
 
         // --- 5. Verify ---
         assertEq(recipient.balance, startingBalance + withdrawAmount, "Recipient should have received ETH");
-        assertEq(address(treasuryAddr).balance, treasuryBalance - withdrawAmount, "Treasury balance should have decreased");
+        assertEq(
+            address(treasuryAddr).balance, treasuryBalance - withdrawAmount, "Treasury balance should have decreased"
+        );
     }
 
     function test_Fail_If_Proposer_Below_Threshold() public {
         vm.prank(poorVoter);
-        
+
         address[] memory targets = new address[](1);
         targets[0] = address(marketplace);
         uint256[] memory values = new uint256[](1);
@@ -278,12 +286,11 @@ contract GovernanceTest is Test {
         calldatas[0] = abi.encodeWithSelector(Marketplace.setFeeRecipient.selector, treasuryAddr);
         string memory description = "This proposal should fail";
 
-        vm.expectRevert(abi.encodeWithSignature(
-            "GovernorInsufficientProposerVotes(address,uint256,uint256)",
-            poorVoter,
-            1e18,
-            PROPOSAL_THRESHOLD
-        ));
+        vm.expectRevert(
+            abi.encodeWithSignature(
+                "GovernorInsufficientProposerVotes(address,uint256,uint256)", poorVoter, 1e18, PROPOSAL_THRESHOLD
+            )
+        );
         AzemoraGovernor(governorAddr).propose(targets, values, calldatas, description);
     }
 
@@ -312,9 +319,7 @@ contract GovernanceTest is Test {
         uint256 proposalId2 = AzemoraGovernor(governorAddr).propose(targets, values, calldatas, description2);
 
         vm.prank(voter2); // Non-proposer (voter2) attempts to cancel
-        vm.expectRevert(
-            abi.encodeWithSignature("GovernorUnableToCancel(uint256,address)", proposalId2, voter2)
-        );
+        vm.expectRevert(abi.encodeWithSignature("GovernorUnableToCancel(uint256,address)", proposalId2, voter2));
         AzemoraGovernor(governorAddr).cancel(targets, values, calldatas, descriptionHash2);
 
         // Verify state is unchanged after failed cancellation attempt
@@ -345,7 +350,7 @@ contract GovernanceTest is Test {
 
         // --- 2. Execute ---
         vm.warp(block.timestamp + MIN_DELAY + 1);
-        
+
         // Expect execution to fail because the treasury withdrawal will revert
         vm.expectRevert("Insufficient ETH balance");
         AzemoraGovernor(governorAddr).execute(targets, values, calldatas, descriptionHash);

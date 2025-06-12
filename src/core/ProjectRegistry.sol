@@ -42,6 +42,7 @@ contract ProjectRegistry is
         Active, // Verified and eligible for credit minting
         Paused, // Temporarily suspended by admin
         Archived // Permanently archived, not active
+
     }
 
     struct Project {

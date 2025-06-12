@@ -59,7 +59,13 @@ contract GovernanceFuzzTest is Test {
         AzemoraGovernor governorImpl = new AzemoraGovernor();
         bytes memory governorInitData = abi.encodeCall(
             AzemoraGovernor.initialize,
-            (token, AzemoraTimelockController(timelockAddr), uint48(VOTING_DELAY), uint32(VOTING_PERIOD), PROPOSAL_THRESHOLD)
+            (
+                token,
+                AzemoraTimelockController(timelockAddr),
+                uint48(VOTING_DELAY),
+                uint32(VOTING_PERIOD),
+                PROPOSAL_THRESHOLD
+            )
         );
         ERC1967Proxy governorProxy = new ERC1967Proxy(address(governorImpl), governorInitData);
         governorAddr = payable(address(governorProxy));
@@ -149,15 +155,18 @@ contract GovernanceFuzzTest is Test {
         // Verify the votes were counted correctly
         (uint256 againstVotes, uint256 forVotes, uint256 abstainVotes) =
             AzemoraGovernor(governorAddr).proposalVotes(proposalId);
-        
+
         uint256 voterPower = token.getVotes(voter);
 
-        if (voteType == 1) { // For
+        if (voteType == 1) {
+            // For
             assertEq(forVotes, voterPower, "For votes should match voter's power");
-        } else if (voteType == 0) { // Against
+        } else if (voteType == 0) {
+            // Against
             assertEq(againstVotes, voterPower, "Against votes should match voter's power");
-        } else { // Abstain
+        } else {
+            // Abstain
             assertEq(abstainVotes, voterPower, "Abstain votes should match voter's power");
         }
     }
-} 
+}

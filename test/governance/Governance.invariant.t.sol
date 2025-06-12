@@ -32,7 +32,7 @@ contract GovernanceInvariantTest is Test {
     address voter2 = makeAddr("voter2");
     address poorVoter = makeAddr("poorVoter");
     address recipient = makeAddr("recipient");
-    
+
     // Invariant state
     uint256 public initialTotalSupply;
 
@@ -62,7 +62,13 @@ contract GovernanceInvariantTest is Test {
         AzemoraGovernor governorImpl = new AzemoraGovernor();
         bytes memory governorInitData = abi.encodeCall(
             AzemoraGovernor.initialize,
-            (token, AzemoraTimelockController(timelockAddr), uint48(VOTING_DELAY), uint32(VOTING_PERIOD), PROPOSAL_THRESHOLD)
+            (
+                token,
+                AzemoraTimelockController(timelockAddr),
+                uint48(VOTING_DELAY),
+                uint32(VOTING_PERIOD),
+                PROPOSAL_THRESHOLD
+            )
         );
         ERC1967Proxy governorProxy = new ERC1967Proxy(address(governorImpl), governorInitData);
         governorAddr = payable(address(governorProxy));
@@ -135,4 +141,4 @@ contract GovernanceInvariantTest is Test {
     function invariant_totalSupplyIsConstant() public {
         assertEq(token.totalSupply(), initialTotalSupply);
     }
-} 
+}
