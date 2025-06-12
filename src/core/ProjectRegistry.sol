@@ -111,17 +111,31 @@ contract ProjectRegistry is
      */
     function setProjectStatus(bytes32 projectId, ProjectStatus newStatus) external nonReentrant whenNotPaused {
         Project storage project = _projects[projectId];
+        ProjectStatus oldStatus = project.status;
+
         require(project.id != 0, "ProjectRegistry: Project not found");
+        require(oldStatus != newStatus, "ProjectRegistry: New status is same as old status");
+        require(oldStatus != ProjectStatus.Archived, "ProjectRegistry: Archived projects cannot be modified");
 
         if (newStatus == ProjectStatus.Active) {
             require(hasRole(VERIFIER_ROLE, _msgSender()), "ProjectRegistry: Caller is not a verifier");
-        } else if (newStatus == ProjectStatus.Paused || newStatus == ProjectStatus.Archived) {
+            require(
+                oldStatus == ProjectStatus.Pending || oldStatus == ProjectStatus.Paused,
+                "ProjectRegistry: Can only activate from Pending or Paused"
+            );
+        } else if (newStatus == ProjectStatus.Paused) {
             require(hasRole(DEFAULT_ADMIN_ROLE, _msgSender()), "ProjectRegistry: Caller is not an admin");
+            require(oldStatus == ProjectStatus.Active, "ProjectRegistry: Can only pause from Active");
+        } else if (newStatus == ProjectStatus.Archived) {
+            require(hasRole(DEFAULT_ADMIN_ROLE, _msgSender()), "ProjectRegistry: Caller is not an admin");
+            // Any non-archived state can be archived. The initial checks are sufficient.
         } else {
-            revert("ProjectRegistry: Invalid status transition");
+            // This case should be unreachable if all statuses are handled above.
+            // It prevents transitioning to an undefined status.
+            revert("ProjectRegistry: Invalid status transition target");
         }
 
-        emit ProjectStatusChanged(projectId, project.status, newStatus);
+        emit ProjectStatusChanged(projectId, oldStatus, newStatus);
         project.status = newStatus;
     }
 

@@ -140,6 +140,52 @@ contract DMRVManagerTest is Test {
         assertEq(credit.uri(uint256(projectId)), metadataURI);
     }
 
+    function test_OracleFulfillment_RecordsUriHistory() public {
+        uint256 tokenId = uint256(projectId);
+
+        // --- 1. First fulfillment (mints and sets initial URI) ---
+        string memory uri1 = "ipfs://report-v1.json";
+        bytes memory data1 = abi.encode(uint256(100), false, bytes32(0), uri1);
+        // Request by projectOwner
+        vm.prank(projectOwner);
+        bytes32 requestId1 = manager.requestVerification(projectId);
+        // Fulfill by oracle
+        vm.prank(oracle);
+        manager.fulfillVerification(requestId1, data1);
+
+        // --- 2. Second fulfillment (updates metadata only) ---
+        string memory uri2 = "ipfs://report-v2.json";
+        bytes memory data2 = abi.encode(uint256(0), true, bytes32(0), uri2);
+        // Request by projectOwner
+        vm.prank(projectOwner);
+        bytes32 requestId2 = manager.requestVerification(projectId);
+        // Fulfill by oracle
+        vm.prank(oracle);
+        manager.fulfillVerification(requestId2, data2);
+
+        // --- 3. Third fulfillment (mints more credits and updates URI again) ---
+        string memory uri3 = "ipfs://report-v3.json";
+        bytes memory data3 = abi.encode(uint256(50), false, bytes32(0), uri3);
+        // Request by projectOwner
+        vm.prank(projectOwner);
+        bytes32 requestId3 = manager.requestVerification(projectId);
+        // Fulfill by oracle
+        vm.prank(oracle);
+        manager.fulfillVerification(requestId3, data3);
+
+        // --- 4. Verify the entire URI history ---
+        string[] memory history = credit.getTokenURIHistory(tokenId);
+
+        assertEq(history.length, 3, "URI history should have 3 entries");
+        assertEq(history[0], uri1, "First URI in history is incorrect");
+        assertEq(history[1], uri2, "Second URI in history is incorrect");
+        assertEq(history[2], uri3, "Third URI in history is incorrect");
+
+        // Also check that the current URI is the latest one
+        assertEq(credit.uri(tokenId), uri3, "Current URI should be the latest one");
+        assertEq(credit.balanceOf(projectOwner, tokenId), 150, "Final balance should be sum of mints");
+    }
+
     /* ---------- Admin Functions ---------- */
 
     function test_AdminSetVerification() public {

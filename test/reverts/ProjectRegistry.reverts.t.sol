@@ -66,7 +66,7 @@ contract ProjectRegistryRevertsTest is Test {
 
     function test_revert_setProjectStatus_invalidTransition() public {
         // e.g., trying to set to Pending again from Pending
-        vm.expectRevert("ProjectRegistry: Invalid status transition");
+        vm.expectRevert("ProjectRegistry: New status is same as old status");
         vm.prank(verifier);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Pending);
     }
