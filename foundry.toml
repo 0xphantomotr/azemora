@@ -1,6 +1,10 @@
 [profile.default]
-src = "src"
-out = "out"
-libs = ["lib"]
+src = 'src'
+out = 'out'
+libs = ['lib']
+solc_version = '0.8.25'
+auto_detect_solc = false
+optimizer = true
+optimizer_runs = 10000
 
-# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+# See more config options https://github.com/foundry-rs/foundry/tree/master/config
