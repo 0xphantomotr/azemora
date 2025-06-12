@@ -22,7 +22,7 @@ contract AzemoraTimelockController is Initializable, TimelockControllerUpgradeab
         address[] memory proposers,
         address[] memory executors,
         address admin
-    ) public initializer {
+    ) public override initializer {
         __TimelockController_init(minDelay, proposers, executors, admin);
     }
 } 

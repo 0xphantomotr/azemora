@@ -3,7 +3,6 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts-upgradeable/token/ERC20/utils/SafeERC20Upgradeable.sol";
 
 /**
  * @title Treasury
@@ -13,8 +12,6 @@ import "@openzeppelin/contracts-upgradeable/token/ERC20/utils/SafeERC20Upgradeab
  * withdrawal of ETH and any ERC20 tokens.
  */
 contract Treasury is Initializable, OwnableUpgradeable {
-    using SafeERC20Upgradeable for IERC20Upgradeable;
-
     event ETHWithdrawn(address indexed to, uint256 amount);
     event ERC20Withdrawn(address indexed token, address indexed to, uint256 amount);
 
@@ -37,9 +34,10 @@ contract Treasury is Initializable, OwnableUpgradeable {
         emit ETHWithdrawn(to, amount);
     }
 
-    function withdrawERC20(IERC20Upgradeable token, address to, uint256 amount) external onlyOwner {
+    function withdrawERC20(address token, address to, uint256 amount) external onlyOwner {
         require(to != address(0), "Cannot send to zero address");
-        token.safeTransfer(to, amount);
-        emit ERC20Withdrawn(address(token), to, amount);
+        (bool success, ) = token.call(abi.encodeWithSignature("transfer(address,uint256)", to, amount));
+        require(success, "ERC20 transfer failed");
+        emit ERC20Withdrawn(token, to, amount);
     }
 } 

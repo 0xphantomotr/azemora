@@ -37,13 +37,16 @@ contract AzemoraGovernor is
 
     function initialize(
         IVotes token,
-        TimelockControllerUpgradeable timelock
+        TimelockControllerUpgradeable timelock,
+        uint48 _votingDelay,
+        uint32 _votingPeriod,
+        uint256 _proposalThreshold
     ) public initializer {
-        __Governor_init(token, timelock);
+        __Governor_init("AzemoraGovernor");
         __GovernorSettings_init(
-            1, // 1 block voting delay
-            50400, // 1 week voting period (assuming 12s block time)
-            0 // 0 proposal threshold
+            _votingDelay,
+            _votingPeriod,
+            _proposalThreshold
         );
         __GovernorVotes_init(token);
         __GovernorVotesQuorumFraction_init(4); // 4% quorum
@@ -56,40 +59,51 @@ contract AzemoraGovernor is
 
     // The following functions are overrides required by Solidity.
 
-    function votingDelay()
-        public
-        view
-        override(IGovernorUpgradeable, GovernorSettingsUpgradeable)
-        returns (uint256)
+    function proposalNeedsQueuing(uint256 proposalId) 
+        public 
+        view 
+        override(GovernorUpgradeable, GovernorTimelockControlUpgradeable) 
+        returns (bool) 
     {
-        return super.votingDelay();
+        return super.proposalNeedsQueuing(proposalId);
     }
 
-    function votingPeriod()
-        public
-        view
-        override(IGovernorUpgradeable, GovernorSettingsUpgradeable)
-        returns (uint256)
-    {
-        return super.votingPeriod();
+    function _queueOperations(
+        uint256 proposalId,
+        address[] memory targets,
+        uint256[] memory values,
+        bytes[] memory calldatas,
+        bytes32 descriptionHash
+    ) internal override(GovernorUpgradeable, GovernorTimelockControlUpgradeable) returns (uint48) {
+        return super._queueOperations(proposalId, targets, values, calldatas, descriptionHash);
     }
 
-    function quorum(uint256 blockNumber)
-        public
-        view
-        override(IGovernorUpgradeable, GovernorVotesQuorumFractionUpgradeable)
-        returns (uint256)
-    {
-        return super.quorum(blockNumber);
+    function _executeOperations(
+        uint256 proposalId,
+        address[] memory targets,
+        uint256[] memory values,
+        bytes[] memory calldatas,
+        bytes32 descriptionHash
+    ) internal override(GovernorUpgradeable, GovernorTimelockControlUpgradeable) {
+        super._executeOperations(proposalId, targets, values, calldatas, descriptionHash);
     }
-    
-    function proposalThreshold()
-        public
+
+    function _cancel(
+        address[] memory targets,
+        uint256[] memory values,
+        bytes[] memory calldatas,
+        bytes32 descriptionHash
+    ) internal override(GovernorUpgradeable, GovernorTimelockControlUpgradeable) returns (uint256) {
+        return super._cancel(targets, values, calldatas, descriptionHash);
+    }
+
+    function _executor()
+        internal
         view
-        override(IGovernorUpgradeable, GovernorSettingsUpgradeable)
-        returns (uint256)
+        override(GovernorUpgradeable, GovernorTimelockControlUpgradeable)
+        returns (address)
     {
-        return super.proposalThreshold();
+        return super._executor();
     }
 
     function state(uint256 proposalId)
@@ -99,6 +113,51 @@ contract AzemoraGovernor is
         returns (ProposalState)
     {
         return super.state(proposalId);
+    }
+
+    function votingDelay()
+        public
+        view
+        override(GovernorUpgradeable, GovernorSettingsUpgradeable)
+        returns (uint256)
+    {
+        return super.votingDelay();
+    }
+
+    function votingPeriod()
+        public
+        view
+        override(GovernorUpgradeable, GovernorSettingsUpgradeable)
+        returns (uint256)
+    {
+        return super.votingPeriod();
+    }
+
+    function quorum(uint256 blockNumber)
+        public
+        view
+        override(GovernorUpgradeable, GovernorVotesQuorumFractionUpgradeable)
+        returns (uint256)
+    {
+        return super.quorum(blockNumber);
+    }
+    
+    function proposalThreshold()
+        public
+        view
+        override(GovernorUpgradeable, GovernorSettingsUpgradeable)
+        returns (uint256)
+    {
+        return super.proposalThreshold();
+    }
+
+    function supportsInterface(bytes4 interfaceId)
+        public
+        view
+        override(GovernorUpgradeable, AccessControlUpgradeable)
+        returns (bool)
+    {
+        return super.supportsInterface(interfaceId);
     }
 
     function _authorizeUpgrade(address newImplementation)
