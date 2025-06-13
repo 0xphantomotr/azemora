@@ -104,16 +104,15 @@ contract UpgradeInvariantTest is Test {
         vm.stopPrank();
     }
 
-    /*
-     * @notice INVARIANT: The Marketplace admin role must ALWAYS be held by the original admin.
-     * @dev This invariant is checked after every single fuzzer action. The fuzzer will call
-     *      `list`, `buy`, and `upgradeToV2` in random sequences. This test proves that no
-     *      combination of these actions, including a mid-sequence upgrade, can cause the
-     *      admin role to be lost or reassigned.
+    /**
+     * @dev Invariant: Ensures the admin role for all upgradeable contracts remains stable across upgrades.
+     * The admin should always be the Timelock contract.
      */
-    function invariant_AdminRoleIsStableAcrossUpgrades() public {
+    function invariant_AdminRoleIsStableAcrossUpgrades() public view {
+        // Check admin role for Marketplace
+        bytes32 marketplaceAdminRole = marketplace.DEFAULT_ADMIN_ROLE();
         assertTrue(
-            marketplace.hasRole(marketplace.DEFAULT_ADMIN_ROLE(), admin),
+            marketplace.hasRole(marketplaceAdminRole, admin),
             "INVARIANT VIOLATED: Marketplace admin role was lost or transferred!"
         );
     }

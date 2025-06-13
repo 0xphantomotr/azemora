@@ -99,7 +99,7 @@ contract GovernanceComplexTest is Test {
         // 6. Configure Roles & Ownership
         bytes32 proposerRole = AzemoraTimelockController(timelockAddr).PROPOSER_ROLE();
         bytes32 executorRole = AzemoraTimelockController(timelockAddr).EXECUTOR_ROLE();
-        bytes32 timelockAdminRole = AzemoraTimelockController(timelockAddr).DEFAULT_ADMIN_ROLE();
+        // bytes32 timelockAdminRole = AzemoraTimelockController(timelockAddr).DEFAULT_ADMIN_ROLE();
 
         AzemoraTimelockController(timelockAddr).grantRole(proposerRole, governorAddr);
         AzemoraTimelockController(timelockAddr).grantRole(executorRole, address(0)); // Anyone can execute

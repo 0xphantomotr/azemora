@@ -136,9 +136,10 @@ contract GovernanceInvariantTest is Test {
     }
 
     /**
-     * @dev Invariant: The total supply of the governance token must never change.
+     * @dev Invariant: The total supply of the governance token should remain constant.
+     * This ensures no new tokens are minted or burned unexpectedly.
      */
-    function invariant_totalSupplyIsConstant() public {
-        assertEq(token.totalSupply(), initialTotalSupply);
+    function invariant_totalSupplyIsConstant() public view {
+        assertEq(token.totalSupply(), initialTotalSupply, "The total supply of the governance token must never change.");
     }
 }

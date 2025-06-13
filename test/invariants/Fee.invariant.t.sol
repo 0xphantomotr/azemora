@@ -186,7 +186,7 @@ contract FeeInvariantTest is Test, IFeeCallback {
      *      calculation of fees matches the actual on-chain balance of the Treasury. This proves
      *      that fees are never lost, created from nothing, or sent to the wrong place.
      */
-    function invariant_feeAccountingIsCorrect() public {
+    function invariant_feeAccountingIsCorrect() public view {
         assertEq(
             totalFeesCalculated,
             paymentToken.balanceOf(address(treasury)),

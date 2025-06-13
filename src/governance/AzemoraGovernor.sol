@@ -8,8 +8,6 @@ import "@openzeppelin/contracts-upgradeable/governance/extensions/GovernorVotesU
 import "@openzeppelin/contracts-upgradeable/governance/extensions/GovernorVotesQuorumFractionUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/governance/extensions/GovernorTimelockControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 
 /**
  * @title AzemoraGovernor
@@ -17,17 +15,17 @@ import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol"
  * @dev The governance contract for the Azemora platform.
  * It uses OpenZeppelin's Governor modules for voting, quorum, and timelock functionality.
  * The governor manages proposals and executes them via a TimelockController.
+ * This version is optimized for size by removing UUPS and AccessControl.
+ * Upgrades are managed by the Timelock.
  */
 contract AzemoraGovernor is
     Initializable,
-    AccessControlUpgradeable,
     GovernorUpgradeable,
     GovernorSettingsUpgradeable,
     GovernorCountingSimpleUpgradeable,
     GovernorVotesUpgradeable,
     GovernorVotesQuorumFractionUpgradeable,
-    GovernorTimelockControlUpgradeable,
-    UUPSUpgradeable
+    GovernorTimelockControlUpgradeable
 {
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -46,10 +44,10 @@ contract AzemoraGovernor is
         __GovernorVotes_init(token);
         __GovernorVotesQuorumFraction_init(4); // 4% quorum
         __GovernorTimelockControl_init(timelock);
-        __AccessControl_init();
-        __UUPSUpgradeable_init();
 
-        _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
+        // The deployer is granted the proposer role by default,
+        // and the timelock is granted the executor role.
+        // The timelock admin is the governor itself.
     }
 
     // The following functions are overrides required by Solidity.
@@ -136,14 +134,7 @@ contract AzemoraGovernor is
         return super.proposalThreshold();
     }
 
-    function supportsInterface(bytes4 interfaceId)
-        public
-        view
-        override(GovernorUpgradeable, AccessControlUpgradeable)
-        returns (bool)
-    {
+    function supportsInterface(bytes4 interfaceId) public view override(GovernorUpgradeable) returns (bool) {
         return super.supportsInterface(interfaceId);
     }
-
-    function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 }

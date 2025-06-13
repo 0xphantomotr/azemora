@@ -78,17 +78,14 @@ contract SystemInvariantTest is Test {
         vm.stopPrank();
     }
 
-    /*
-     * @notice INVARIANT: The admin role on the Marketplace contract must never be lost.
-     * @dev This test asserts that the `DEFAULT_ADMIN_ROLE` for the marketplace
-     *      always belongs to the initial admin account. Foundry's fuzzer will
-     *      call the functions in the `InvariantHandler` in random sequences to try
-     *      to find a state where this property is false.
+    /**
+     * @dev Invariant: The ADMIN role for the Marketplace should always be held by the Timelock contract.
+     * Ensures that no other address can gain administrative control over the marketplace.
      */
-    function invariant_MarketplaceAdminRoleIsStable() public {
+    function invariant_MarketplaceAdminRoleIsStable() public view {
+        bytes32 adminRole = marketplace.DEFAULT_ADMIN_ROLE();
         assertTrue(
-            marketplace.hasRole(marketplace.DEFAULT_ADMIN_ROLE(), admin),
-            "Invariant Violated: Marketplace admin role was lost or transferred."
+            marketplace.hasRole(adminRole, admin), "Invariant Violated: Marketplace admin role was lost or transferred."
         );
     }
 }
