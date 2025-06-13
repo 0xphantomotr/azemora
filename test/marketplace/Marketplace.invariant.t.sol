@@ -213,9 +213,8 @@ contract MarketplaceInvariantTest is StdInvariant, Test {
         vm.stopPrank();
 
         // --- Set up Handler ---
-        handler = new MarketplaceHandler(
-            registry, credit, marketplace, paymentToken, admin, verifier, dmrvManager, treasury
-        );
+        handler =
+            new MarketplaceHandler(registry, credit, marketplace, paymentToken, admin, verifier, dmrvManager, treasury);
 
         // Target the handler so that fuzz inputs are sent to its public functions
         targetContract(address(handler));

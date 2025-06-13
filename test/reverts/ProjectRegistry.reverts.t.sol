@@ -92,4 +92,4 @@ contract ProjectRegistryRevertsTest is Test {
         vm.prank(projectDeveloper);
         registry.transferOwnership(projectId, address(0));
     }
-} 
+}

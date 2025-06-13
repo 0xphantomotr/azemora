@@ -122,7 +122,7 @@ contract DMRVManagerRevertsTest is Test {
         vm.prank(admin);
         dmrvManager.adminSetVerification(pendingProjectId, 100, "ipfs://admin", false);
     }
-    
+
     // --- Pausable ---
 
     function test_revert_whenPaused() public {
@@ -133,4 +133,4 @@ contract DMRVManagerRevertsTest is Test {
         vm.prank(projectDeveloper);
         dmrvManager.requestVerification(activeProjectId);
     }
-} 
+}

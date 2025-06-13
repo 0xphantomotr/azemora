@@ -106,7 +106,6 @@ contract FeeInvariantHandler is Test {
     }
 }
 
-
 /*
  * @title FeeInvariantTest
  * @notice An invariant test to ensure marketplace fees are always correctly accounted for.
@@ -170,7 +169,8 @@ contract FeeInvariantTest is Test, IFeeCallback {
         paymentToken.approve(address(marketplace), type(uint256).max);
 
         // --- Setup Handler ---
-        FeeInvariantHandler handler = new FeeInvariantHandler(this, marketplace, paymentToken, address(treasury), seller, buyer, tokenId);
+        FeeInvariantHandler handler =
+            new FeeInvariantHandler(this, marketplace, paymentToken, address(treasury), seller, buyer, tokenId);
         // Tell the fuzzer to call functions on the handler
         targetContract(address(handler));
     }
@@ -193,4 +193,4 @@ contract FeeInvariantTest is Test, IFeeCallback {
             "Fee Invariant Violated: Treasury balance does not match calculated fees."
         );
     }
-} 
+}

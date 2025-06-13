@@ -43,7 +43,7 @@ contract ReentrancyTest is Test {
 contract MockMarketplace {
     // Track whether we're inside a nonReentrant function
     bool private _locked;
-    
+
     // Flag to track if the function has been called
     bool public functionCalled;
 
@@ -56,13 +56,13 @@ contract MockMarketplace {
     function nonReentrantFunction() external {
         // Check if we're already in a nonReentrant function
         require(!_locked, "ReentrancyGuard: reentrant call");
-        
+
         // Set the lock
         _locked = true;
-        
+
         // Set our flag
         functionCalled = true;
-        
+
         // Release the lock
         _locked = false;
     }
@@ -72,10 +72,10 @@ contract MockMarketplace {
         // First call - should acquire the lock
         require(!_locked, "ReentrancyGuard: reentrant call");
         _locked = true;
-        
+
         // Try to call again while locked - should fail
         this.nonReentrantFunction();
-        
+
         // This line should never be reached if the guard works
         _locked = false;
     }

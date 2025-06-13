@@ -127,18 +127,18 @@ contract ProjectInvariantTest is Test, IProjectStateCallback {
         // State machine logic validation
         if (oldStatus == ProjectRegistry.ProjectStatus.Pending) {
             // From Pending, can only move to Active (verified) or Archived (rejected).
-            bool isValid = newStatus == ProjectRegistry.ProjectStatus.Active
-                || newStatus == ProjectRegistry.ProjectStatus.Archived;
+            bool isValid =
+                newStatus == ProjectRegistry.ProjectStatus.Active || newStatus == ProjectRegistry.ProjectStatus.Archived;
             assertTrue(isValid, "INVALID_TRANSITION_FROM_PENDING");
         } else if (oldStatus == ProjectRegistry.ProjectStatus.Active) {
             // From Active, can only move to Paused or Archived.
-            bool isValid = newStatus == ProjectRegistry.ProjectStatus.Paused
-                || newStatus == ProjectRegistry.ProjectStatus.Archived;
+            bool isValid =
+                newStatus == ProjectRegistry.ProjectStatus.Paused || newStatus == ProjectRegistry.ProjectStatus.Archived;
             assertTrue(isValid, "INVALID_TRANSITION_FROM_ACTIVE");
         } else if (oldStatus == ProjectRegistry.ProjectStatus.Paused) {
             // From Paused, can move back to Active or be Archived.
-            bool isValid = newStatus == ProjectRegistry.ProjectStatus.Active
-                || newStatus == ProjectRegistry.ProjectStatus.Archived;
+            bool isValid =
+                newStatus == ProjectRegistry.ProjectStatus.Active || newStatus == ProjectRegistry.ProjectStatus.Archived;
             assertTrue(isValid, "INVALID_TRANSITION_FROM_PAUSED");
         } else if (oldStatus == ProjectRegistry.ProjectStatus.Archived) {
             // Archived is a terminal state. No transitions out should be possible.
@@ -150,4 +150,4 @@ contract ProjectInvariantTest is Test, IProjectStateCallback {
         // Update our tracked state.
         projectStates[projectId] = newStatus;
     }
-} 
+}

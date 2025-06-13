@@ -193,4 +193,4 @@ contract MarketplaceGriefingTest is Test {
         Marketplace.Listing memory listingAfter = marketplace.getListing(listingId);
         assertFalse(listingAfter.active, "Listing should be inactive after cancellation");
     }
-} 
+}

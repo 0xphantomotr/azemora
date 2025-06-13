@@ -26,8 +26,7 @@ contract UpgradeTest is Test {
         // Deploy V1 Marketplace implementation and proxy
         Marketplace marketplaceV1Impl = new Marketplace();
         ERC1967Proxy proxy = new ERC1967Proxy(
-            address(marketplaceV1Impl),
-            abi.encodeCall(Marketplace.initialize, (creditContract, address(paymentToken)))
+            address(marketplaceV1Impl), abi.encodeCall(Marketplace.initialize, (creditContract, address(paymentToken)))
         );
         marketplace = Marketplace(address(proxy)); // Point our interface to the proxy address
 
@@ -40,7 +39,9 @@ contract UpgradeTest is Test {
     function test_upgradeMarketplace_preservesStateAndRoles() public {
         // --- 1. Pre-Upgrade Assertions ---
         assertEq(marketplace.feeBps(), 250, "Pre-upgrade feeBps should be 250");
-        assertTrue(marketplace.hasRole(marketplace.DEFAULT_ADMIN_ROLE(), admin), "Admin should have admin role before upgrade");
+        assertTrue(
+            marketplace.hasRole(marketplace.DEFAULT_ADMIN_ROLE(), admin), "Admin should have admin role before upgrade"
+        );
 
         // --- 2. Deploy V2 and Upgrade ---
         vm.startPrank(admin);
@@ -57,7 +58,10 @@ contract UpgradeTest is Test {
         assertEq(marketplaceV2.feeBps(), 250, "Post-upgrade feeBps should still be 250");
 
         // Check that roles are preserved
-        assertTrue(marketplaceV2.hasRole(marketplace.DEFAULT_ADMIN_ROLE(), admin), "Admin should still have admin role after upgrade");
+        assertTrue(
+            marketplaceV2.hasRole(marketplace.DEFAULT_ADMIN_ROLE(), admin),
+            "Admin should still have admin role after upgrade"
+        );
 
         // Check that new V2 functionality works
         vm.prank(admin);
@@ -75,4 +79,4 @@ contract UpgradeTest is Test {
         vm.prank(otherUser);
         marketplaceV2.setFee(1000);
     }
-} 
+}

@@ -14,6 +14,7 @@ contract MockERC20ForReverts is Test {
     function approve(address spender, uint256 amount) public {
         allowance[msg.sender][spender] = amount;
     }
+
     function transferFrom(address from, address to, uint256 amount) public returns (bool) {
         if (allowance[from][msg.sender] < amount) return false;
         allowance[from][msg.sender] -= amount;
@@ -21,6 +22,7 @@ contract MockERC20ForReverts is Test {
         balanceOf[to] += amount;
         return true;
     }
+
     function mint(address to, uint256 amount) public {
         balanceOf[to] += amount;
     }
@@ -33,9 +35,9 @@ contract MockERC1155ForReverts is Test {
     function safeTransferFrom(address, address to, uint256 id, uint256 amount, bytes memory) public {
         balanceOf[to][id] += amount;
     }
+
     function setApprovalForAll(address, bool) public {}
 }
-
 
 contract MarketplaceRevertsTest is Test {
     Marketplace marketplace;

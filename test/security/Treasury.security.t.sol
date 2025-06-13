@@ -48,7 +48,6 @@ contract MaliciousOwner is Test {
     }
 }
 
-
 /*
  * @title TreasurySecurityTest
  * @notice A test suite for security vulnerabilities in the Treasury.
@@ -89,4 +88,4 @@ contract TreasurySecurityTest is Test {
         assertEq(address(attacker).balance, 0, "Attacker balance should be 0 because transaction reverted");
         assertEq(address(treasury).balance, 10 ether, "Treasury balance should be unchanged");
     }
-} 
+}

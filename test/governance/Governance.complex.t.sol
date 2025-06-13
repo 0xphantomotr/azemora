@@ -303,12 +303,8 @@ contract GovernanceComplexTest is Test {
         bytes32 salt1 = bytes20(address(governorAddr)) ^ descriptionHash1;
         bytes32 salt2 = bytes20(address(governorAddr)) ^ descriptionHash2;
 
-        bytes32 opId1 = AzemoraTimelockController(timelockAddr).hashOperationBatch(
-            targets, values, calldatas, 0, salt1
-        );
-        bytes32 opId2 = AzemoraTimelockController(timelockAddr).hashOperationBatch(
-            targets, values, calldatas, 0, salt2
-        );
+        bytes32 opId1 = AzemoraTimelockController(timelockAddr).hashOperationBatch(targets, values, calldatas, 0, salt1);
+        bytes32 opId2 = AzemoraTimelockController(timelockAddr).hashOperationBatch(targets, values, calldatas, 0, salt2);
 
         // Queue the first proposal
         AzemoraGovernor(governorAddr).queue(targets, values, calldatas, descriptionHash1);

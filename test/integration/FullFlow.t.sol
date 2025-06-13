@@ -16,13 +16,16 @@ import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 contract MockERC20ForFlowTest {
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
+
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
+
     function approve(address spender, uint256 amount) public returns (bool) {
         allowance[msg.sender][spender] = amount;
         emit Approval(msg.sender, spender, amount);
         return true;
     }
+
     function transferFrom(address from, address to, uint256 amount) public returns (bool) {
         require(allowance[from][msg.sender] >= amount, "ERC20: insufficient allowance");
         if (allowance[from][msg.sender] != type(uint256).max) {
@@ -33,6 +36,7 @@ contract MockERC20ForFlowTest {
         emit Transfer(from, to, amount);
         return true;
     }
+
     function transfer(address to, uint256 amount) public returns (bool) {
         // In the context of the treasury withdrawal, msg.sender will be the treasury contract
         require(balanceOf[msg.sender] >= amount, "ERC20: insufficient balance");
@@ -41,6 +45,7 @@ contract MockERC20ForFlowTest {
         emit Transfer(msg.sender, to, amount);
         return true;
     }
+
     function mint(address to, uint256 amount) public {
         balanceOf[to] += amount;
         emit Transfer(address(0), to, amount);
@@ -81,9 +86,8 @@ contract FullFlowTest is Test {
 
         // --- 1. DEPLOY GOVERNANCE & TREASURY ---
         AzemoraToken govTokenImpl = new AzemoraToken();
-        govToken = AzemoraToken(
-            address(new ERC1967Proxy(address(govTokenImpl), abi.encodeCall(AzemoraToken.initialize, ())))
-        );
+        govToken =
+            AzemoraToken(address(new ERC1967Proxy(address(govTokenImpl), abi.encodeCall(AzemoraToken.initialize, ()))));
 
         AzemoraTimelockController timelockImpl = new AzemoraTimelockController();
         timelock = AzemoraTimelockController(
@@ -106,7 +110,8 @@ contract FullFlowTest is Test {
                     new ERC1967Proxy(
                         address(governorImpl),
                         abi.encodeCall(
-                            AzemoraGovernor.initialize, (govToken, timelock, uint48(VOTING_DELAY), uint32(VOTING_PERIOD), 0)
+                            AzemoraGovernor.initialize,
+                            (govToken, timelock, uint48(VOTING_DELAY), uint32(VOTING_PERIOD), 0)
                         )
                     )
                 )
@@ -205,7 +210,11 @@ contract FullFlowTest is Test {
 
         vm.prank(verifier);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
-        assertEq(uint256(registry.getProject(projectId).status), uint256(ProjectRegistry.ProjectStatus.Active), "Project should be active");
+        assertEq(
+            uint256(registry.getProject(projectId).status),
+            uint256(ProjectRegistry.ProjectStatus.Active),
+            "Project should be active"
+        );
 
         // --- STAGE 2: dMRV and Credit Minting ---
         uint256 creditsToMint = 500;
@@ -220,7 +229,11 @@ contract FullFlowTest is Test {
         bytes memory verificationData = abi.encode(creditsToMint, false, bytes32(0), verificationURI);
         dmrvManager.fulfillVerification(requestId, verificationData);
 
-        assertEq(credit.balanceOf(projectDeveloper, uint256(projectId)), creditsToMint, "Developer should have minted credits");
+        assertEq(
+            credit.balanceOf(projectDeveloper, uint256(projectId)),
+            creditsToMint,
+            "Developer should have minted credits"
+        );
 
         // --- STAGE 3: Marketplace Listing & Purchase ---
         uint256 listAmount = 100;
@@ -232,7 +245,11 @@ contract FullFlowTest is Test {
         listingId = marketplace.list(uint256(projectId), listAmount, pricePerUnit, 1 days);
         vm.stopPrank();
 
-        assertEq(credit.balanceOf(address(marketplace), uint256(projectId)), listAmount, "Marketplace should hold listed credits");
+        assertEq(
+            credit.balanceOf(address(marketplace), uint256(projectId)),
+            listAmount,
+            "Marketplace should hold listed credits"
+        );
 
         uint256 buyAmount = 50;
         uint256 totalPrice = buyAmount * pricePerUnit;
@@ -246,7 +263,9 @@ contract FullFlowTest is Test {
         vm.stopPrank();
 
         assertEq(credit.balanceOf(buyer, uint256(projectId)), buyAmount, "Buyer should receive purchased credits");
-        assertEq(paymentToken.balanceOf(address(treasury)), treasuryInitialBalance + fee, "Treasury should receive fees");
+        assertEq(
+            paymentToken.balanceOf(address(treasury)), treasuryInitialBalance + fee, "Treasury should receive fees"
+        );
 
         // --- STAGE 4: Governance Withdraws Fees ---
         uint256 treasuryBalanceBefore = paymentToken.balanceOf(address(treasury));
@@ -287,4 +306,4 @@ contract FullFlowTest is Test {
             "Fee Recipient should receive funds"
         );
     }
-} 
+}

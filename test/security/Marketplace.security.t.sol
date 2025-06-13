@@ -119,9 +119,13 @@ contract MarketplaceSecurityTest is Test {
         assertEq(credit.balanceOf(seller, tokenId), 0, "Seller balance should be 0 as tokens are in custody");
 
         // The marketplace should still hold the 100 tokens in custody.
-        assertEq(credit.balanceOf(address(marketplace), tokenId), listAmount, "Marketplace should retain custody of tokens");
+        assertEq(
+            credit.balanceOf(address(marketplace), tokenId), listAmount, "Marketplace should retain custody of tokens"
+        );
 
         // The attacker's funds should be untouched.
-        assertEq(maliciousPaymentToken.balanceOf(attacker), attackCost * 2, "Attacker token balance should be unchanged");
+        assertEq(
+            maliciousPaymentToken.balanceOf(attacker), attackCost * 2, "Attacker token balance should be unchanged"
+        );
     }
-} 
+}
