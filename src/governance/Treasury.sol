@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
 /**
  * @title Treasury
@@ -12,9 +13,11 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
  * It is owned by the governance system (via the Timelock) and allows for the
  * withdrawal of ETH and any ERC20 tokens.
  */
-contract Treasury is Initializable, OwnableUpgradeable, ReentrancyGuardUpgradeable {
+contract Treasury is Initializable, OwnableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeable {
     event ETHWithdrawn(address indexed to, uint256 amount);
     event ERC20Withdrawn(address indexed token, address indexed to, uint256 amount);
+
+    uint256[50] private __gap;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -24,6 +27,7 @@ contract Treasury is Initializable, OwnableUpgradeable, ReentrancyGuardUpgradeab
     function initialize(address initialOwner) public initializer {
         __Ownable_init(initialOwner);
         __ReentrancyGuard_init();
+        __UUPSUpgradeable_init();
     }
 
     receive() external payable {}
@@ -42,4 +46,6 @@ contract Treasury is Initializable, OwnableUpgradeable, ReentrancyGuardUpgradeab
         require(success, "ERC20 transfer failed");
         emit ERC20Withdrawn(token, to, amount);
     }
+
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 }
