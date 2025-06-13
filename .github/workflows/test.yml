@@ -36,6 +36,11 @@ jobs:
           forge build --sizes
         id: build
 
+      - name: Run Forge snapshot
+        run: |
+          forge snapshot --check
+        id: snapshot
+
       - name: Run Forge tests
         run: |
           forge test -vvv
