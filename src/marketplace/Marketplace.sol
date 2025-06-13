@@ -311,6 +311,7 @@ contract Marketplace is
      * @return A `Listing` struct containing the listing's data.
      */
     function getListing(uint256 listingId) external view returns (Listing memory) {
+        require(listings[listingId].id == listingId, "Marketplace: Listing not found");
         return listings[listingId];
     }
 

@@ -33,6 +33,7 @@ contract MockERC20 {
     }
 
     function transferFrom(address from, address to, uint256 amount) public returns (bool) {
+        require(balanceOf[from] >= amount, "ERC20: insufficient balance");
         require(allowance[from][msg.sender] >= amount, "ERC20: insufficient allowance");
         if (allowance[from][msg.sender] != type(uint256).max) {
             allowance[from][msg.sender] -= amount;
@@ -203,6 +204,44 @@ contract MarketplaceTest is Test {
         assertEq(credit.balanceOf(address(marketplace), tokenId), 0);
     }
 
+    function test_Buy_WithZeroFee() public {
+        // --- Setup ---
+        // Set fee to 0 to test the fee == 0 branch
+        vm.prank(admin);
+        marketplace.setFee(0);
+
+        uint256 listingId = _list();
+        uint256 amountToBuy = 50;
+        uint256 pricePerUnit = 5 * 1e6;
+        uint256 totalPrice = amountToBuy * pricePerUnit;
+
+        uint256 sellerInitialPaymentBalance = paymentToken.balanceOf(seller);
+        uint256 treasuryInitialBalance = paymentToken.balanceOf(treasury);
+
+        // --- Action ---
+        vm.prank(buyer);
+        paymentToken.approve(address(marketplace), totalPrice);
+
+        vm.prank(buyer);
+        marketplace.buy(listingId, amountToBuy);
+
+        // --- Assertions ---
+        // Check NFT balances
+        assertEq(credit.balanceOf(buyer, tokenId), amountToBuy, "Buyer should receive the NFTs");
+
+        // Check payment balances: Seller gets full amount, treasury gets nothing
+        assertEq(
+            paymentToken.balanceOf(seller),
+            sellerInitialPaymentBalance + totalPrice,
+            "Seller should receive full payment when fee is zero"
+        );
+        assertEq(
+            paymentToken.balanceOf(treasury),
+            treasuryInitialBalance,
+            "Treasury balance should not change when fee is zero"
+        );
+    }
+
     function test_CancelListing() public {
         uint256 listingId = _list();
         uint256 sellerInitialBalance = credit.balanceOf(seller, tokenId);
@@ -216,6 +255,131 @@ contract MarketplaceTest is Test {
         assertFalse(listing.active);
         assertEq(credit.balanceOf(seller, tokenId), sellerInitialBalance + 100);
         assertEq(credit.balanceOf(address(marketplace), tokenId), 0);
+    }
+
+    function test_CancelExpiredListing() public {
+        uint256 listingId = _list(); // Lists with 1 day expiry
+        uint256 sellerInitialBalance = credit.balanceOf(seller, tokenId);
+
+        // Fast-forward time past the expiry
+        vm.warp(block.timestamp + 2 days);
+
+        // Anyone can cancel an expired listing
+        vm.prank(buyer);
+        marketplace.cancelExpiredListing(listingId);
+
+        // Check listing is inactive and seller got their tokens back
+        Marketplace.Listing memory listing = marketplace.getListing(listingId);
+        assertFalse(listing.active);
+        assertEq(credit.balanceOf(seller, tokenId), sellerInitialBalance + 100);
+        assertEq(credit.balanceOf(address(marketplace), tokenId), 0);
+    }
+
+    function test_Fail_CancelExpiredOnNonExpiredListing() public {
+        uint256 listingId = _list(); // Lists with 1 day expiry
+
+        // Try to cancel immediately
+        vm.prank(buyer);
+        vm.expectRevert("Marketplace: Listing not expired yet");
+        marketplace.cancelExpiredListing(listingId);
+    }
+
+    function test_UpdateListingPrice() public {
+        uint256 listingId = _list();
+        uint256 newPrice = 10 * 1e6;
+
+        vm.prank(seller);
+        marketplace.updateListingPrice(listingId, newPrice);
+
+        Marketplace.Listing memory listing = marketplace.getListing(listingId);
+        assertEq(listing.pricePerUnit, newPrice);
+    }
+
+    function test_Fail_UpdateListingPrice_NotSeller() public {
+        uint256 listingId = _list();
+
+        vm.prank(buyer); // Use a different user
+        vm.expectRevert("Marketplace: Not the seller");
+        marketplace.updateListingPrice(listingId, 10 * 1e6);
+    }
+
+    function test_Fail_UpdateListingPrice_InactiveListing() public {
+        uint256 listingId = _list();
+
+        // Cancel the listing to make it inactive
+        vm.prank(seller);
+        marketplace.cancelListing(listingId);
+
+        // Try to update the price
+        vm.prank(seller);
+        vm.expectRevert("Marketplace: Listing not active");
+        marketplace.updateListingPrice(listingId, 10 * 1e6);
+    }
+
+    function test_Fail_UpdateListingPrice_ZeroPrice() public {
+        uint256 listingId = _list();
+
+        vm.prank(seller);
+        vm.expectRevert("Marketplace: Price must be > 0");
+        marketplace.updateListingPrice(listingId, 0);
+    }
+
+    function test_Fail_SetTreasury_ToZeroAddress() public {
+        vm.prank(admin);
+        vm.expectRevert("Marketplace: Zero address");
+        marketplace.setTreasury(address(0));
+    }
+
+    function test_Fail_SetFee_AboveCap() public {
+        vm.prank(admin);
+        vm.expectRevert("Marketplace: Fee cannot exceed 10%");
+        marketplace.setFee(1001); // 10.01%
+    }
+
+    function test_Fail_ListWithZeroAmount() public {
+        vm.prank(seller);
+        credit.setApprovalForAll(address(marketplace), true);
+        vm.expectRevert("Marketplace: Amount must be > 0");
+        marketplace.list(tokenId, 0, 5 * 1e6, 1 days);
+    }
+
+    function test_Fail_ListWithZeroPrice() public {
+        vm.prank(seller);
+        credit.setApprovalForAll(address(marketplace), true);
+        vm.expectRevert("Marketplace: Price must be > 0");
+        marketplace.list(tokenId, 100, 0, 1 days);
+    }
+
+    function test_Fail_ListWithZeroExpiry() public {
+        vm.prank(seller);
+        credit.setApprovalForAll(address(marketplace), true);
+        vm.expectRevert("Marketplace: Expiry must be > 0");
+        marketplace.list(tokenId, 100, 5 * 1e6, 0);
+    }
+
+    function test_Fail_BuyExpiredListing() public {
+        uint256 listingId = _list(); // Lists with 1 day expiry
+
+        // Fast-forward time past the expiry
+        vm.warp(block.timestamp + 2 days);
+
+        vm.prank(buyer);
+        vm.expectRevert("Marketplace: Listing expired");
+        marketplace.buy(listingId, 10);
+    }
+
+    function test_Fail_BuyZeroAmount() public {
+        uint256 listingId = _list();
+        vm.prank(buyer);
+        vm.expectRevert("Marketplace: Amount must be > 0");
+        marketplace.buy(listingId, 0);
+    }
+
+    function test_Fail_BuyMoreThanListed() public {
+        uint256 listingId = _list(); // Lists 100 items
+        vm.prank(buyer);
+        vm.expectRevert("Marketplace: Not enough items in listing");
+        marketplace.buy(listingId, 101);
     }
 
     /* ---------- Event Tests ---------- */
@@ -257,7 +421,7 @@ contract MarketplaceTest is Test {
         paymentToken.approve(address(marketplace), 10 * 1e6);
 
         vm.prank(buyer);
-        vm.expectRevert(); // ERC20: insufficient allowance
+        vm.expectRevert("ERC20: insufficient allowance");
         marketplace.buy(listingId, 50);
     }
 
@@ -280,8 +444,15 @@ contract MarketplaceTest is Test {
         paymentToken.approve(address(marketplace), totalPrice);
 
         vm.prank(brokeBuyer);
+        // The Marketplace contract has its own balance check that runs before the ERC20 transfer.
         vm.expectRevert("Marketplace: Insufficient balance");
         marketplace.buy(listingId, amountToBuy);
+    }
+
+    function test_Fail_GetNonExistentListing() public {
+        uint256 nonExistentListingId = 999;
+        vm.expectRevert("Marketplace: Listing not found");
+        marketplace.getListing(nonExistentListingId);
     }
 
     /* ---------- Pausable Tests ---------- */

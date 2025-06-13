@@ -88,8 +88,20 @@ contract ProjectRegistryRevertsTest is Test {
     }
 
     function test_revert_transferOwnership_toZeroAddress() public {
-        vm.expectRevert("ProjectRegistry: New owner is the zero address");
         vm.prank(projectDeveloper);
+        vm.expectRevert("ProjectRegistry: New owner is the zero address");
         registry.transferOwnership(projectId, address(0));
+    }
+
+    function test_revert_setProjectStatus_toPending() public {
+        // Activate the project first to have a valid starting state other than Pending.
+        vm.startPrank(verifier);
+        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        vm.stopPrank();
+
+        // Try to move it back to Pending, which is not a valid transition target.
+        vm.prank(admin);
+        vm.expectRevert("ProjectRegistry: Invalid status transition target");
+        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Pending);
     }
 }
