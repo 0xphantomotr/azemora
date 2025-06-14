@@ -12,3 +12,11 @@ docs/
 
 # Dotenv file
 .env
+
+# Echidna
+echidna_corpus/
+
+# Static analysis reports
+crytic-export/
+slither-report.json
+.slither.json
