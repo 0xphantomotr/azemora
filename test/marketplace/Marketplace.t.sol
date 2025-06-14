@@ -77,9 +77,9 @@ contract MarketplaceTest is Test {
 
         // --- Deploy Infrastructure ---
         // Deploy payment token and mint to buyer
-        paymentToken = new MockERC20("USD Coin", "USDC", 6);
+        paymentToken = new MockERC20("Mock Payment", "MPAY", 18);
         vm.prank(address(this)); // Mint from test contract itself
-        paymentToken.mint(buyer, 1_000_000 * 1e6); // 1M USDC
+        paymentToken.mint(buyer, 1_000_000 * 1e18); // 1M USDC
 
         vm.startPrank(admin);
 

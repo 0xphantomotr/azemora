@@ -25,8 +25,12 @@ contract DynamicImpactCreditTest is Test {
     address other = address(0xD00D);
     address verifier = address(0xC1E4);
 
+    bytes32 setupProjectId;
+
     /* ---------- set-up ---------- */
     function setUp() public {
+        setupProjectId = keccak256("Project-For-Setup");
+
         vm.startPrank(admin);
 
         // Deploy Registry
@@ -49,6 +53,10 @@ contract DynamicImpactCreditTest is Test {
         credit.grantRole(credit.METADATA_UPDATER_ROLE(), admin);
 
         vm.stopPrank();
+
+        // Register the project here so it exists for all tests that need it.
+        vm.prank(user);
+        registry.registerProject(setupProjectId, "ipfs://project-for-setup.json");
     }
 
     /* ---------- single mint ---------- */
@@ -261,6 +269,59 @@ contract DynamicImpactCreditTest is Test {
         vm.prank(user);
         vm.expectRevert(expectedRevert);
         credit.retire(user, projectId, 1);
+    }
+
+    function test_MintCredits_RevertsForNonActiveProject() public {
+        // The setupProjectId from setUp is registered but not yet active
+        vm.prank(dmrvManager);
+        vm.expectRevert("NOT_ACTIVE");
+        credit.mintCredits(user, setupProjectId, 100, "ipfs://fail.json");
+    }
+
+    function test_Retire_RevertsWhenNotAuthorized() public {
+        // Activate project and mint some credits first
+        vm.prank(verifier);
+        registry.setProjectStatus(setupProjectId, ProjectRegistry.ProjectStatus.Active);
+        vm.prank(dmrvManager);
+        credit.mintCredits(user, setupProjectId, 100, "ipfs://mint.json");
+
+        // 'other' user tries to retire 'user's tokens
+        vm.prank(other);
+        vm.expectRevert("NOT_AUTHORIZED");
+        credit.retire(user, setupProjectId, 50);
+    }
+
+    function test_URI_RevertsForNonExistentToken() public {
+        vm.expectRevert("URI not set for token");
+        credit.uri(uint256(keccak256("non-existent-token")));
+    }
+
+    function test_BatchMint_RevertsOnMismatchedArrays() public {
+        bytes32[] memory ids = new bytes32[](1);
+        ids[0] = setupProjectId;
+        uint256[] memory amounts = new uint256[](2); // Mismatched length
+        amounts[0] = 100;
+        amounts[1] = 200;
+        string[] memory uris = new string[](1);
+        uris[0] = "a";
+
+        vm.prank(dmrvManager);
+        vm.expectRevert("LENGTH_MISMATCH");
+        credit.batchMintCredits(user, ids, amounts, uris);
+    }
+
+    function test_BatchMint_RevertsForNonActiveProject() public {
+        // The setupProjectId from setUp is registered but not yet active
+        bytes32[] memory ids = new bytes32[](1);
+        ids[0] = setupProjectId;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 100;
+        string[] memory uris = new string[](1);
+        uris[0] = "a";
+
+        vm.prank(dmrvManager);
+        vm.expectRevert("DIC: PROJECT_NOT_ACTIVE");
+        credit.batchMintCredits(user, ids, amounts, uris);
     }
 }
 
