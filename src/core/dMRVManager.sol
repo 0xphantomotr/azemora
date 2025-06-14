@@ -162,10 +162,9 @@ contract DMRVManager is
      * @dev Internal function to process verified dMRV data. It either mints new
      * credits to the project owner or updates the metadata URI of the associated token.
      * @param projectId The project identifier.
-     * @param requestor The original address that requested the verification.
      * @param data The parsed verification data.
      */
-    function processVerification(bytes32 projectId, address requestor, VerificationData memory data) internal {
+    function processVerification(bytes32 projectId, address, /* requestor */ VerificationData memory data) internal {
         if (data.updateMetadataOnly) {
             // Update metadata only
             creditContract.setTokenURI(projectId, data.metadataURI);
