@@ -130,24 +130,14 @@ contract FullFlowTest is Test {
             address(new ERC1967Proxy(address(registryImpl), abi.encodeCall(ProjectRegistry.initialize, ())))
         );
 
-        DynamicImpactCredit creditImpl = new DynamicImpactCredit();
+        DynamicImpactCredit creditImpl = new DynamicImpactCredit(address(registry));
         credit = DynamicImpactCredit(
-            address(
-                new ERC1967Proxy(
-                    address(creditImpl), abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://", address(registry)))
-                )
-            )
+            address(new ERC1967Proxy(address(creditImpl), abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://"))))
         );
 
-        DMRVManager dmrvManagerImpl = new DMRVManager();
-        dmrvManager = DMRVManager(
-            address(
-                new ERC1967Proxy(
-                    address(dmrvManagerImpl),
-                    abi.encodeCall(DMRVManager.initialize, (address(registry), address(credit)))
-                )
-            )
-        );
+        DMRVManager dmrvManagerImpl = new DMRVManager(address(registry), address(credit));
+        dmrvManager =
+            DMRVManager(address(new ERC1967Proxy(address(dmrvManagerImpl), abi.encodeCall(DMRVManager.initialize, ()))));
 
         // --- 3. DEPLOY MARKETPLACE ---
         paymentToken = new MockERC20ForFlowTest();

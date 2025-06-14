@@ -7,6 +7,12 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "./ProjectRegistry.sol";
 
+// --- Custom Errors ---
+error DynamicImpactCredit__ProjectNotActive();
+error DynamicImpactCredit__URINotSet();
+error DynamicImpactCredit__NotAuthorized();
+error DynamicImpactCredit__LengthMismatch();
+
 /**
  * @title DynamicImpactCredit
  * @author Genci Mehmeti
@@ -26,7 +32,7 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
 
     mapping(uint256 => string[]) private _tokenURIs;
     string private _contractURI;
-    IProjectRegistry public projectRegistry;
+    IProjectRegistry public immutable projectRegistry;
 
     uint256[50] private __gap;
 
@@ -35,7 +41,9 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
     event CreditsRetired(address indexed retirer, uint256 indexed tokenId, uint256 amount);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
+    constructor(address projectRegistry_) {
+        if (projectRegistry_ == address(0)) revert("Zero address not allowed");
+        projectRegistry = IProjectRegistry(projectRegistry_);
         _disableInitializers(); // protect the impl
     }
 
@@ -45,9 +53,8 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
      * and `PAUSER_ROLE`. In a production environment, the other roles (`DMRV_MANAGER_ROLE`,
      * `METADATA_UPDATER_ROLE`) must be granted to their respective contracts.
      * @param contractURI_ The URI for the contract-level metadata.
-     * @param projectRegistry_ The address of the `ProjectRegistry` contract.
      */
-    function initialize(string memory contractURI_, address projectRegistry_) public initializer {
+    function initialize(string memory contractURI_) public initializer {
         __ERC1155_init(""); // base URI empty – each token has its own
         __AccessControl_init();
         __UUPSUpgradeable_init();
@@ -56,7 +63,6 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
         _grantRole(DEFAULT_ADMIN_ROLE, _msgSender()); // This is required to make the initializer the admin.
         _grantRole(PAUSER_ROLE, _msgSender());
         _contractURI = contractURI_;
-        projectRegistry = IProjectRegistry(projectRegistry_);
 
         _roles.push(DEFAULT_ADMIN_ROLE);
         _roles.push(DMRV_MANAGER_ROLE);
@@ -79,7 +85,7 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
         onlyRole(DMRV_MANAGER_ROLE)
         whenNotPaused
     {
-        require(projectRegistry.isProjectActive(projectId), "NOT_ACTIVE");
+        if (!projectRegistry.isProjectActive(projectId)) revert DynamicImpactCredit__ProjectNotActive();
 
         uint256 tokenId = uint256(projectId);
         _mint(to, tokenId, amount, "");
@@ -111,7 +117,7 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
      */
     function uri(uint256 id) public view override returns (string memory) {
         string[] storage uris = _tokenURIs[id];
-        require(uris.length > 0, "URI not set for token");
+        if (uris.length == 0) revert DynamicImpactCredit__URINotSet();
         return uris[uris.length - 1];
     }
 
@@ -135,8 +141,8 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
      * @param id The project ID (`bytes32`) of the credits to retire.
      * @param amount The quantity of credits to retire.
      */
-    function retire(address from, bytes32 id, uint256 amount) external virtual whenNotPaused {
-        require(from == _msgSender() || isApprovedForAll(from, _msgSender()), "NOT_AUTHORIZED");
+    function retire(address from, bytes32 id, uint256 amount) public virtual whenNotPaused {
+        if (from != _msgSender() && !isApprovedForAll(from, _msgSender())) revert DynamicImpactCredit__NotAuthorized();
         uint256 tokenId = uint256(id);
         _burn(from, tokenId, amount);
         emit CreditsRetired(_msgSender(), tokenId, amount);
@@ -232,11 +238,11 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
         uint256[] calldata amounts,
         string[] calldata uris // 1-to-1 with ids
     ) external onlyRole(DMRV_MANAGER_ROLE) whenNotPaused {
-        require(ids.length == amounts.length && ids.length == uris.length, "LENGTH_MISMATCH");
+        if (ids.length != amounts.length || ids.length != uris.length) revert DynamicImpactCredit__LengthMismatch();
 
         uint256[] memory tokenIds = new uint256[](ids.length);
         for (uint256 i = 0; i < ids.length;) {
-            require(projectRegistry.isProjectActive(ids[i]), "DIC: PROJECT_NOT_ACTIVE");
+            if (!projectRegistry.isProjectActive(ids[i])) revert DynamicImpactCredit__ProjectNotActive();
             tokenIds[i] = uint256(ids[i]);
             unchecked {
                 ++i;

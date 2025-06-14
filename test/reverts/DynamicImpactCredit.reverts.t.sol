@@ -30,13 +30,9 @@ contract DynamicImpactCreditRevertsTest is Test {
         // No verifier needed, we control status directly with admin for this test
 
         // Deploy Credits contract
-        DynamicImpactCredit creditImpl = new DynamicImpactCredit();
+        DynamicImpactCredit creditImpl = new DynamicImpactCredit(address(registry));
         credit = DynamicImpactCredit(
-            address(
-                new ERC1967Proxy(
-                    address(creditImpl), abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://", address(registry)))
-                )
-            )
+            address(new ERC1967Proxy(address(creditImpl), abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://"))))
         );
 
         // Grant necessary roles
@@ -63,7 +59,7 @@ contract DynamicImpactCreditRevertsTest is Test {
     }
 
     function test_revert_mintCredits_projectNotActive() public {
-        vm.expectRevert("NOT_ACTIVE");
+        vm.expectRevert(DynamicImpactCredit__ProjectNotActive.selector);
         vm.prank(dmrvManager);
         credit.mintCredits(projectDeveloper, pendingProjectId, 100, "ipfs://data");
     }
@@ -84,7 +80,7 @@ contract DynamicImpactCreditRevertsTest is Test {
     // --- uri ---
 
     function test_revert_uri_nonExistentToken() public {
-        vm.expectRevert("URI not set for token");
+        vm.expectRevert(DynamicImpactCredit__URINotSet.selector);
         credit.uri(uint256(keccak256("non-existent")));
     }
 
@@ -96,7 +92,7 @@ contract DynamicImpactCreditRevertsTest is Test {
         credit.mintCredits(projectDeveloper, activeProjectId, 100, "ipfs://data");
 
         // Try to retire them from another user's account
-        vm.expectRevert("NOT_AUTHORIZED");
+        vm.expectRevert(DynamicImpactCredit__NotAuthorized.selector);
         vm.prank(otherUser);
         credit.retire(projectDeveloper, activeProjectId, 50);
     }

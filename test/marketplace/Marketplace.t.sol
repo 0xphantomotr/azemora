@@ -91,12 +91,15 @@ contract MarketplaceTest is Test {
         registry.grantRole(registry.VERIFIER_ROLE(), verifier);
 
         // 2. Deploy DynamicImpactCredit
-        DynamicImpactCredit creditImpl = new DynamicImpactCredit();
-        ERC1967Proxy creditProxy = new ERC1967Proxy(
-            address(creditImpl),
-            abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://contract-metadata.json", address(registry)))
+        DynamicImpactCredit creditImpl = new DynamicImpactCredit(address(registry));
+        credit = DynamicImpactCredit(
+            address(
+                new ERC1967Proxy(
+                    address(creditImpl),
+                    abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://contract-metadata.json"))
+                )
+            )
         );
-        credit = DynamicImpactCredit(address(creditProxy));
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), dmrvManager);
 
         // 3. Deploy Marketplace

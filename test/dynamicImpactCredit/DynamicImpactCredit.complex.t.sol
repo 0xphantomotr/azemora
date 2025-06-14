@@ -9,36 +9,34 @@ import "../../src/core/dMRVManager.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
-// Extended V2 implementation with more features
+// A V2 contract for testing that includes a new function and a new event
 contract DynamicImpactCreditExtendedV2 is DynamicImpactCredit {
     uint256 public constant VERSION = 2;
 
-    // New state variables
-    mapping(uint256 => uint256) public retirementTimestamps;
-    mapping(address => uint256) public totalRetiredByUser;
+    event RetiredWithReason(address indexed retirer, uint256 indexed tokenId, uint256 amount, string reason);
 
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
-        // constructor is called but implementation remains uninitialized
+    struct RetirementInfo {
+        uint256 timestamp;
+        uint256 totalRetired;
     }
 
-    // Enhanced retire function with timestamps
-    function retire(address from, bytes32 id, uint256 amount) external override {
-        require(from == _msgSender() || isApprovedForAll(from, _msgSender()), "NOT_AUTHORIZED");
+    mapping(uint256 => mapping(address => RetirementInfo)) public retirementInfo;
 
+    constructor(address registry) DynamicImpactCredit(registry) {}
+
+    function retireWithReason(address from, bytes32 id, uint256 amount, string calldata reason) external {
+        super.retire(from, id, amount);
         uint256 tokenId = uint256(id);
-        _burn(from, tokenId, amount);
-
-        // Record timestamp and stats
-        retirementTimestamps[tokenId] = block.timestamp;
-        totalRetiredByUser[from] += amount;
-
-        emit CreditsRetired(from, tokenId, amount);
+        RetirementInfo storage info = retirementInfo[tokenId][from];
+        info.timestamp = block.timestamp;
+        info.totalRetired += amount;
+        emit RetiredWithReason(from, tokenId, amount, reason);
     }
 
-    // New method to get retirement data
-    function getRetirementInfo(bytes32 id, address user) external view returns (uint256 timestamp, uint256 userTotal) {
-        return (retirementTimestamps[uint256(id)], totalRetiredByUser[user]);
+    function getRetirementInfo(bytes32 id, address user) external view returns (uint256, uint256) {
+        uint256 tokenId = uint256(id);
+        RetirementInfo storage info = retirementInfo[tokenId][user];
+        return (info.timestamp, info.totalRetired);
     }
 }
 
@@ -68,19 +66,20 @@ contract DynamicImpactCreditComplexTest is Test {
         vm.startPrank(admin);
         // Deploy Registry
         ProjectRegistry registryImpl = new ProjectRegistry();
-        bytes memory registryInitData = abi.encodeCall(ProjectRegistry.initialize, ());
-        ERC1967Proxy registryProxy = new ERC1967Proxy(address(registryImpl), registryInitData);
-        registry = ProjectRegistry(address(registryProxy));
+        registry = ProjectRegistry(
+            address(new ERC1967Proxy(address(registryImpl), abi.encodeCall(ProjectRegistry.initialize, ())))
+        );
         registry.grantRole(registry.VERIFIER_ROLE(), verifier);
 
         // Deploy Credit Contract
-        DynamicImpactCredit impl = new DynamicImpactCredit();
-
-        bytes memory initData =
-            abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://contract-metadata.json", address(registry)));
-
-        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
-        credit = DynamicImpactCredit(address(proxy));
+        DynamicImpactCredit impl = new DynamicImpactCredit(address(registry));
+        credit = DynamicImpactCredit(
+            address(
+                new ERC1967Proxy(
+                    address(impl), abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://contract-metadata.json"))
+                )
+            )
+        );
 
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), dmrvManager);
         credit.grantRole(credit.METADATA_UPDATER_ROLE(), admin);
@@ -189,7 +188,7 @@ contract DynamicImpactCreditComplexTest is Test {
         assertEq(credit.balanceOf(user3, uint256(projects[1].id)), 0);
 
         // STEP 5: Upgrade to V2 with enhanced features
-        DynamicImpactCreditExtendedV2 v2 = new DynamicImpactCreditExtendedV2();
+        DynamicImpactCreditExtendedV2 v2 = new DynamicImpactCreditExtendedV2(address(registry));
 
         vm.prank(admin);
         IUUPS(address(credit)).upgradeToAndCall(address(v2), "");
@@ -203,7 +202,7 @@ contract DynamicImpactCreditComplexTest is Test {
         // STEP 6: Use new V2 features
         vm.prank(user1);
         uint256 retireAmount3 = 100;
-        creditV2.retire(user1, projects[2].id, retireAmount3);
+        creditV2.retireWithReason(user1, projects[2].id, retireAmount3, "Test reason");
 
         // Verify V2 specific data
         (uint256 timestamp, uint256 userTotal) = creditV2.getRetirementInfo(projects[2].id, user1);

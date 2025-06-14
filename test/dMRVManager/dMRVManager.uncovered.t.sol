@@ -31,15 +31,14 @@ contract DMRVManagerTest is Test {
         registry.grantRole(registry.VERIFIER_ROLE(), verifier);
 
         // 2. Deploy DynamicImpactCredit
-        DynamicImpactCredit creditImpl = new DynamicImpactCredit();
-        bytes memory creditInitData =
-            abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://contract-metadata.json", address(registry)));
+        DynamicImpactCredit creditImpl = new DynamicImpactCredit(address(registry));
+        bytes memory creditInitData = abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://contract-metadata.json"));
         ERC1967Proxy creditProxy = new ERC1967Proxy(address(creditImpl), creditInitData);
         credit = DynamicImpactCredit(address(creditProxy));
 
         // 3. Deploy DMRVManager
-        DMRVManager managerImpl = new DMRVManager();
-        bytes memory managerInitData = abi.encodeCall(DMRVManager.initialize, (address(registry), address(credit)));
+        DMRVManager managerImpl = new DMRVManager(address(registry), address(credit));
+        bytes memory managerInitData = abi.encodeCall(DMRVManager.initialize, ());
         ERC1967Proxy managerProxy = new ERC1967Proxy(address(managerImpl), managerInitData);
         manager = DMRVManager(address(managerProxy));
 
@@ -209,7 +208,7 @@ contract DMRVManagerTest is Test {
 
         // Attempt to request verification should fail
         vm.prank(projectOwner);
-        vm.expectRevert("DMRVManager: Project not active");
+        vm.expectRevert(DMRVManager__ProjectNotActive.selector);
         manager.requestVerification(inactiveId);
     }
 
@@ -241,7 +240,7 @@ contract DMRVManagerTest is Test {
 
         // 4. Try to fulfill again should fail
         vm.prank(oracle);
-        vm.expectRevert("DMRVManager: Request already fulfilled");
+        vm.expectRevert(DMRVManager__RequestAlreadyFulfilled.selector);
         manager.fulfillVerification(requestId, data);
     }
 

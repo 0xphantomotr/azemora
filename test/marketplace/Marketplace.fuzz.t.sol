@@ -38,8 +38,8 @@ contract MarketplaceFuzzTest is Test {
         credit = DynamicImpactCredit(
             address(
                 new ERC1967Proxy(
-                    address(new DynamicImpactCredit()),
-                    abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://meta.json", address(registry)))
+                    address(new DynamicImpactCredit(address(registry))),
+                    abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://meta.json"))
                 )
             )
         );

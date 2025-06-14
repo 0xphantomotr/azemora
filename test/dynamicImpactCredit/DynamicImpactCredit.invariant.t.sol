@@ -164,6 +164,7 @@ contract CreditHandler is Test {
 // Fix: The correct inheritance order is StdInvariant first, then Test
 contract DynamicImpactCreditInvariantTest is StdInvariant, Test {
     DynamicImpactCredit credit;
+    ProjectRegistry registry;
     CreditHandler handler;
     address admin = address(0xA11CE);
     address dmrvManager = address(0xB01D);
@@ -173,22 +174,22 @@ contract DynamicImpactCreditInvariantTest is StdInvariant, Test {
         vm.startPrank(admin);
         // Deploy Registry
         ProjectRegistry registryImpl = new ProjectRegistry();
-        bytes memory registryInitData = abi.encodeCall(ProjectRegistry.initialize, ());
-        ERC1967Proxy registryProxy = new ERC1967Proxy(address(registryImpl), registryInitData);
-        ProjectRegistry registry = ProjectRegistry(address(registryProxy));
-        registry.grantRole(registry.VERIFIER_ROLE(), verifier);
+        registry = ProjectRegistry(
+            address(new ERC1967Proxy(address(registryImpl), abi.encodeCall(ProjectRegistry.initialize, ())))
+        );
+        DynamicImpactCredit impl = new DynamicImpactCredit(address(registry));
+        credit = DynamicImpactCredit(
+            address(
+                new ERC1967Proxy(
+                    address(impl), abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://contract-metadata.json"))
+                )
+            )
+        );
 
-        // Deploy Credit Contract
-        DynamicImpactCredit impl = new DynamicImpactCredit();
-
-        bytes memory initData =
-            abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://contract-metadata.json", address(registry)));
-
-        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
-        credit = DynamicImpactCredit(address(proxy));
-
+        // Grant roles
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), dmrvManager);
         credit.grantRole(credit.METADATA_UPDATER_ROLE(), admin);
+        registry.grantRole(registry.VERIFIER_ROLE(), verifier);
         vm.stopPrank();
 
         // Create handler and target it for invariant testing

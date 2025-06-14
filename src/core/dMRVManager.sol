@@ -9,6 +9,11 @@ import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "./ProjectRegistry.sol";
 import "./DynamicImpactCredit.sol";
 
+// --- Custom Errors ---
+error DMRVManager__ProjectNotActive();
+error DMRVManager__RequestNotFound();
+error DMRVManager__RequestAlreadyFulfilled();
+
 /**
  * @title DMRVManager
  * @author Genci Mehmeti
@@ -32,8 +37,8 @@ contract DMRVManager is
     bytes32[] private _roles;
 
     // --- State variables ---
-    ProjectRegistry public projectRegistry;
-    DynamicImpactCredit public creditContract;
+    ProjectRegistry public immutable projectRegistry;
+    DynamicImpactCredit public immutable creditContract;
 
     // Mapping to track verification requests by request ID
     mapping(bytes32 => VerificationRequest) private _requests;
@@ -41,11 +46,13 @@ contract DMRVManager is
     uint256[50] private __gap;
 
     // Structure for tracking verification requests
+    // Struct is packed to save gas on storage.
     struct VerificationRequest {
-        bytes32 projectId;
-        address requestor;
-        uint256 timestamp;
-        bool fulfilled;
+        bytes32 projectId; // 32 bytes - Slot 0
+        // --- Packed into a single 32-byte slot (Slot 1) ---
+        address requestor; // 20 bytes
+        uint64 timestamp; // 8 bytes
+        bool fulfilled; // 1 byte
     }
 
     // Structure for representing parsed verification data
@@ -67,7 +74,12 @@ contract DMRVManager is
     event MissingProjectError(bytes32 indexed projectId);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
+    constructor(address projectRegistry_, address creditContract_) {
+        if (projectRegistry_ == address(0) || creditContract_ == address(0)) {
+            revert("Zero address not allowed");
+        }
+        projectRegistry = ProjectRegistry(projectRegistry_);
+        creditContract = DynamicImpactCredit(creditContract_);
         _disableInitializers();
     }
 
@@ -76,10 +88,8 @@ contract DMRVManager is
      * @dev Sets up roles and contract dependencies. The deployer is granted `DEFAULT_ADMIN_ROLE`,
      * `ORACLE_ROLE`, and `PAUSER_ROLE`. In a production environment, the `ORACLE_ROLE` would be
      * transferred to trusted oracle contracts.
-     * @param projectRegistry_ The address of the `ProjectRegistry` contract.
-     * @param creditContract_ The address of the `DynamicImpactCredit` contract.
      */
-    function initialize(address projectRegistry_, address creditContract_) public initializer {
+    function initialize() public initializer {
         __AccessControl_init();
         __UUPSUpgradeable_init();
         __ReentrancyGuard_init();
@@ -89,9 +99,6 @@ contract DMRVManager is
         // In a real deployment, this would be set to trusted oracle addresses
         _grantRole(ORACLE_ROLE, _msgSender());
         _grantRole(PAUSER_ROLE, _msgSender());
-
-        projectRegistry = ProjectRegistry(projectRegistry_);
-        creditContract = DynamicImpactCredit(creditContract_);
 
         _roles.push(DEFAULT_ADMIN_ROLE);
         _roles.push(ORACLE_ROLE);
@@ -108,7 +115,7 @@ contract DMRVManager is
      * @return requestId A unique ID for the verification request.
      */
     function requestVerification(bytes32 projectId) external nonReentrant whenNotPaused returns (bytes32 requestId) {
-        require(projectRegistry.isProjectActive(projectId), "DMRVManager: Project not active");
+        if (!projectRegistry.isProjectActive(projectId)) revert DMRVManager__ProjectNotActive();
 
         // For MVP: Generate a simple request ID.
         // In production, this would come from the Chainlink request.
@@ -117,7 +124,7 @@ contract DMRVManager is
         _requests[requestId] = VerificationRequest({
             projectId: projectId,
             requestor: _msgSender(),
-            timestamp: block.timestamp,
+            timestamp: uint64(block.timestamp),
             fulfilled: false
         });
 
@@ -144,8 +151,8 @@ contract DMRVManager is
         whenNotPaused
     {
         VerificationRequest storage request = _requests[requestId];
-        require(request.timestamp > 0, "DMRVManager: Request not found");
-        require(!request.fulfilled, "DMRVManager: Request already fulfilled");
+        if (request.timestamp == 0) revert DMRVManager__RequestNotFound();
+        if (request.fulfilled) revert DMRVManager__RequestAlreadyFulfilled();
 
         request.fulfilled = true;
 
@@ -215,7 +222,7 @@ contract DMRVManager is
         string calldata metadataURI,
         bool updateMetadataOnly
     ) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant whenNotPaused {
-        require(projectRegistry.isProjectActive(projectId), "DMRVManager: Project not active");
+        if (!projectRegistry.isProjectActive(projectId)) revert DMRVManager__ProjectNotActive();
 
         VerificationData memory vData = VerificationData({
             creditAmount: creditAmount,

@@ -31,25 +31,15 @@ contract DMRVManagerRevertsTest is Test {
         registry.grantRole(registry.VERIFIER_ROLE(), verifier);
 
         // Deploy Credits
-        DynamicImpactCredit creditImpl = new DynamicImpactCredit();
+        DynamicImpactCredit creditImpl = new DynamicImpactCredit(address(registry));
         credit = DynamicImpactCredit(
-            address(
-                new ERC1967Proxy(
-                    address(creditImpl), abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://", address(registry)))
-                )
-            )
+            address(new ERC1967Proxy(address(creditImpl), abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://"))))
         );
 
         // Deploy dMRV Manager
-        DMRVManager dmrvManagerImpl = new DMRVManager();
-        dmrvManager = DMRVManager(
-            address(
-                new ERC1967Proxy(
-                    address(dmrvManagerImpl),
-                    abi.encodeCall(DMRVManager.initialize, (address(registry), address(credit)))
-                )
-            )
-        );
+        DMRVManager dmrvManagerImpl = new DMRVManager(address(registry), address(credit));
+        dmrvManager =
+            DMRVManager(address(new ERC1967Proxy(address(dmrvManagerImpl), abi.encodeCall(DMRVManager.initialize, ()))));
 
         // Grant roles
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), address(dmrvManager));
@@ -70,7 +60,7 @@ contract DMRVManagerRevertsTest is Test {
     // --- requestVerification ---
 
     function test_revert_requestVerification_projectNotActive() public {
-        vm.expectRevert("DMRVManager: Project not active");
+        vm.expectRevert(DMRVManager__ProjectNotActive.selector);
         vm.prank(projectDeveloper);
         dmrvManager.requestVerification(pendingProjectId);
     }
@@ -87,7 +77,7 @@ contract DMRVManagerRevertsTest is Test {
 
     function test_revert_fulfillVerification_requestNotFound() public {
         bytes memory data = abi.encode(100, false, bytes32(0), "ipfs://data");
-        vm.expectRevert("DMRVManager: Request not found");
+        vm.expectRevert(DMRVManager__RequestNotFound.selector);
         vm.prank(oracle);
         dmrvManager.fulfillVerification(keccak256("non-existent"), data);
     }
@@ -103,7 +93,7 @@ contract DMRVManagerRevertsTest is Test {
         dmrvManager.fulfillVerification(requestId, data);
 
         // Step 3: Try to fulfill it again
-        vm.expectRevert("DMRVManager: Request already fulfilled");
+        vm.expectRevert(DMRVManager__RequestAlreadyFulfilled.selector);
         vm.prank(oracle);
         dmrvManager.fulfillVerification(requestId, data);
     }
@@ -118,7 +108,7 @@ contract DMRVManagerRevertsTest is Test {
     }
 
     function test_revert_adminSubmitVerification_projectNotActive() public {
-        vm.expectRevert("DMRVManager: Project not active");
+        vm.expectRevert(DMRVManager__ProjectNotActive.selector);
         vm.prank(admin);
         dmrvManager.adminSubmitVerification(pendingProjectId, 100, "ipfs://admin", false);
     }

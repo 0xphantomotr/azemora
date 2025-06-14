@@ -85,10 +85,12 @@ contract GovernanceComplexTest is Test {
         ERC1967Proxy registryProxy = new ERC1967Proxy(address(registryImpl), registryInitData);
         ProjectRegistry registry = ProjectRegistry(address(registryProxy));
 
-        DynamicImpactCredit creditImpl = new DynamicImpactCredit();
-        bytes memory creditInitData = abi.encodeCall(DynamicImpactCredit.initialize, ("uri", address(registry)));
-        ERC1967Proxy creditProxy = new ERC1967Proxy(address(creditImpl), creditInitData);
-        credit = DynamicImpactCredit(address(creditProxy));
+        DynamicImpactCredit creditImpl = new DynamicImpactCredit(address(registry));
+        bytes memory creditInitData = abi.encodeCall(DynamicImpactCredit.initialize, ("uri"));
+        credit = DynamicImpactCredit(address(new ERC1967Proxy(address(creditImpl), creditInitData)));
+
+        // Roles
+        credit.grantRole(credit.DMRV_MANAGER_ROLE(), address(this)); // test contract is minter
 
         Marketplace marketplaceImpl = new Marketplace();
         bytes memory marketplaceInitData =

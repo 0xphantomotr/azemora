@@ -28,15 +28,14 @@ contract DMRVManagerTest is Test {
         registry = ProjectRegistry(address(registryProxy));
 
         // --- Credit Setup ---
-        DynamicImpactCredit creditImpl = new DynamicImpactCredit();
-        bytes memory creditInitData =
-            abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://collection", address(registry)));
+        DynamicImpactCredit creditImpl = new DynamicImpactCredit(address(registry));
+        bytes memory creditInitData = abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://collection"));
         ERC1967Proxy creditProxy = new ERC1967Proxy(address(creditImpl), creditInitData);
         credit = DynamicImpactCredit(address(creditProxy));
 
         // --- dMRVManager Setup ---
-        DMRVManager dMRVManagerImpl = new DMRVManager();
-        bytes memory dMRVManagerInitData = abi.encodeCall(DMRVManager.initialize, (address(registry), address(credit)));
+        DMRVManager dMRVManagerImpl = new DMRVManager(address(registry), address(credit));
+        bytes memory dMRVManagerInitData = abi.encodeCall(DMRVManager.initialize, ());
         ERC1967Proxy dMRVManagerProxy = new ERC1967Proxy(address(dMRVManagerImpl), dMRVManagerInitData);
         dMRVManager = DMRVManager(address(dMRVManagerProxy));
 
@@ -65,7 +64,7 @@ contract DMRVManagerTest is Test {
         registry.registerProject(pendingProjectId, "ipfs://pending.json");
 
         vm.prank(projectOwner);
-        vm.expectRevert("DMRVManager: Project not active");
+        vm.expectRevert(DMRVManager__ProjectNotActive.selector);
         dMRVManager.requestVerification(pendingProjectId);
     }
 
@@ -74,7 +73,7 @@ contract DMRVManagerTest is Test {
         bytes memory data = abi.encode(100, false, bytes32(0), "ipfs://new.json");
 
         vm.prank(oracle);
-        vm.expectRevert("DMRVManager: Request not found");
+        vm.expectRevert(DMRVManager__RequestNotFound.selector);
         dMRVManager.fulfillVerification(nonExistentRequestId, data);
     }
 
@@ -87,7 +86,7 @@ contract DMRVManagerTest is Test {
 
         // Try to fulfill it again
         vm.prank(oracle);
-        vm.expectRevert("DMRVManager: Request already fulfilled");
+        vm.expectRevert(DMRVManager__RequestAlreadyFulfilled.selector);
         dMRVManager.fulfillVerification(requestId, data);
     }
 }

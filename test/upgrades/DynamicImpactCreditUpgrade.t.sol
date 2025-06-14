@@ -27,15 +27,12 @@ contract DynamicImpactCreditUpgradeTest is Test {
 
         // Deploy Registry
         ProjectRegistry registryImpl = new ProjectRegistry();
-        bytes memory registryInitData = abi.encodeCall(ProjectRegistry.initialize, ());
-        ERC1967Proxy registryProxy = new ERC1967Proxy(address(registryImpl), registryInitData);
-        registry = ProjectRegistry(address(registryProxy));
-
-        // Deploy V1 Credit Contract
-        DynamicImpactCredit creditV1Impl = new DynamicImpactCredit();
-        bytes memory creditInitData = abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://v1", address(registry)));
-        ERC1967Proxy creditProxy = new ERC1967Proxy(address(creditV1Impl), creditInitData);
-        credit = DynamicImpactCredit(address(creditProxy));
+        registry = ProjectRegistry(
+            address(new ERC1967Proxy(address(registryImpl), abi.encodeCall(ProjectRegistry.initialize, ())))
+        );
+        DynamicImpactCredit creditV1Impl = new DynamicImpactCredit(address(registry));
+        bytes memory creditInitData = abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://v1"));
+        credit = DynamicImpactCredit(address(new ERC1967Proxy(address(creditV1Impl), creditInitData)));
 
         // Grant minter and verifier roles
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), minter);
@@ -63,7 +60,7 @@ contract DynamicImpactCreditUpgradeTest is Test {
 
         // --- 2. Deploy V2 and Upgrade ---
         vm.startPrank(admin);
-        DynamicImpactCreditV2 creditV2Impl = new DynamicImpactCreditV2();
+        DynamicImpactCreditV2 creditV2Impl = new DynamicImpactCreditV2(address(registry));
         // Use `upgradeToAndCall` to call the new V2 initializer
         bytes memory upgradeCallData = abi.encodeCall(DynamicImpactCreditV2.initializeV2, ());
         credit.upgradeToAndCall(address(creditV2Impl), upgradeCallData);

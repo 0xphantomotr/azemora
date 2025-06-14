@@ -192,8 +192,8 @@ contract MarketplaceInvariantTest is StdInvariant, Test {
         DynamicImpactCredit credit = DynamicImpactCredit(
             address(
                 new ERC1967Proxy(
-                    address(new DynamicImpactCredit()),
-                    abi.encodeCall(DynamicImpactCredit.initialize, ("uri", address(registry)))
+                    address(new DynamicImpactCredit(address(registry))),
+                    abi.encodeCall(DynamicImpactCredit.initialize, ("uri"))
                 )
             )
         );

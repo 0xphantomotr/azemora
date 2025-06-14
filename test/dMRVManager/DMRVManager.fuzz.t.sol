@@ -33,21 +33,16 @@ contract DMRVManagerFuzzTest is Test {
         credit = DynamicImpactCredit(
             address(
                 new ERC1967Proxy(
-                    address(new DynamicImpactCredit()),
-                    abi.encodeCall(DynamicImpactCredit.initialize, ("uri", address(registry)))
+                    address(new DynamicImpactCredit(address(registry))),
+                    abi.encodeCall(DynamicImpactCredit.initialize, ("uri"))
                 )
             )
         );
 
         // 3. Deploy DMRVManager
-        manager = DMRVManager(
-            address(
-                new ERC1967Proxy(
-                    address(new DMRVManager()),
-                    abi.encodeCall(DMRVManager.initialize, (address(registry), address(credit)))
-                )
-            )
-        );
+        DMRVManager managerImpl = new DMRVManager(address(registry), address(credit));
+        manager =
+            DMRVManager(address(new ERC1967Proxy(address(managerImpl), abi.encodeCall(DMRVManager.initialize, ()))));
 
         // 4. Set up roles
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), address(manager));

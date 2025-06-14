@@ -8,6 +8,7 @@ import "../../src/core/DynamicImpactCredit.sol";
 import "../../src/core/ProjectRegistry.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
+import "../marketplace/Marketplace.t.sol";
 
 // THE FIX: Define an interface to break the circular dependency.
 // The handler will call this interface, and the test contract will implement it.
@@ -130,12 +131,14 @@ contract FeeInvariantTest is Test, IFeeCallback {
     function setUp() public {
         vm.startPrank(admin);
         // Deploy all contracts
-        registry = ProjectRegistry(address(new ERC1967Proxy(address(new ProjectRegistry()), "")));
-        registry.initialize();
+        ProjectRegistry registryImpl = new ProjectRegistry();
+        registry = ProjectRegistry(
+            address(new ERC1967Proxy(address(registryImpl), abi.encodeCall(ProjectRegistry.initialize, ())))
+        );
         treasury = Treasury(payable(address(new ERC1967Proxy(address(new Treasury()), ""))));
         treasury.initialize(admin);
-        credit = DynamicImpactCredit(address(new ERC1967Proxy(address(new DynamicImpactCredit()), "")));
-        credit.initialize("ipfs://", address(registry));
+        credit = DynamicImpactCredit(address(new ERC1967Proxy(address(new DynamicImpactCredit(address(registry))), "")));
+        credit.initialize("ipfs://");
         paymentToken = new ERC20Mock();
         marketplace = Marketplace(
             address(
