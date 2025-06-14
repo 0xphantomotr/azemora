@@ -117,8 +117,9 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
      */
     function uri(uint256 id) public view override returns (string memory) {
         string[] storage uris = _tokenURIs[id];
-        if (uris.length == 0) revert DynamicImpactCredit__URINotSet();
-        return uris[uris.length - 1];
+        uint256 urisLength = uris.length;
+        if (urisLength == 0) revert DynamicImpactCredit__URINotSet();
+        return uris[urisLength - 1];
     }
 
     /**
@@ -155,18 +156,24 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
      * @return A list of role identifiers held by the account.
      */
     function getRoles(address account) external view returns (bytes32[] memory) {
+        uint256 rolesLength = _roles.length;
         uint256 count = 0;
-        for (uint256 i = 0; i < _roles.length; i++) {
+        for (uint256 i = 0; i < rolesLength; i++) {
             if (hasRole(_roles[i], account)) {
                 count++;
             }
         }
 
+        if (count == 0) {
+            return new bytes32[](0);
+        }
+
         bytes32[] memory roles = new bytes32[](count);
         uint256 index = 0;
-        for (uint256 i = 0; i < _roles.length; i++) {
+        for (uint256 i = 0; i < rolesLength; i++) {
             if (hasRole(_roles[i], account)) {
                 roles[index++] = _roles[i];
+                if (index == count) break;
             }
         }
         return roles;
@@ -238,12 +245,14 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
         uint256[] calldata amounts,
         string[] calldata uris // 1-to-1 with ids
     ) external onlyRole(DMRV_MANAGER_ROLE) whenNotPaused {
-        if (ids.length != amounts.length || ids.length != uris.length) revert DynamicImpactCredit__LengthMismatch();
+        uint256 idsLength = ids.length;
+        if (idsLength != amounts.length || idsLength != uris.length) revert DynamicImpactCredit__LengthMismatch();
 
-        uint256[] memory tokenIds = new uint256[](ids.length);
-        for (uint256 i = 0; i < ids.length;) {
-            if (!projectRegistry.isProjectActive(ids[i])) revert DynamicImpactCredit__ProjectNotActive();
-            tokenIds[i] = uint256(ids[i]);
+        uint256[] memory tokenIds = new uint256[](idsLength);
+        for (uint256 i = 0; i < idsLength;) {
+            bytes32 projectId = ids[i];
+            if (!projectRegistry.isProjectActive(projectId)) revert DynamicImpactCredit__ProjectNotActive();
+            tokenIds[i] = uint256(projectId);
             unchecked {
                 ++i;
             }
@@ -251,12 +260,11 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
 
         _mintBatch(to, tokenIds, amounts, "");
 
-        for (uint256 i = 0; i < ids.length;) {
-            // Only add the URI if it's the very first mint for that token
-            if (_tokenURIs[tokenIds[i]].length == 0) {
-                _tokenURIs[tokenIds[i]].push(uris[i]);
-                emit URI(uris[i], tokenIds[i]);
-            }
+        for (uint256 i = 0; i < idsLength;) {
+            uint256 tokenId = tokenIds[i];
+            string memory newUri = uris[i];
+            _tokenURIs[tokenId].push(newUri);
+            emit URI(newUri, tokenId);
             unchecked {
                 ++i;
             }

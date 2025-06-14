@@ -169,8 +169,8 @@ contract ProjectRegistry is
      * @param newMetaURI The new metadata URI.
      */
     function setProjectMetaURI(bytes32 projectId, string calldata newMetaURI) external nonReentrant whenNotPaused {
-        _checkProjectOwner(projectId);
-        _projects[projectId].metaURI = newMetaURI;
+        Project storage project = _getProjectAndCheckOwner(projectId);
+        project.metaURI = newMetaURI;
         emit ProjectMetaURIUpdated(projectId, newMetaURI);
     }
 
@@ -183,11 +183,11 @@ contract ProjectRegistry is
      * @param newOwner The address of the new owner.
      */
     function transferProjectOwnership(bytes32 projectId, address newOwner) external nonReentrant whenNotPaused {
-        _checkProjectOwner(projectId);
+        Project storage project = _getProjectAndCheckOwner(projectId);
         if (newOwner == address(0)) revert ProjectRegistry__NewOwnerIsZeroAddress();
 
-        address oldOwner = _projects[projectId].owner;
-        _projects[projectId].owner = newOwner;
+        address oldOwner = project.owner;
+        project.owner = newOwner;
         emit ProjectOwnershipTransferred(projectId, oldOwner, newOwner);
     }
 
@@ -221,18 +221,25 @@ contract ProjectRegistry is
      * @return A list of role identifiers held by the account.
      */
     function getRoles(address account) external view returns (bytes32[] memory) {
+        uint256 rolesLength = _roles.length;
         uint256 count = 0;
-        for (uint256 i = 0; i < _roles.length; i++) {
+        for (uint256 i = 0; i < rolesLength; i++) {
             if (hasRole(_roles[i], account)) {
                 count++;
             }
         }
 
+        if (count == 0) {
+            return new bytes32[](0);
+        }
+
         bytes32[] memory roles = new bytes32[](count);
         uint256 index = 0;
-        for (uint256 i = 0; i < _roles.length; i++) {
+        for (uint256 i = 0; i < rolesLength; i++) {
             if (hasRole(_roles[i], account)) {
                 roles[index++] = _roles[i];
+                // Optimization: stop looping once all roles have been found.
+                if (index == count) break;
             }
         }
         return roles;
@@ -260,11 +267,14 @@ contract ProjectRegistry is
     // --- Internal & Auth Functions ---
 
     /**
-     * @dev Reverts if the caller is not the owner of the specified project.
+     * @dev Gets project from storage and reverts if the caller is not the owner.
+     * @return project The project struct from storage.
      */
-    function _checkProjectOwner(bytes32 projectId) internal view {
-        if (_projects[projectId].id == 0) revert ProjectRegistry__ProjectNotFound();
-        if (_projects[projectId].owner != _msgSender()) revert ProjectRegistry__NotProjectOwner();
+    function _getProjectAndCheckOwner(bytes32 projectId) internal view returns (Project storage) {
+        Project storage project = _projects[projectId];
+        if (project.id == 0) revert ProjectRegistry__ProjectNotFound();
+        if (project.owner != _msgSender()) revert ProjectRegistry__NotProjectOwner();
+        return project;
     }
 
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
