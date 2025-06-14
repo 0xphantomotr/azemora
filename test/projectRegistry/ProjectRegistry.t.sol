@@ -158,40 +158,40 @@ contract ProjectRegistryTest is Test {
     /*     Ownership     */
     /* ----------------- */
 
-    function test_SetMetaURI_OnlyOwnerCanUpdate() public {
+    function test_SetProjectMetaURI_OnlyOwnerCanUpdate() public {
         string memory newURI = "ipfs://updated.json";
 
         // Owner should succeed
         vm.prank(projectOwner);
         vm.expectEmit(true, true, true, true, address(registry));
         emit ProjectRegistry.ProjectMetaURIUpdated(projectId, newURI);
-        registry.setMetaURI(projectId, newURI);
+        registry.setProjectMetaURI(projectId, newURI);
         assertEq(registry.getProject(projectId).metaURI, newURI);
 
         // Others should fail
         vm.prank(anotherUser);
         vm.expectRevert("ProjectRegistry: Caller is not the project owner");
-        registry.setMetaURI(projectId, "ipfs://fail.json");
+        registry.setProjectMetaURI(projectId, "ipfs://fail.json");
     }
 
-    function test_TransferOwnership_OnlyOwnerCanTransfer() public {
+    function test_TransferProjectOwnership_OnlyOwnerCanTransfer() public {
         // Owner should succeed
         vm.prank(projectOwner);
         vm.expectEmit(true, true, true, true, address(registry));
         emit ProjectRegistry.ProjectOwnershipTransferred(projectId, projectOwner, anotherUser);
-        registry.transferOwnership(projectId, anotherUser);
+        registry.transferProjectOwnership(projectId, anotherUser);
         assertEq(registry.getProject(projectId).owner, anotherUser);
 
         // Old owner should fail
         vm.prank(projectOwner);
         vm.expectRevert("ProjectRegistry: Caller is not the project owner");
-        registry.transferOwnership(projectId, admin);
+        registry.transferProjectOwnership(projectId, admin);
     }
 
-    function test_TransferOwnership_RevertsOnZeroAddress() public {
+    function test_TransferProjectOwnership_RevertsOnZeroAddress() public {
         vm.prank(projectOwner);
         vm.expectRevert("ProjectRegistry: New owner is the zero address");
-        registry.transferOwnership(projectId, address(0));
+        registry.transferProjectOwnership(projectId, address(0));
     }
 
     function test_Fuzz_AccessControls(address caller, address newOwner, string calldata uri) public {
@@ -199,15 +199,15 @@ contract ProjectRegistryTest is Test {
         vm.assume(caller != admin);
         vm.assume(caller != verifier);
 
-        // Test setMetaURI
+        // Test setProjectMetaURI
         vm.prank(caller);
         vm.expectRevert("ProjectRegistry: Caller is not the project owner");
-        registry.setMetaURI(projectId, uri);
+        registry.setProjectMetaURI(projectId, uri);
 
-        // Test transferOwnership
+        // Test transferProjectOwnership
         vm.prank(caller);
         vm.expectRevert("ProjectRegistry: Caller is not the project owner");
-        registry.transferOwnership(projectId, newOwner);
+        registry.transferProjectOwnership(projectId, newOwner);
     }
 
     /* ----------------- */
@@ -252,11 +252,11 @@ contract ProjectRegistryTest is Test {
 
         vm.prank(projectOwner);
         vm.expectRevert(expectedRevert);
-        registry.setMetaURI(projectId, "ipfs://paused.json");
+        registry.setProjectMetaURI(projectId, "ipfs://paused.json");
 
         vm.prank(projectOwner);
         vm.expectRevert(expectedRevert);
-        registry.transferOwnership(projectId, anotherUser);
+        registry.transferProjectOwnership(projectId, anotherUser);
     }
 
     /* ----------------- */

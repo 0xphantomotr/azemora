@@ -326,14 +326,14 @@ contract MarketplaceTest is Test {
 
     function test_Fail_SetTreasury_ToZeroAddress() public {
         vm.prank(admin);
-        vm.expectRevert("Marketplace: Zero address");
+        vm.expectRevert("Marketplace: Treasury address cannot be zero");
         marketplace.setTreasury(address(0));
     }
 
     function test_Fail_SetFee_AboveCap() public {
         vm.prank(admin);
-        vm.expectRevert("Marketplace: Fee cannot exceed 10%");
-        marketplace.setFee(1001); // 10.01%
+        vm.expectRevert("Marketplace: Fee cannot exceed 100%");
+        marketplace.setFee(10001); // 100.01%
     }
 
     function test_Fail_ListWithZeroAmount() public {

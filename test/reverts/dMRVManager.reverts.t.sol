@@ -108,19 +108,19 @@ contract DMRVManagerRevertsTest is Test {
         dmrvManager.fulfillVerification(requestId, data);
     }
 
-    // --- adminSetVerification ---
+    // --- adminSubmitVerification ---
 
-    function test_revert_adminSetVerification_notAdmin() public {
+    function test_revert_adminSubmitVerification_notAdmin() public {
         bytes4 expectedError = bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)"));
         vm.expectRevert(abi.encodeWithSelector(expectedError, otherUser, dmrvManager.DEFAULT_ADMIN_ROLE()));
         vm.prank(otherUser);
-        dmrvManager.adminSetVerification(activeProjectId, 100, "ipfs://admin", false);
+        dmrvManager.adminSubmitVerification(activeProjectId, 100, "ipfs://admin", false);
     }
 
-    function test_revert_adminSetVerification_projectNotActive() public {
+    function test_revert_adminSubmitVerification_projectNotActive() public {
         vm.expectRevert("DMRVManager: Project not active");
         vm.prank(admin);
-        dmrvManager.adminSetVerification(pendingProjectId, 100, "ipfs://admin", false);
+        dmrvManager.adminSubmitVerification(pendingProjectId, 100, "ipfs://admin", false);
     }
 
     // --- Pausable ---

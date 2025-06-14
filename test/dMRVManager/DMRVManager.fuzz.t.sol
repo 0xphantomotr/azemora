@@ -65,7 +65,7 @@ contract DMRVManagerFuzzTest is Test {
 
         // 6. Set an initial verification to establish a base URI history
         vm.prank(admin);
-        manager.adminSetVerification(projectId, 1, "ipfs://initial.json", false);
+        manager.adminSubmitVerification(projectId, 1, "ipfs://initial.json", false);
     }
 
     function testFuzz_FulfillVerification(

@@ -124,6 +124,14 @@ contract Marketplace is
         _disableInitializers();
     }
 
+    /**
+     * @notice Initializes the marketplace with its core dependencies.
+     * @dev Sets up roles and contract dependencies. The deployer is granted `DEFAULT_ADMIN_ROLE`
+     * and `PAUSER_ROLE`. The `treasury` and `feeBps` must be set in separate transactions
+     * after initialization.
+     * @param creditContract_ The address of the ERC1155 `DynamicImpactCredit` contract.
+     * @param paymentToken_ The address of the ERC20 token used for payments.
+     */
     function initialize(address creditContract_, address paymentToken_) public initializer {
         __AccessControl_init();
         __UUPSUpgradeable_init();
@@ -143,12 +151,13 @@ contract Marketplace is
 
     /**
      * @notice Lists a specified amount of an ERC1155 token for sale.
-     * @dev The seller must first approve the marketplace to transfer their tokens.
-     * The tokens are held in custody by this contract until sold or unlisted.
+     * @dev The seller must have first approved the marketplace to manage their tokens via `setApprovalForAll`.
+     * The tokens are held in custody by this contract until sold or the listing is cancelled.
+     * Emits a `Listed` event.
      * @param tokenId The ID of the token to list.
      * @param amount The quantity of the token to list.
      * @param pricePerUnit The price for each single unit of the token in the payment currency.
-     * @param expiryDuration The duration in seconds after which the listing will expire.
+     * @param expiryDuration The duration in seconds from now after which the listing will expire.
      * @return listingId The unique ID of the newly created listing.
      */
     function list(uint256 tokenId, uint256 amount, uint256 pricePerUnit, uint256 expiryDuration)
@@ -183,9 +192,10 @@ contract Marketplace is
 
     /**
      * @notice Purchases a specified amount of tokens from an active listing.
-     * @dev The buyer must first approve the marketplace to spend their payment tokens.
-     * The function handles payment transfers to the seller and the fee recipient,
-     * and transfers the purchased tokens to the buyer. Supports partial buys.
+     * @dev The buyer must have first approved the marketplace to spend their payment tokens via `approve`.
+     * The function handles payment transfers to the seller and the treasury, and transfers the
+     * purchased tokens to the buyer. Supports partial buys.
+     * Emits a `PartialSold` event or a `Sold` event if the listing is fully depleted.
      * @param listingId The ID of the listing to buy from.
      * @param amountToBuy The quantity of tokens to purchase from the listing.
      */
@@ -229,8 +239,8 @@ contract Marketplace is
 
     /**
      * @notice Cancels an active listing.
-     * @dev Can only be called by the original seller. Any unsold tokens are
-     * returned from custody to the seller.
+     * @dev Can only be called by the original seller. Any unsold tokens held in custody are
+     * returned to the seller. Emits a `ListingCancelled` event.
      * @param listingId The ID of the listing to cancel.
      */
     function cancelListing(uint256 listingId) external nonReentrant whenNotPaused {
@@ -268,15 +278,16 @@ contract Marketplace is
     }
 
     /**
-     * @notice Updates the price of an active listing.
-     * @dev Can only be called by the original seller.
+     * @notice Allows a seller to update the price of their active listing.
+     * @dev Can only be called by the original seller of the listing.
+     * Emits a `ListingPriceUpdated` event.
      * @param listingId The ID of the listing to update.
-     * @param newPricePerUnit The new price for each unit in the listing.
+     * @param newPricePerUnit The new price for each unit of the token.
      */
     function updateListingPrice(uint256 listingId, uint256 newPricePerUnit) external nonReentrant whenNotPaused {
         Listing storage listing = listings[listingId];
-        require(listing.seller == _msgSender(), "Marketplace: Not the seller");
         require(listing.active, "Marketplace: Listing not active");
+        require(listing.seller == _msgSender(), "Marketplace: Not the seller");
         require(newPricePerUnit > 0, "Marketplace: Price must be > 0");
 
         listing.pricePerUnit = newPricePerUnit;
@@ -284,23 +295,29 @@ contract Marketplace is
     }
 
     /**
-     * @notice Sets the address that will receive platform fees.
-     * @dev Admin-only function.
-     * @param newTreasury The new address for fee collection.
+     * @notice Sets the address of the treasury contract that receives platform fees.
+     * @dev Can only be called by an address with the `DEFAULT_ADMIN_ROLE`.
+     * It is recommended this be the Timelock contract in a DAO context.
+     * Emits a `TreasuryUpdated` event.
+     * @param newTreasury The address of the new treasury.
      */
     function setTreasury(address newTreasury) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(newTreasury != address(0), "Marketplace: Zero address");
+        require(newTreasury != address(0), "Marketplace: Treasury address cannot be zero");
         treasury = newTreasury;
         emit TreasuryUpdated(newTreasury);
     }
 
     /**
-     * @notice Sets the platform fee percentage.
-     * @dev Admin-only function. Fee is capped to prevent excessive charges.
-     * @param newFeeBps The new fee in basis points (e.g., 250 for 2.5%).
+     * @notice Sets the platform fee in basis points.
+     * @dev Can only be called by an address with the `DEFAULT_ADMIN_ROLE`.
+     * For example, a value of 250 corresponds to a 2.5% fee.
+     * Emits a `FeeUpdated` event.
+     * @param newFeeBps The new fee in basis points.
      */
     function setFee(uint256 newFeeBps) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(newFeeBps <= 1000, "Marketplace: Fee cannot exceed 10%"); // Capped at 10%
+        // A sanity check to prevent accidentally setting an enormous fee.
+        // 10000 bps = 100%
+        require(newFeeBps <= 10000, "Marketplace: Fee cannot exceed 100%");
         feeBps = newFeeBps;
         emit FeeUpdated(newFeeBps);
     }
@@ -340,16 +357,19 @@ contract Marketplace is
     }
 
     /**
-     * @notice Pauses the contract, halting all listing, buying, and cancelling.
-     * @dev Can only be called by an address with the PAUSER_ROLE.
+     * @notice Pauses all state-changing functions in the contract.
+     * @dev Can only be called by an address with the `PAUSER_ROLE`.
+     * This is a critical safety feature to halt activity in case of an emergency.
+     * Emits a `Paused` event.
      */
     function pause() external onlyRole(PAUSER_ROLE) {
         _pause();
     }
 
     /**
-     * @notice Unpauses the contract, resuming normal operation.
-     * @dev Can only be called by an address with the PAUSER_ROLE.
+     * @notice Lifts the pause on the contract, resuming normal operations.
+     * @dev Can only be called by an address with the `PAUSER_ROLE`.
+     * Emits an `Unpaused` event.
      */
     function unpause() external onlyRole(PAUSER_ROLE) {
         _unpause();

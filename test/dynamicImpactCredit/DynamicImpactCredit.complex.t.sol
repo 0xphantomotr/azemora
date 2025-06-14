@@ -33,7 +33,7 @@ contract DynamicImpactCreditExtendedV2 is DynamicImpactCredit {
         retirementTimestamps[tokenId] = block.timestamp;
         totalRetiredByUser[from] += amount;
 
-        emit CreditsRetired(from, id, amount);
+        emit CreditsRetired(from, tokenId, amount);
     }
 
     // New method to get retirement data

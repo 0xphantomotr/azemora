@@ -188,10 +188,10 @@ contract DMRVManagerTest is Test {
 
     /* ---------- Admin Functions ---------- */
 
-    function test_AdminSetVerification() public {
+    function test_AdminSubmitVerification() public {
         // Admin can directly set verification without oracle
         vm.prank(admin);
-        manager.adminSetVerification(projectId, 50, "ipfs://admin-set.json", false);
+        manager.adminSubmitVerification(projectId, 50, "ipfs://admin-set.json", false);
 
         // Check credits were minted
         assertEq(credit.balanceOf(projectOwner, uint256(projectId)), 50);
@@ -285,6 +285,6 @@ contract DMRVManagerTest is Test {
 
         vm.prank(admin);
         vm.expectRevert(expectedRevert);
-        manager.adminSetVerification(projectId, 1, "ipfs://fail.json", false);
+        manager.adminSubmitVerification(projectId, 1, "ipfs://fail.json", false);
     }
 }

@@ -30,11 +30,23 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
 
     uint256[50] private __gap;
 
+    // --- Events ---
+    event ContractURIUpdated(string newURI);
+    event CreditsRetired(address indexed retirer, uint256 indexed tokenId, uint256 amount);
+
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers(); // protect the impl
     }
 
+    /**
+     * @notice Initializes the contract, setting the contract URI and dependent contracts.
+     * @dev Sets up roles and contract dependencies. The deployer is granted `DEFAULT_ADMIN_ROLE`
+     * and `PAUSER_ROLE`. In a production environment, the other roles (`DMRV_MANAGER_ROLE`,
+     * `METADATA_UPDATER_ROLE`) must be granted to their respective contracts.
+     * @param contractURI_ The URI for the contract-level metadata.
+     * @param projectRegistry_ The address of the `ProjectRegistry` contract.
+     */
     function initialize(string memory contractURI_, address projectRegistry_) public initializer {
         __ERC1155_init(""); // base URI empty – each token has its own
         __AccessControl_init();
@@ -54,9 +66,9 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
 
     /**
      * @notice Mints a new batch of impact credits for a verified project.
-     * @dev Can only be called by the `DMRVManager`. The `tokenId` is the `uint256`
-     * representation of the `projectId`. This function also adds the new metadata
-     * URI to the token's history.
+     * @dev Can only be called by an address with `DMRV_MANAGER_ROLE`. The `tokenId` is the `uint256`
+     * cast of the `projectId`. This function adds the new metadata URI to the token's history.
+     * The project must be `Active` in the `ProjectRegistry`.
      * @param to The address to receive the new credits.
      * @param projectId The project ID, used to derive the `tokenId`.
      * @param amount The quantity of credits to mint.
@@ -79,10 +91,10 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
     }
 
     /**
-     * @notice Updates the metadata for a token by adding a new URI to its history.
-     * @dev Restricted to addresses with the `METADATA_UPDATER_ROLE`. This allows for
-     * impact data to be updated without minting new tokens.
-     * @param id The project ID of the token to update.
+     * @notice Updates a token's metadata by adding a new URI to its history.
+     * @dev Can only be called by an address with `METADATA_UPDATER_ROLE`. This allows for
+     * impact data to be updated without minting new tokens. Emits a `URI` event.
+     * @param id The project ID (`bytes32`) of the token to update.
      * @param newUri The new metadata URI to add to the token's history.
      */
     function setTokenURI(bytes32 id, string calldata newUri) external onlyRole(METADATA_UPDATER_ROLE) whenNotPaused {
@@ -93,7 +105,7 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
 
     /**
      * @notice Returns the latest metadata URI for a given token ID.
-     * @dev This points to the most up-to-date off-chain metadata JSON.
+     * @dev This points to the most up-to-date off-chain metadata JSON. The token must exist.
      * @param id The token ID to query.
      * @return The latest metadata URI string.
      */
@@ -116,18 +128,18 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
 
     /**
      * @notice Retires (burns) a specified amount of credits from an owner's balance.
-     * @dev This is a public function that allows any credit holder to permanently
-     * retire their assets, preventing re-sale and "double counting" of the
-     * environmental claim. The caller must be the owner or approved for all.
+     * @dev Any credit holder can call this to permanently retire their assets, preventing re-sale
+     * and "double counting" of the environmental claim. The caller must be the owner of the tokens
+     * or be approved to manage them. Emits a `CreditsRetired` event.
      * @param from The address of the credit holder.
-     * @param id The project ID of the credits to retire.
+     * @param id The project ID (`bytes32`) of the credits to retire.
      * @param amount The quantity of credits to retire.
      */
     function retire(address from, bytes32 id, uint256 amount) external virtual whenNotPaused {
         require(from == _msgSender() || isApprovedForAll(from, _msgSender()), "NOT_AUTHORIZED");
         uint256 tokenId = uint256(id);
         _burn(from, tokenId, amount);
-        emit CreditsRetired(from, id, amount);
+        emit CreditsRetired(_msgSender(), tokenId, amount);
     }
 
     /**
@@ -154,12 +166,40 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
         return roles;
     }
 
-    event CreditsRetired(address indexed from, bytes32 indexed id, uint256 amount);
+    /**
+     * @notice Returns the contract-level metadata URI.
+     * @dev This URI points to a JSON file that describes the contract, following the ERC-1155 metadata standard.
+     */
+    function contractURI() external view returns (string memory) {
+        return _contractURI;
+    }
 
+    /**
+     * @notice Updates the contract-level metadata URI.
+     * @dev Can only be called by an address with the `DEFAULT_ADMIN_ROLE`.
+     * Emits a `ContractURIUpdated` event.
+     * @param newUri The new contract-level URI.
+     */
+    function setContractURI(string calldata newUri) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _contractURI = newUri;
+        emit ContractURIUpdated(newUri);
+    }
+
+    /**
+     * @notice Pauses all state-changing functions in the contract.
+     * @dev Can only be called by an address with the `PAUSER_ROLE`.
+     * This is a critical safety feature to halt activity in case of an emergency.
+     * Emits a `Paused` event.
+     */
     function pause() external onlyRole(PAUSER_ROLE) {
         _pause();
     }
 
+    /**
+     * @notice Lifts the pause on the contract, resuming normal operations.
+     * @dev Can only be called by an address with the `PAUSER_ROLE`.
+     * Emits an `Unpaused` event.
+     */
     function unpause() external onlyRole(PAUSER_ROLE) {
         _unpause();
     }
@@ -179,8 +219,8 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
 
     /**
      * @notice Mints multiple batches of impact credits.
-     * @dev A gas-efficient alternative to `mintCredits` for minting credits for
-     * multiple projects simultaneously.
+     * @dev A gas-efficient alternative to `mintCredits` for minting credits for multiple projects
+     * at once. Can only be called by an address with `DMRV_MANAGER_ROLE`. All projects must be active.
      * @param to The address to receive all the new credits.
      * @param ids An array of project IDs.
      * @param amounts An array of amounts to mint for each corresponding project ID.
@@ -206,6 +246,7 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
         _mintBatch(to, tokenIds, amounts, "");
 
         for (uint256 i = 0; i < ids.length;) {
+            // Only add the URI if it's the very first mint for that token
             if (_tokenURIs[tokenIds[i]].length == 0) {
                 _tokenURIs[tokenIds[i]].push(uris[i]);
                 emit URI(uris[i], tokenIds[i]);
@@ -214,13 +255,5 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
                 ++i;
             }
         }
-    }
-
-    function contractURI() external view returns (string memory) {
-        return _contractURI;
-    }
-
-    function setContractURI(string calldata newUri) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _contractURI = newUri;
     }
 }

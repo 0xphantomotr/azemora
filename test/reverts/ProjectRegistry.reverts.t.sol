@@ -71,26 +71,26 @@ contract ProjectRegistryRevertsTest is Test {
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Pending);
     }
 
-    // --- setMetaURI ---
+    // --- setProjectMetaURI ---
 
-    function test_revert_setMetaURI_notOwner() public {
+    function test_revert_setProjectMetaURI_notOwner() public {
         vm.expectRevert("ProjectRegistry: Caller is not the project owner");
         vm.prank(otherUser);
-        registry.setMetaURI(projectId, "ipfs://new-meta");
+        registry.setProjectMetaURI(projectId, "ipfs://new-meta");
     }
 
-    // --- transferOwnership ---
+    // --- transferProjectOwnership ---
 
-    function test_revert_transferOwnership_notOwner() public {
+    function test_revert_transferProjectOwnership_notOwner() public {
         vm.expectRevert("ProjectRegistry: Caller is not the project owner");
         vm.prank(otherUser);
-        registry.transferOwnership(projectId, otherUser);
+        registry.transferProjectOwnership(projectId, otherUser);
     }
 
-    function test_revert_transferOwnership_toZeroAddress() public {
+    function test_revert_transferProjectOwnership_toZeroAddress() public {
         vm.prank(projectDeveloper);
         vm.expectRevert("ProjectRegistry: New owner is the zero address");
-        registry.transferOwnership(projectId, address(0));
+        registry.transferProjectOwnership(projectId, address(0));
     }
 
     function test_revert_setProjectStatus_toPending() public {

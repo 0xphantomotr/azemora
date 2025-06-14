@@ -59,6 +59,9 @@ contract DMRVManager is
     // --- Events ---
     event VerificationRequested(bytes32 indexed requestId, bytes32 indexed projectId, address indexed requestor);
     event VerificationFulfilled(bytes32 indexed requestId, bytes32 indexed projectId, uint256 creditAmount);
+    event AdminVerificationSubmitted(
+        bytes32 indexed projectId, uint256 creditAmount, string metadataURI, bool updateMetadataOnly
+    );
     event MetadataUpdated(bytes32 indexed projectId, string newURI);
     event CreditsMinted(bytes32 indexed projectId, address indexed owner, uint256 amount);
     event MissingProjectError(bytes32 indexed projectId);
@@ -68,6 +71,14 @@ contract DMRVManager is
         _disableInitializers();
     }
 
+    /**
+     * @notice Initializes the contract with dependent contract addresses.
+     * @dev Sets up roles and contract dependencies. The deployer is granted `DEFAULT_ADMIN_ROLE`,
+     * `ORACLE_ROLE`, and `PAUSER_ROLE`. In a production environment, the `ORACLE_ROLE` would be
+     * transferred to trusted oracle contracts.
+     * @param projectRegistry_ The address of the `ProjectRegistry` contract.
+     * @param creditContract_ The address of the `DynamicImpactCredit` contract.
+     */
     function initialize(address projectRegistry_, address creditContract_) public initializer {
         __AccessControl_init();
         __UUPSUpgradeable_init();
@@ -89,9 +100,10 @@ contract DMRVManager is
 
     /**
      * @notice Initiates a request for dMRV data from an oracle for a given project.
-     * @dev For the MVP, this simulates an oracle request by creating a request entry.
-     * In a production environment, this function would be expanded to make a direct
-     * call to a decentralized oracle network like Chainlink.
+     * @dev Emits a `VerificationRequested` event. For the MVP, this simulates an oracle request by
+     * creating a request entry. In a production environment, this function would be expanded to
+     * make a direct call to a decentralized oracle network like Chainlink.
+     * The project must be in the `Active` state.
      * @param projectId The unique identifier of the project to verify.
      * @return requestId A unique ID for the verification request.
      */
@@ -119,9 +131,9 @@ contract DMRVManager is
 
     /**
      * @notice Callback function for oracles to deliver verified dMRV data.
-     * @dev This function can only be called by addresses with the `ORACLE_ROLE`.
-     * It marks the request as fulfilled and processes the incoming data to mint
-     * tokens or update metadata accordingly.
+     * @dev This is a privileged function that can only be called by addresses with the `ORACLE_ROLE`.
+     * It marks the request as fulfilled and processes the incoming data to mint new impact credit tokens
+     * or update the metadata of existing ones. Emits a `VerificationFulfilled` event.
      * @param requestId The ID of the verification request being fulfilled.
      * @param data The raw, encoded verification data from the dMRV system.
      */
@@ -189,15 +201,16 @@ contract DMRVManager is
     }
 
     /**
-     * @notice Admin function for manually submitting verification data.
-     * @dev This function provides a bypass for the oracle flow, intended for
-     * testing, emergency interventions, or manual data entry by an admin.
+     * @notice Admin function to manually submit verification data, bypassing the oracle.
+     * @dev This is a privileged function for `DEFAULT_ADMIN_ROLE` holders. It is intended for
+     * testing, emergency interventions, or manual data entry. It directly calls the internal
+     * processing logic. Emits an `AdminVerificationSubmitted` event.
      * @param projectId The project identifier.
      * @param creditAmount Amount of credits to mint (can be 0).
      * @param metadataURI The new metadata URI to set.
      * @param updateMetadataOnly If true, only updates metadata without minting.
      */
-    function adminSetVerification(
+    function adminSubmitVerification(
         bytes32 projectId,
         uint256 creditAmount,
         string calldata metadataURI,
@@ -213,12 +226,24 @@ contract DMRVManager is
         });
 
         processVerification(projectId, _msgSender(), vData);
+        emit AdminVerificationSubmitted(projectId, creditAmount, metadataURI, updateMetadataOnly);
     }
 
+    /**
+     * @notice Pauses all state-changing functions in the contract.
+     * @dev Can only be called by an address with the `PAUSER_ROLE`.
+     * This is a critical safety feature to halt activity in case of an emergency.
+     * Emits a `Paused` event.
+     */
     function pause() external onlyRole(PAUSER_ROLE) {
         _pause();
     }
 
+    /**
+     * @notice Lifts the pause on the contract, resuming normal operations.
+     * @dev Can only be called by an address with the `PAUSER_ROLE`.
+     * Emits an `Unpaused` event.
+     */
     function unpause() external onlyRole(PAUSER_ROLE) {
         _unpause();
     }

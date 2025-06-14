@@ -68,6 +68,12 @@ contract ProjectRegistry is
         _disableInitializers();
     }
 
+    /**
+     * @notice Initializes the contract, setting up roles and pausable state.
+     * @dev The deployer is granted the `DEFAULT_ADMIN_ROLE`, `VERIFIER_ROLE`, and `PAUSER_ROLE`.
+     * This function should only be called once on the implementation contract, and it is automatically
+     * called by the proxy constructor during deployment.
+     */
     function initialize() public initializer {
         __AccessControl_init();
         __UUPSUpgradeable_init();
@@ -86,12 +92,13 @@ contract ProjectRegistry is
     // --- State-Changing Functions ---
 
     /**
-     * @notice Registers a new project. Anyone can register.
-     * @dev The caller becomes the initial owner of the project. The project starts
-     * in 'Pending' status and must be approved by a VERIFIER.
-     * The projectId must be unique, typically a keccak256 hash of project details.
+     * @notice Registers a new project, making it known to the Azemora platform.
+     * @dev Anyone can register a project. The caller becomes the initial owner. The project starts
+     * in the `Pending` state and must be moved to `Active` by a `VERIFIER_ROLE` holder
+     * before any actions can be taken on it. The `projectId` should be a unique identifier,
+     * typically a keccak256 hash of key project details to prevent collisions.
      * @param projectId The unique identifier for the project.
-     * @param metaURI A URI pointing to an off-chain JSON file with project details.
+     * @param metaURI A URI pointing to an off-chain JSON file (e.g., on IPFS) with project details.
      */
     function registerProject(bytes32 projectId, string calldata metaURI) external nonReentrant whenNotPaused {
         require(_projects[projectId].id == 0, "ProjectRegistry: ID already exists");
@@ -103,9 +110,11 @@ contract ProjectRegistry is
     }
 
     /**
-     * @notice Updates the status of an existing project.
-     * @dev - VERIFIER_ROLE can move a project to 'Active'.
-     *      - DEFAULT_ADMIN_ROLE can 'Pause' or 'Archive' a project for risk management.
+     * @notice Updates the status of an existing project (e.g., to activate, pause, or archive it).
+     * @dev This is a privileged action.
+     * - A `VERIFIER_ROLE` holder can move a project to `Active`.
+     * - A `DEFAULT_ADMIN_ROLE` holder can `Pause` or `Archive` a project.
+     * Status transitions are restricted to logical paths (e.g., you cannot activate an archived project).
      * @param projectId The ID of the project to update.
      * @param newStatus The new status for the project.
      */
@@ -140,22 +149,27 @@ contract ProjectRegistry is
     }
 
     /**
-     * @notice Allows the project owner to update the metadata URI.
+     * @notice Allows the project owner to update the project's metadata URI.
+     * @dev The caller must be the current owner of the project. The URI should point to a valid
+     * JSON metadata file, typically hosted on a decentralized storage system like IPFS.
      * @param projectId The ID of the project to update.
      * @param newMetaURI The new metadata URI.
      */
-    function setMetaURI(bytes32 projectId, string calldata newMetaURI) external nonReentrant whenNotPaused {
+    function setProjectMetaURI(bytes32 projectId, string calldata newMetaURI) external nonReentrant whenNotPaused {
         _checkProjectOwner(projectId);
         _projects[projectId].metaURI = newMetaURI;
         emit ProjectMetaURIUpdated(projectId, newMetaURI);
     }
 
     /**
-     * @notice Allows the current project owner to transfer ownership to a new address.
+     * @notice Allows the current project owner to transfer project ownership to a new address.
+     * @dev The caller must be the current owner. Ownership cannot be transferred to the zero address.
+     * The new owner will have the authority to update the project's metadata URI and perform other
+     * owner-specific actions in the future.
      * @param projectId The ID of the project being transferred.
      * @param newOwner The address of the new owner.
      */
-    function transferOwnership(bytes32 projectId, address newOwner) external nonReentrant whenNotPaused {
+    function transferProjectOwnership(bytes32 projectId, address newOwner) external nonReentrant whenNotPaused {
         _checkProjectOwner(projectId);
         require(newOwner != address(0), "ProjectRegistry: New owner is the zero address");
 
@@ -211,10 +225,21 @@ contract ProjectRegistry is
         return roles;
     }
 
+    /**
+     * @notice Pauses all state-changing functions in the contract.
+     * @dev Can only be called by an address with the `PAUSER_ROLE`.
+     * This is a critical safety feature to halt activity in case of an emergency.
+     * Emits a `Paused` event.
+     */
     function pause() external onlyRole(PAUSER_ROLE) {
         _pause();
     }
 
+    /**
+     * @notice Lifts the pause on the contract, resuming normal operations.
+     * @dev Can only be called by an address with the `PAUSER_ROLE`.
+     * Emits an `Unpaused` event.
+     */
     function unpause() external onlyRole(PAUSER_ROLE) {
         _unpause();
     }
