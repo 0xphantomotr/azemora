@@ -53,7 +53,7 @@ contract ProjectRegistryTest is Test {
 
     function test_Register_RevertsOnDuplicateId() public {
         vm.prank(anotherUser);
-        vm.expectRevert("ProjectRegistry: ID already exists");
+        vm.expectRevert(ProjectRegistry__IdAlreadyExists.selector);
         registry.registerProject(projectId, "ipfs://duplicate.json");
     }
 
@@ -99,23 +99,23 @@ contract ProjectRegistryTest is Test {
 
     function test_SetStatus_RevertsForNonVerifier() public {
         vm.prank(anotherUser);
-        vm.expectRevert("ProjectRegistry: Caller is not a verifier");
+        vm.expectRevert(ProjectRegistry__CallerNotVerifier.selector);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
     }
 
     function test_SetStatus_RevertsForNonAdmin() public {
         vm.prank(anotherUser);
-        vm.expectRevert("ProjectRegistry: Caller is not an admin");
+        vm.expectRevert(ProjectRegistry__CallerNotAdmin.selector);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Paused);
 
-        vm.expectRevert("ProjectRegistry: Caller is not an admin");
+        vm.expectRevert(ProjectRegistry__CallerNotAdmin.selector);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Archived);
     }
 
     function test_SetStatus_RevertsOnInvalidTransition() public {
         // an already pending project cannot be set to pending again
         vm.prank(admin);
-        vm.expectRevert("ProjectRegistry: New status is same as old status");
+        vm.expectRevert(ProjectRegistry__StatusIsSame.selector);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Pending);
     }
 
@@ -128,20 +128,20 @@ contract ProjectRegistryTest is Test {
 
         // then, try to change it
         vm.prank(admin);
-        vm.expectRevert("ProjectRegistry: Archived projects cannot be modified");
+        vm.expectRevert(ProjectRegistry__ArchivedProjectCannotBeModified.selector);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Paused);
     }
 
     function test_SetStatus_RevertsOnNonExistentProject() public {
         vm.prank(verifier);
-        vm.expectRevert("ProjectRegistry: Project not found");
+        vm.expectRevert(ProjectRegistry__ProjectNotFound.selector);
         registry.setProjectStatus(bytes32(uint256(420)), ProjectRegistry.ProjectStatus.Active);
     }
 
     function test_SetStatus_RevertsOnInvalidTransitionToPaused() public {
         // cannot pause from pending
         vm.prank(admin);
-        vm.expectRevert("ProjectRegistry: Can only pause from Active");
+        vm.expectRevert(ProjectRegistry__InvalidPauseState.selector);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Paused);
     }
 
@@ -150,7 +150,7 @@ contract ProjectRegistryTest is Test {
         vm.prank(verifier);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
         vm.prank(admin);
-        vm.expectRevert("ProjectRegistry: Invalid status transition target");
+        vm.expectRevert(ProjectRegistry__InvalidStatusTransition.selector);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Pending);
     }
 
@@ -170,7 +170,7 @@ contract ProjectRegistryTest is Test {
 
         // Others should fail
         vm.prank(anotherUser);
-        vm.expectRevert("ProjectRegistry: Caller is not the project owner");
+        vm.expectRevert(ProjectRegistry__NotProjectOwner.selector);
         registry.setProjectMetaURI(projectId, "ipfs://fail.json");
     }
 
@@ -184,13 +184,13 @@ contract ProjectRegistryTest is Test {
 
         // Old owner should fail
         vm.prank(projectOwner);
-        vm.expectRevert("ProjectRegistry: Caller is not the project owner");
+        vm.expectRevert(ProjectRegistry__NotProjectOwner.selector);
         registry.transferProjectOwnership(projectId, admin);
     }
 
     function test_TransferProjectOwnership_RevertsOnZeroAddress() public {
         vm.prank(projectOwner);
-        vm.expectRevert("ProjectRegistry: New owner is the zero address");
+        vm.expectRevert(ProjectRegistry__NewOwnerIsZeroAddress.selector);
         registry.transferProjectOwnership(projectId, address(0));
     }
 
@@ -201,12 +201,12 @@ contract ProjectRegistryTest is Test {
 
         // Test setProjectMetaURI
         vm.prank(caller);
-        vm.expectRevert("ProjectRegistry: Caller is not the project owner");
+        vm.expectRevert(ProjectRegistry__NotProjectOwner.selector);
         registry.setProjectMetaURI(projectId, uri);
 
         // Test transferProjectOwnership
         vm.prank(caller);
-        vm.expectRevert("ProjectRegistry: Caller is not the project owner");
+        vm.expectRevert(ProjectRegistry__NotProjectOwner.selector);
         registry.transferProjectOwnership(projectId, newOwner);
     }
 
@@ -263,7 +263,7 @@ contract ProjectRegistryTest is Test {
     /*      View         */
     /* ----------------- */
     function test_GetProject_RevertsOnNonExistentProject() public {
-        vm.expectRevert("ProjectRegistry: Project not found");
-        registry.getProject(bytes32(uint256(420)));
+        vm.expectRevert(ProjectRegistry__ProjectNotFound.selector);
+        registry.getProject(keccak256("non existent"));
     }
 }

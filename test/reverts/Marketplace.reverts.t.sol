@@ -76,13 +76,13 @@ contract MarketplaceRevertsTest is Test {
     // --- list ---
 
     function test_revert_list_zeroAmount() public {
-        vm.expectRevert("Marketplace: Amount must be > 0");
+        vm.expectRevert(Marketplace__ZeroAmount.selector);
         vm.prank(seller);
         marketplace.list(tokenId, 0, 10 ether, 1 days);
     }
 
     function test_revert_list_zeroPrice() public {
-        vm.expectRevert("Marketplace: Price must be > 0");
+        vm.expectRevert(Marketplace__ZeroPrice.selector);
         vm.prank(seller);
         marketplace.list(tokenId, 100, 0, 1 days);
     }
@@ -94,27 +94,27 @@ contract MarketplaceRevertsTest is Test {
         vm.prank(seller);
         marketplace.cancelListing(listingId);
 
-        vm.expectRevert("Marketplace: Listing not active");
+        vm.expectRevert(Marketplace__ListingNotActive.selector);
         vm.prank(buyer);
         marketplace.buy(listingId, 10);
     }
 
     function test_revert_buy_expiredListing() public {
         vm.warp(block.timestamp + 2 days); // Fast forward time
-        vm.expectRevert("Marketplace: Listing expired");
+        vm.expectRevert(Marketplace__ListingExpired.selector);
         vm.prank(buyer);
         marketplace.buy(listingId, 10);
     }
 
     function test_revert_buy_insufficientItems() public {
-        vm.expectRevert("Marketplace: Not enough items in listing");
+        vm.expectRevert(Marketplace__NotEnoughItemsInListing.selector);
         vm.prank(buyer);
         marketplace.buy(listingId, 101); // Try to buy more than listed
     }
 
     function test_revert_buy_insufficientBalance() public {
         // Buyer has 0 payment tokens
-        vm.expectRevert("Marketplace: Insufficient balance");
+        vm.expectRevert(Marketplace__InsufficientBalance.selector);
         vm.prank(buyer);
         marketplace.buy(listingId, 10);
     }
@@ -122,7 +122,7 @@ contract MarketplaceRevertsTest is Test {
     // --- cancelListing ---
 
     function test_revert_cancelListing_notSeller() public {
-        vm.expectRevert("Marketplace: Not the seller");
+        vm.expectRevert(Marketplace__NotTheSeller.selector);
         vm.prank(otherUser);
         marketplace.cancelListing(listingId);
     }
@@ -130,7 +130,7 @@ contract MarketplaceRevertsTest is Test {
     // --- updateListingPrice ---
 
     function test_revert_updateListingPrice_notSeller() public {
-        vm.expectRevert("Marketplace: Not the seller");
+        vm.expectRevert(Marketplace__NotTheSeller.selector);
         vm.prank(otherUser);
         marketplace.updateListingPrice(listingId, 5 ether);
     }
@@ -139,7 +139,7 @@ contract MarketplaceRevertsTest is Test {
         vm.prank(seller);
         marketplace.cancelListing(listingId);
 
-        vm.expectRevert("Marketplace: Listing not active");
+        vm.expectRevert(Marketplace__ListingNotActive.selector);
         vm.prank(seller);
         marketplace.updateListingPrice(listingId, 5 ether);
     }

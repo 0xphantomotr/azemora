@@ -63,6 +63,22 @@ interface IERC20Upgradeable {
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
 }
 
+// --- Custom Errors for Gas Optimization ---
+error Marketplace__ZeroAmount();
+error Marketplace__ZeroPrice();
+error Marketplace__ZeroExpiry();
+error Marketplace__ListingNotActive();
+error Marketplace__ListingExpired();
+error Marketplace__NotEnoughItemsInListing();
+error Marketplace__InsufficientBalance();
+error Marketplace__NotTheSeller();
+error Marketplace__TreasuryAddressZero();
+error Marketplace__FeeTooHigh();
+error Marketplace__ListingNotFound();
+error Marketplace__ArrayLengthMismatch();
+error Marketplace__TransferFailed();
+error Marketplace__ListingNotExpired();
+
 /**
  * @title Marketplace
  * @author Genci Mehmeti
@@ -93,12 +109,13 @@ contract Marketplace is
 
     struct Listing {
         uint256 id;
-        address seller;
         uint256 tokenId;
         uint256 amount;
-        uint256 pricePerUnit; // Price per single unit of the token
-        uint256 expiryTimestamp; // Timestamp when the listing expires
-        bool active;
+        uint256 pricePerUnit;
+        // --- Packed for gas efficiency ---
+        address seller; // 20 bytes
+        uint64 expiryTimestamp; // 8 bytes
+        bool active; // 1 byte
     }
 
     mapping(uint256 => Listing) public listings;
@@ -166,9 +183,9 @@ contract Marketplace is
         whenNotPaused
         returns (uint256 listingId)
     {
-        require(amount > 0, "Marketplace: Amount must be > 0");
-        require(pricePerUnit > 0, "Marketplace: Price must be > 0");
-        require(expiryDuration > 0, "Marketplace: Expiry must be > 0");
+        if (amount == 0) revert Marketplace__ZeroAmount();
+        if (pricePerUnit == 0) revert Marketplace__ZeroPrice();
+        if (expiryDuration == 0) revert Marketplace__ZeroExpiry();
 
         // Custodial model: Transfer tokens from seller to this contract
         creditContract.safeTransferFrom(_msgSender(), address(this), tokenId, amount, "");
@@ -180,7 +197,7 @@ contract Marketplace is
             tokenId: tokenId,
             amount: amount,
             pricePerUnit: pricePerUnit,
-            expiryTimestamp: block.timestamp + expiryDuration,
+            expiryTimestamp: uint64(block.timestamp + expiryDuration),
             active: true
         });
 
@@ -202,13 +219,13 @@ contract Marketplace is
     function buy(uint256 listingId, uint256 amountToBuy) external nonReentrant whenNotPaused {
         Listing storage listing = listings[listingId];
         // --- CHECKS ---
-        require(listing.active, "Marketplace: Listing not active");
-        require(block.timestamp < listing.expiryTimestamp, "Marketplace: Listing expired");
-        require(amountToBuy > 0, "Marketplace: Amount must be > 0");
-        require(listing.amount >= amountToBuy, "Marketplace: Not enough items in listing");
+        if (!listing.active) revert Marketplace__ListingNotActive();
+        if (block.timestamp >= listing.expiryTimestamp) revert Marketplace__ListingExpired();
+        if (amountToBuy == 0) revert Marketplace__ZeroAmount();
+        if (listing.amount < amountToBuy) revert Marketplace__NotEnoughItemsInListing();
 
         uint256 totalPrice = amountToBuy * listing.pricePerUnit;
-        require(paymentToken.balanceOf(_msgSender()) >= totalPrice, "Marketplace: Insufficient balance");
+        if (paymentToken.balanceOf(_msgSender()) < totalPrice) revert Marketplace__InsufficientBalance();
 
         uint256 fee = (totalPrice * feeBps) / 10000;
         uint256 sellerProceeds = totalPrice - fee;
@@ -226,10 +243,14 @@ contract Marketplace is
         // --- INTERACTIONS ---
         // Transfer payment from buyer to seller and fee recipient
         if (sellerProceeds > 0) {
-            paymentToken.transferFrom(_msgSender(), listing.seller, sellerProceeds);
+            if (!paymentToken.transferFrom(_msgSender(), listing.seller, sellerProceeds)) {
+                revert Marketplace__TransferFailed();
+            }
         }
         if (fee > 0) {
-            paymentToken.transferFrom(_msgSender(), treasury, fee);
+            if (!paymentToken.transferFrom(_msgSender(), treasury, fee)) {
+                revert Marketplace__TransferFailed();
+            }
             emit FeePaid(treasury, fee);
         }
 
@@ -245,8 +266,8 @@ contract Marketplace is
      */
     function cancelListing(uint256 listingId) external nonReentrant whenNotPaused {
         Listing storage listing = listings[listingId];
-        require(listing.active, "Marketplace: Listing not active");
-        require(listing.seller == _msgSender(), "Marketplace: Not the seller");
+        if (!listing.active) revert Marketplace__ListingNotActive();
+        if (listing.seller != _msgSender()) revert Marketplace__NotTheSeller();
 
         listing.active = false;
         activeListingCount--;
@@ -269,23 +290,20 @@ contract Marketplace is
         uint256[] memory amounts = new uint256[](listingIds.length);
         address seller = _msgSender();
 
-        for (uint256 i = 0; i < listingIds.length;) {
-            uint256 listingId = listingIds[i];
+        // Down-counting loop is more gas-efficient.
+        for (uint256 i = listingIds.length; i > 0; --i) {
+            uint256 listingId = listingIds[i - 1];
             Listing storage listing = listings[listingId];
-            require(listing.active, "Marketplace: Listing not active");
-            require(listing.seller == seller, "Marketplace: Not the seller");
+            if (!listing.active) revert Marketplace__ListingNotActive();
+            if (listing.seller != seller) revert Marketplace__NotTheSeller();
 
             listing.active = false;
             activeListingCount--;
 
-            tokenIds[i] = listing.tokenId;
-            amounts[i] = listing.amount;
+            tokenIds[i - 1] = listing.tokenId;
+            amounts[i - 1] = listing.amount;
 
             emit ListingCancelled(listingId);
-
-            unchecked {
-                i++;
-            }
         }
 
         // Return all unsold tokens to the seller in a single batch transaction
@@ -306,44 +324,45 @@ contract Marketplace is
         nonReentrant
         whenNotPaused
     {
-        require(listingIds.length == amountsToBuy.length, "Marketplace: Array length mismatch");
+        if (listingIds.length != amountsToBuy.length) revert Marketplace__ArrayLengthMismatch();
 
         uint256 totalPayment = 0;
         uint256 totalFee = 0;
         uint256[] memory tokenIds = new uint256[](listingIds.length);
+        uint256 len = listingIds.length;
 
         // First loop for CHECKS. This is critical for security and atomicity.
-        for (uint256 i = 0; i < listingIds.length;) {
-            uint256 listingId = listingIds[i];
-            uint256 amountToBuy = amountsToBuy[i];
+        // Down-counting loop is more gas-efficient.
+        for (uint256 i = len; i > 0; --i) {
+            uint256 listingId = listingIds[i - 1];
+            uint256 amountToBuy = amountsToBuy[i - 1];
             Listing storage listing = listings[listingId];
 
-            require(listing.active, "Marketplace: Listing not active");
-            require(block.timestamp < listing.expiryTimestamp, "Marketplace: Listing expired");
-            require(amountToBuy > 0, "Marketplace: Amount must be > 0");
-            require(listing.amount >= amountToBuy, "Marketplace: Not enough items in listing");
+            if (!listing.active) revert Marketplace__ListingNotActive();
+            if (block.timestamp >= listing.expiryTimestamp) revert Marketplace__ListingExpired();
+            if (amountToBuy == 0) revert Marketplace__ZeroAmount();
+            if (listing.amount < amountToBuy) revert Marketplace__NotEnoughItemsInListing();
 
             uint256 price = amountToBuy * listing.pricePerUnit;
             totalPayment += price;
             totalFee += (price * feeBps) / 10000;
-
-            unchecked {
-                i++;
-            }
         }
 
-        require(paymentToken.balanceOf(_msgSender()) >= totalPayment, "Marketplace: Insufficient balance");
+        if (paymentToken.balanceOf(_msgSender()) < totalPayment) revert Marketplace__InsufficientBalance();
 
         // Transfer total fee to treasury in one go.
         if (totalFee > 0) {
-            paymentToken.transferFrom(_msgSender(), treasury, totalFee);
+            if (!paymentToken.transferFrom(_msgSender(), treasury, totalFee)) {
+                revert Marketplace__TransferFailed();
+            }
             emit FeePaid(treasury, totalFee);
         }
 
         // Second loop for EFFECTS and INTERACTIONS (Seller payments).
-        for (uint256 i = 0; i < listingIds.length;) {
-            uint256 listingId = listingIds[i];
-            uint256 amountToBuy = amountsToBuy[i];
+        // Down-counting loop is more gas-efficient.
+        for (uint256 i = len; i > 0; --i) {
+            uint256 listingId = listingIds[i - 1];
+            uint256 amountToBuy = amountsToBuy[i - 1];
             Listing storage listing = listings[listingId];
 
             uint256 price = amountToBuy * listing.pricePerUnit;
@@ -360,15 +379,13 @@ contract Marketplace is
                 emit PartialSold(listingId, _msgSender(), amountToBuy, price);
             }
 
-            tokenIds[i] = listing.tokenId;
+            tokenIds[i - 1] = listing.tokenId;
 
             // --- INTERACTIONS (Seller Only) ---
             if (sellerProceeds > 0) {
-                paymentToken.transferFrom(_msgSender(), listing.seller, sellerProceeds);
-            }
-
-            unchecked {
-                i++;
+                if (!paymentToken.transferFrom(_msgSender(), listing.seller, sellerProceeds)) {
+                    revert Marketplace__TransferFailed();
+                }
             }
         }
 
@@ -384,8 +401,8 @@ contract Marketplace is
      */
     function cancelExpiredListing(uint256 listingId) external nonReentrant whenNotPaused {
         Listing storage listing = listings[listingId];
-        require(listing.active, "Marketplace: Listing not active");
-        require(block.timestamp >= listing.expiryTimestamp, "Marketplace: Listing not expired yet");
+        if (!listing.active) revert Marketplace__ListingNotActive();
+        if (block.timestamp < listing.expiryTimestamp) revert Marketplace__ListingNotExpired();
 
         listing.active = false;
         activeListingCount--;
@@ -405,9 +422,9 @@ contract Marketplace is
      */
     function updateListingPrice(uint256 listingId, uint256 newPricePerUnit) external nonReentrant whenNotPaused {
         Listing storage listing = listings[listingId];
-        require(listing.active, "Marketplace: Listing not active");
-        require(listing.seller == _msgSender(), "Marketplace: Not the seller");
-        require(newPricePerUnit > 0, "Marketplace: Price must be > 0");
+        if (!listing.active) revert Marketplace__ListingNotActive();
+        if (listing.seller != _msgSender()) revert Marketplace__NotTheSeller();
+        if (newPricePerUnit == 0) revert Marketplace__ZeroPrice();
 
         listing.pricePerUnit = newPricePerUnit;
         emit ListingPriceUpdated(listingId, newPricePerUnit);
@@ -421,7 +438,7 @@ contract Marketplace is
      * @param newTreasury The address of the new treasury.
      */
     function setTreasury(address newTreasury) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(newTreasury != address(0), "Marketplace: Treasury address cannot be zero");
+        if (newTreasury == address(0)) revert Marketplace__TreasuryAddressZero();
         treasury = newTreasury;
         emit TreasuryUpdated(newTreasury);
     }
@@ -436,7 +453,7 @@ contract Marketplace is
     function setFee(uint256 newFeeBps) external onlyRole(DEFAULT_ADMIN_ROLE) {
         // A sanity check to prevent accidentally setting an enormous fee.
         // 10000 bps = 100%
-        require(newFeeBps <= 10000, "Marketplace: Fee cannot exceed 100%");
+        if (newFeeBps > 10000) revert Marketplace__FeeTooHigh();
         feeBps = newFeeBps;
         emit FeeUpdated(newFeeBps);
     }
@@ -447,7 +464,7 @@ contract Marketplace is
      * @return A `Listing` struct containing the listing's data.
      */
     function getListing(uint256 listingId) external view returns (Listing memory) {
-        require(listings[listingId].id == listingId, "Marketplace: Listing not found");
+        if (listings[listingId].id != listingId) revert Marketplace__ListingNotFound();
         return listings[listingId];
     }
 
@@ -458,19 +475,19 @@ contract Marketplace is
      * @return A list of role identifiers held by the account.
      */
     function getRoles(address account) external view returns (bytes32[] memory) {
+        // More efficient implementation: loop only once.
+        bytes32[] memory temporaryRoles = new bytes32[](_roles.length);
         uint256 count = 0;
         for (uint256 i = 0; i < _roles.length; i++) {
             if (hasRole(_roles[i], account)) {
+                temporaryRoles[count] = _roles[i];
                 count++;
             }
         }
 
         bytes32[] memory roles = new bytes32[](count);
-        uint256 index = 0;
-        for (uint256 i = 0; i < _roles.length; i++) {
-            if (hasRole(_roles[i], account)) {
-                roles[index++] = _roles[i];
-            }
+        for (uint256 i = 0; i < count; i++) {
+            roles[i] = temporaryRoles[i];
         }
         return roles;
     }

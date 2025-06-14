@@ -16,6 +16,19 @@ interface IProjectRegistry {
     function isProjectActive(bytes32 projectId) external view returns (bool);
 }
 
+// --- Custom Errors ---
+error ProjectRegistry__IdAlreadyExists();
+error ProjectRegistry__ProjectNotFound();
+error ProjectRegistry__StatusIsSame();
+error ProjectRegistry__ArchivedProjectCannotBeModified();
+error ProjectRegistry__CallerNotVerifier();
+error ProjectRegistry__InvalidActivationState();
+error ProjectRegistry__CallerNotAdmin();
+error ProjectRegistry__InvalidPauseState();
+error ProjectRegistry__InvalidStatusTransition();
+error ProjectRegistry__NotProjectOwner();
+error ProjectRegistry__NewOwnerIsZeroAddress();
+
 /**
  * @title ProjectRegistry
  * @author Genci Mehmeti
@@ -47,9 +60,10 @@ contract ProjectRegistry is
 
     struct Project {
         bytes32 id;
-        address owner;
-        ProjectStatus status;
         string metaURI; // URI to off-chain JSON metadata (IPFS)
+        // --- Packed for gas efficiency ---
+        address owner; // 20 bytes
+        ProjectStatus status; // 1 byte
     }
 
     mapping(bytes32 => Project) private _projects;
@@ -101,10 +115,10 @@ contract ProjectRegistry is
      * @param metaURI A URI pointing to an off-chain JSON file (e.g., on IPFS) with project details.
      */
     function registerProject(bytes32 projectId, string calldata metaURI) external nonReentrant whenNotPaused {
-        require(_projects[projectId].id == 0, "ProjectRegistry: ID already exists");
+        if (_projects[projectId].id != 0) revert ProjectRegistry__IdAlreadyExists();
 
         _projects[projectId] =
-            Project({id: projectId, owner: _msgSender(), status: ProjectStatus.Pending, metaURI: metaURI});
+            Project({id: projectId, metaURI: metaURI, owner: _msgSender(), status: ProjectStatus.Pending});
 
         emit ProjectRegistered(projectId, _msgSender(), metaURI);
     }
@@ -122,26 +136,25 @@ contract ProjectRegistry is
         Project storage project = _projects[projectId];
         ProjectStatus oldStatus = project.status;
 
-        require(project.id != 0, "ProjectRegistry: Project not found");
-        require(oldStatus != newStatus, "ProjectRegistry: New status is same as old status");
-        require(oldStatus != ProjectStatus.Archived, "ProjectRegistry: Archived projects cannot be modified");
+        if (project.id == 0) revert ProjectRegistry__ProjectNotFound();
+        if (oldStatus == newStatus) revert ProjectRegistry__StatusIsSame();
+        if (oldStatus == ProjectStatus.Archived) revert ProjectRegistry__ArchivedProjectCannotBeModified();
 
         if (newStatus == ProjectStatus.Active) {
-            require(hasRole(VERIFIER_ROLE, _msgSender()), "ProjectRegistry: Caller is not a verifier");
-            require(
-                oldStatus == ProjectStatus.Pending || oldStatus == ProjectStatus.Paused,
-                "ProjectRegistry: Can only activate from Pending or Paused"
-            );
+            if (!hasRole(VERIFIER_ROLE, _msgSender())) revert ProjectRegistry__CallerNotVerifier();
+            if (oldStatus != ProjectStatus.Pending && oldStatus != ProjectStatus.Paused) {
+                revert ProjectRegistry__InvalidActivationState();
+            }
         } else if (newStatus == ProjectStatus.Paused) {
-            require(hasRole(DEFAULT_ADMIN_ROLE, _msgSender()), "ProjectRegistry: Caller is not an admin");
-            require(oldStatus == ProjectStatus.Active, "ProjectRegistry: Can only pause from Active");
+            if (!hasRole(DEFAULT_ADMIN_ROLE, _msgSender())) revert ProjectRegistry__CallerNotAdmin();
+            if (oldStatus != ProjectStatus.Active) revert ProjectRegistry__InvalidPauseState();
         } else if (newStatus == ProjectStatus.Archived) {
-            require(hasRole(DEFAULT_ADMIN_ROLE, _msgSender()), "ProjectRegistry: Caller is not an admin");
+            if (!hasRole(DEFAULT_ADMIN_ROLE, _msgSender())) revert ProjectRegistry__CallerNotAdmin();
             // Any non-archived state can be archived. The initial checks are sufficient.
         } else {
             // This case should be unreachable if all statuses are handled above.
             // It prevents transitioning to an undefined status.
-            revert("ProjectRegistry: Invalid status transition target");
+            revert ProjectRegistry__InvalidStatusTransition();
         }
 
         emit ProjectStatusChanged(projectId, oldStatus, newStatus);
@@ -171,7 +184,7 @@ contract ProjectRegistry is
      */
     function transferProjectOwnership(bytes32 projectId, address newOwner) external nonReentrant whenNotPaused {
         _checkProjectOwner(projectId);
-        require(newOwner != address(0), "ProjectRegistry: New owner is the zero address");
+        if (newOwner == address(0)) revert ProjectRegistry__NewOwnerIsZeroAddress();
 
         address oldOwner = _projects[projectId].owner;
         _projects[projectId].owner = newOwner;
@@ -186,7 +199,7 @@ contract ProjectRegistry is
      * @return A Project struct containing all project data.
      */
     function getProject(bytes32 projectId) external view returns (Project memory) {
-        require(_projects[projectId].id != 0, "ProjectRegistry: Project not found");
+        if (_projects[projectId].id == 0) revert ProjectRegistry__ProjectNotFound();
         return _projects[projectId];
     }
 
@@ -250,8 +263,8 @@ contract ProjectRegistry is
      * @dev Reverts if the caller is not the owner of the specified project.
      */
     function _checkProjectOwner(bytes32 projectId) internal view {
-        require(_projects[projectId].id != 0, "ProjectRegistry: Project not found");
-        require(_projects[projectId].owner == _msgSender(), "ProjectRegistry: Caller is not the project owner");
+        if (_projects[projectId].id == 0) revert ProjectRegistry__ProjectNotFound();
+        if (_projects[projectId].owner != _msgSender()) revert ProjectRegistry__NotProjectOwner();
     }
 
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
