@@ -1,0 +1,8 @@
+{
+  "filter_paths": [
+    "lib",
+    "test",
+    "script"
+  ],
+  "exclude_dependencies": true
+} 

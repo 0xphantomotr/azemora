@@ -78,6 +78,8 @@ error Marketplace__ListingNotFound();
 error Marketplace__ArrayLengthMismatch();
 error Marketplace__TransferFailed();
 error Marketplace__ListingNotExpired();
+error Marketplace__AmountTooLarge();
+error Marketplace__PriceTooLarge();
 
 /**
  * @title Marketplace
@@ -90,11 +92,11 @@ error Marketplace__ListingNotExpired();
  */
 contract Marketplace is
     Initializable,
+    PausableUpgradeable,
     AccessControlUpgradeable,
     UUPSUpgradeable,
     ReentrancyGuardUpgradeable,
-    ERC1155HolderUpgradeable,
-    PausableUpgradeable
+    ERC1155HolderUpgradeable
 {
     // --- Roles ---
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
@@ -110,12 +112,14 @@ contract Marketplace is
     struct Listing {
         uint256 id;
         uint256 tokenId;
-        uint256 amount;
-        uint256 pricePerUnit;
         // --- Packed for gas efficiency ---
+        // Slot 3
         address seller; // 20 bytes
         uint64 expiryTimestamp; // 8 bytes
         bool active; // 1 byte
+        // Slot 4
+        uint128 pricePerUnit; // 16 bytes
+        uint96 amount; // 12 bytes
     }
 
     mapping(uint256 => Listing) public listings;
@@ -186,19 +190,24 @@ contract Marketplace is
         if (amount == 0) revert Marketplace__ZeroAmount();
         if (pricePerUnit == 0) revert Marketplace__ZeroPrice();
         if (expiryDuration == 0) revert Marketplace__ZeroExpiry();
+        if (amount > type(uint96).max) revert Marketplace__AmountTooLarge();
+        if (pricePerUnit > type(uint128).max) revert Marketplace__PriceTooLarge();
+
+        // --- Optimisation: Cache storage read ---
+        IERC1155Upgradeable _creditContract = creditContract;
 
         // Custodial model: Transfer tokens from seller to this contract
-        creditContract.safeTransferFrom(_msgSender(), address(this), tokenId, amount, "");
+        _creditContract.safeTransferFrom(_msgSender(), address(this), tokenId, amount, "");
 
         listingId = listingIdCounter++;
         listings[listingId] = Listing({
             id: listingId,
-            seller: _msgSender(),
             tokenId: tokenId,
-            amount: amount,
-            pricePerUnit: pricePerUnit,
+            seller: _msgSender(),
             expiryTimestamp: uint64(block.timestamp + expiryDuration),
-            active: true
+            active: true,
+            pricePerUnit: uint128(pricePerUnit),
+            amount: uint96(amount)
         });
 
         activeListingCount++;
@@ -217,21 +226,26 @@ contract Marketplace is
      * @param amountToBuy The quantity of tokens to purchase from the listing.
      */
     function buy(uint256 listingId, uint256 amountToBuy) external nonReentrant whenNotPaused {
+        // --- Optimisation: Cache storage reads ---
         Listing storage listing = listings[listingId];
+        Listing memory listing_ = listing;
+        uint256 feeBps_ = feeBps;
+        IERC20Upgradeable paymentToken_ = paymentToken;
+
         // --- CHECKS ---
-        if (!listing.active) revert Marketplace__ListingNotActive();
-        if (block.timestamp >= listing.expiryTimestamp) revert Marketplace__ListingExpired();
+        if (!listing_.active) revert Marketplace__ListingNotActive();
+        if (block.timestamp >= listing_.expiryTimestamp) revert Marketplace__ListingExpired();
         if (amountToBuy == 0) revert Marketplace__ZeroAmount();
-        if (listing.amount < amountToBuy) revert Marketplace__NotEnoughItemsInListing();
+        if (listing_.amount < amountToBuy) revert Marketplace__NotEnoughItemsInListing();
 
-        uint256 totalPrice = amountToBuy * listing.pricePerUnit;
-        if (paymentToken.balanceOf(_msgSender()) < totalPrice) revert Marketplace__InsufficientBalance();
+        uint256 totalPrice = amountToBuy * listing_.pricePerUnit;
+        if (paymentToken_.balanceOf(_msgSender()) < totalPrice) revert Marketplace__InsufficientBalance();
 
-        uint256 fee = (totalPrice * feeBps) / 10000;
+        uint256 fee = (totalPrice * feeBps_) / 10000;
         uint256 sellerProceeds = totalPrice - fee;
 
         // --- EFFECTS ---
-        listing.amount -= amountToBuy;
+        listing.amount = uint96(listing_.amount - amountToBuy);
         if (listing.amount == 0) {
             listing.active = false;
             activeListingCount--;
@@ -243,19 +257,19 @@ contract Marketplace is
         // --- INTERACTIONS ---
         // Transfer payment from buyer to seller and fee recipient
         if (sellerProceeds > 0) {
-            if (!paymentToken.transferFrom(_msgSender(), listing.seller, sellerProceeds)) {
+            if (!paymentToken_.transferFrom(_msgSender(), listing_.seller, sellerProceeds)) {
                 revert Marketplace__TransferFailed();
             }
         }
         if (fee > 0) {
-            if (!paymentToken.transferFrom(_msgSender(), treasury, fee)) {
+            if (!paymentToken_.transferFrom(_msgSender(), treasury, fee)) {
                 revert Marketplace__TransferFailed();
             }
             emit FeePaid(treasury, fee);
         }
 
-        // Transfer the NFT from marketplace to buyer
-        creditContract.safeTransferFrom(address(this), _msgSender(), listing.tokenId, amountToBuy, "");
+        // Transfer the purchased tokens to the buyer
+        creditContract.safeTransferFrom(address(this), _msgSender(), listing_.tokenId, amountToBuy, "");
     }
 
     /**
@@ -370,7 +384,7 @@ contract Marketplace is
             uint256 sellerProceeds = price - fee;
 
             // --- EFFECTS ---
-            listing.amount -= amountToBuy;
+            listing.amount -= uint96(amountToBuy);
             if (listing.amount == 0) {
                 listing.active = false;
                 activeListingCount--;
@@ -425,8 +439,9 @@ contract Marketplace is
         if (!listing.active) revert Marketplace__ListingNotActive();
         if (listing.seller != _msgSender()) revert Marketplace__NotTheSeller();
         if (newPricePerUnit == 0) revert Marketplace__ZeroPrice();
+        if (newPricePerUnit > type(uint128).max) revert Marketplace__PriceTooLarge();
 
-        listing.pricePerUnit = newPricePerUnit;
+        listing.pricePerUnit = uint128(newPricePerUnit);
         emit ListingPriceUpdated(listingId, newPricePerUnit);
     }
 

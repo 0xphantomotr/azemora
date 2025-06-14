@@ -1,0 +1,21 @@
+testMode: property
+
+stopOnFail: true
+
+campaignTimeout: 900
+
+testLimit: 25000
+
+corpusDir: echidna_corpus
+
+cryticArgs:
+  - --foundry-compile-all
+
+filter:
+  excludeContracts:
+    - "Test"
+    - "Script"
+  excludePaths:
+    - "lib/"
+    - "test/"
+    - "script/" 
