@@ -114,13 +114,9 @@ contract MarketplaceGriefingTest is Test {
         vm.stopPrank();
 
         // 2. Attempt to cancel all listings in a single transaction.
-        // We loop directly inside the test and use startPrank to ensure msg.sender is the seller.
         uint256 gasBefore = gasleft();
-        vm.startPrank(seller);
-        for (uint256 i = 0; i < numListings; i++) {
-            marketplace.cancelListing(listingIds[i]);
-        }
-        vm.stopPrank();
+        vm.prank(seller);
+        marketplace.batchCancelListings(listingIds);
         uint256 gasAfter = gasleft();
         uint256 gasUsed = gasBefore - gasAfter;
 
@@ -135,12 +131,14 @@ contract MarketplaceGriefingTest is Test {
     function test_GasGriefing_BatchBuy_StaysWithinBlockLimit() public {
         uint256 numListings = 500; // Reduced from 1000 as buy is more expensive
         uint256[] memory listingIds = new uint256[](numListings);
+        uint256[] memory amountsToBuy = new uint256[](numListings);
         address buyer = makeAddr("buyer");
 
         // 1. Create a large number of listings
         vm.startPrank(seller);
         for (uint256 i = 0; i < numListings; i++) {
             listingIds[i] = marketplace.list(BATCH_TOKEN_ID, 1, PRICE_PER_UNIT, 1 weeks);
+            amountsToBuy[i] = 1;
         }
         vm.stopPrank();
 
@@ -152,11 +150,8 @@ contract MarketplaceGriefingTest is Test {
 
         // 3. Attempt to buy all listings in a single transaction.
         uint256 gasBefore = gasleft();
-        vm.startPrank(buyer);
-        for (uint256 i = 0; i < numListings; i++) {
-            marketplace.buy(listingIds[i], 1);
-        }
-        vm.stopPrank();
+        vm.prank(buyer);
+        marketplace.batchBuy(listingIds, amountsToBuy);
         uint256 gasAfter = gasleft();
         uint256 gasUsed = gasBefore - gasAfter;
 

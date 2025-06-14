@@ -258,6 +258,125 @@ contract Marketplace is
     }
 
     /**
+     * @notice Cancels multiple active listings in a single transaction.
+     * @dev Can only be called by the original seller of all listings. Unsold tokens
+     * for each cancelled listing are returned to the seller in a single batch transaction,
+     * which is more gas-efficient than calling `cancelListing` individually.
+     * @param listingIds An array of listing IDs to cancel.
+     */
+    function batchCancelListings(uint256[] calldata listingIds) external nonReentrant whenNotPaused {
+        uint256[] memory tokenIds = new uint256[](listingIds.length);
+        uint256[] memory amounts = new uint256[](listingIds.length);
+        address seller = _msgSender();
+
+        for (uint256 i = 0; i < listingIds.length;) {
+            uint256 listingId = listingIds[i];
+            Listing storage listing = listings[listingId];
+            require(listing.active, "Marketplace: Listing not active");
+            require(listing.seller == seller, "Marketplace: Not the seller");
+
+            listing.active = false;
+            activeListingCount--;
+
+            tokenIds[i] = listing.tokenId;
+            amounts[i] = listing.amount;
+
+            emit ListingCancelled(listingId);
+
+            unchecked {
+                i++;
+            }
+        }
+
+        // Return all unsold tokens to the seller in a single batch transaction
+        creditContract.safeBatchTransferFrom(address(this), seller, tokenIds, amounts, "");
+    }
+
+    /**
+     * @notice Purchases tokens from multiple listings in a single transaction.
+     * @dev The buyer must have approved the marketplace to spend the total amount of payment tokens.
+     * This function iterates through the provided listings and amounts, processes payments,
+     * and transfers the purchased tokens to the buyer in a single batch. It is significantly
+     * more gas-efficient than calling `buy` multiple times.
+     * @param listingIds An array of listing IDs to buy from.
+     * @param amountsToBuy An array of token quantities to purchase from each corresponding listing.
+     */
+    function batchBuy(uint256[] calldata listingIds, uint256[] calldata amountsToBuy)
+        external
+        nonReentrant
+        whenNotPaused
+    {
+        require(listingIds.length == amountsToBuy.length, "Marketplace: Array length mismatch");
+
+        uint256 totalPayment = 0;
+        uint256 totalFee = 0;
+        uint256[] memory tokenIds = new uint256[](listingIds.length);
+
+        // First loop for CHECKS. This is critical for security and atomicity.
+        for (uint256 i = 0; i < listingIds.length;) {
+            uint256 listingId = listingIds[i];
+            uint256 amountToBuy = amountsToBuy[i];
+            Listing storage listing = listings[listingId];
+
+            require(listing.active, "Marketplace: Listing not active");
+            require(block.timestamp < listing.expiryTimestamp, "Marketplace: Listing expired");
+            require(amountToBuy > 0, "Marketplace: Amount must be > 0");
+            require(listing.amount >= amountToBuy, "Marketplace: Not enough items in listing");
+
+            uint256 price = amountToBuy * listing.pricePerUnit;
+            totalPayment += price;
+            totalFee += (price * feeBps) / 10000;
+
+            unchecked {
+                i++;
+            }
+        }
+
+        require(paymentToken.balanceOf(_msgSender()) >= totalPayment, "Marketplace: Insufficient balance");
+
+        // Transfer total fee to treasury in one go.
+        if (totalFee > 0) {
+            paymentToken.transferFrom(_msgSender(), treasury, totalFee);
+            emit FeePaid(treasury, totalFee);
+        }
+
+        // Second loop for EFFECTS and INTERACTIONS (Seller payments).
+        for (uint256 i = 0; i < listingIds.length;) {
+            uint256 listingId = listingIds[i];
+            uint256 amountToBuy = amountsToBuy[i];
+            Listing storage listing = listings[listingId];
+
+            uint256 price = amountToBuy * listing.pricePerUnit;
+            uint256 fee = (price * feeBps) / 10000;
+            uint256 sellerProceeds = price - fee;
+
+            // --- EFFECTS ---
+            listing.amount -= amountToBuy;
+            if (listing.amount == 0) {
+                listing.active = false;
+                activeListingCount--;
+                emit Sold(listingId, _msgSender(), amountToBuy, price);
+            } else {
+                emit PartialSold(listingId, _msgSender(), amountToBuy, price);
+            }
+
+            tokenIds[i] = listing.tokenId;
+
+            // --- INTERACTIONS (Seller Only) ---
+            if (sellerProceeds > 0) {
+                paymentToken.transferFrom(_msgSender(), listing.seller, sellerProceeds);
+            }
+
+            unchecked {
+                i++;
+            }
+        }
+
+        // Final Interaction: Batch transfer all NFTs to buyer.
+        creditContract.safeBatchTransferFrom(address(this), _msgSender(), tokenIds, amountsToBuy, "");
+    }
+
+    /**
      * @notice Cancels an expired listing.
      * @dev Can be called by anyone to clean up an expired listing. The unsold
      * tokens are returned from custody to the seller.
