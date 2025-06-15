@@ -196,21 +196,24 @@ contract Marketplace is
         // --- Optimisation: Cache storage read ---
         IERC1155Upgradeable _creditContract = creditContract;
 
-        // Custodial model: Transfer tokens from seller to this contract
-        _creditContract.safeTransferFrom(_msgSender(), address(this), tokenId, amount, "");
+        // --- EFFECTS ---
+        listingIdCounter++;
+        listingId = listingIdCounter;
 
-        listingId = listingIdCounter++;
         listings[listingId] = Listing({
             id: listingId,
             tokenId: tokenId,
             seller: _msgSender(),
-            expiryTimestamp: uint64(block.timestamp + expiryDuration),
-            active: true,
             pricePerUnit: uint128(pricePerUnit),
-            amount: uint96(amount)
+            amount: uint96(amount),
+            expiryTimestamp: uint64(block.timestamp + expiryDuration),
+            active: true
         });
 
         activeListingCount++;
+
+        // --- INTERACTIONS ---
+        _creditContract.safeTransferFrom(_msgSender(), address(this), tokenId, amount, "");
 
         emit Listed(listingId, _msgSender(), tokenId, amount, pricePerUnit);
         return listingId;
@@ -505,19 +508,26 @@ contract Marketplace is
      * @return A list of role identifiers held by the account.
      */
     function getRoles(address account) external view returns (bytes32[] memory) {
-        // More efficient implementation: loop only once.
-        bytes32[] memory temporaryRoles = new bytes32[](_roles.length);
+        uint256 rolesLength = _roles.length;
         uint256 count = 0;
-        for (uint256 i = 0; i < _roles.length; i++) {
+        for (uint256 i = 0; i < rolesLength; i++) {
             if (hasRole(_roles[i], account)) {
-                temporaryRoles[count] = _roles[i];
                 count++;
             }
         }
 
+        if (count == 0) {
+            return new bytes32[](0);
+        }
+
         bytes32[] memory roles = new bytes32[](count);
-        for (uint256 i = 0; i < count; i++) {
-            roles[i] = temporaryRoles[i];
+        uint256 index = 0;
+        for (uint256 i = 0; i < rolesLength; i++) {
+            if (hasRole(_roles[i], account)) {
+                roles[index++] = _roles[i];
+                // Optimization: stop looping once all roles have been found.
+                if (index == count) break;
+            }
         }
         return roles;
     }

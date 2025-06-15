@@ -41,6 +41,7 @@ contract Treasury is Initializable, OwnableUpgradeable, ReentrancyGuardUpgradeab
     }
 
     function withdrawERC20(address token, address to, uint256 amount) external onlyOwner nonReentrant {
+        require(token != address(0), "Cannot withdraw zero token");
         require(to != address(0), "Cannot send to zero address");
         (bool success,) = token.call(abi.encodeWithSignature("transfer(address,uint256)", to, amount));
         require(success, "ERC20 transfer failed");
