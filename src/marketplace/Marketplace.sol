@@ -338,18 +338,24 @@ contract Marketplace is
         nonReentrant
         whenNotPaused
     {
-        if (listingIds.length != amountsToBuy.length) revert Marketplace__ArrayLengthMismatch();
+        uint256 len = listingIds.length;
+        if (len != amountsToBuy.length) revert Marketplace__ArrayLengthMismatch();
 
         uint256 totalPayment = 0;
         uint256 totalFee = 0;
-        uint256[] memory tokenIds = new uint256[](listingIds.length);
-        uint256 len = listingIds.length;
 
-        // First loop for CHECKS. This is critical for security and atomicity.
-        // Down-counting loop is more gas-efficient.
+        // Arrays to store data from the checks phase for the interactions phase
+        uint256[] memory tokenIds = new uint256[](len);
+        address[] memory sellers = new address[](len);
+        uint256[] memory sellerProceeds = new uint256[](len);
+
+        // ==========================================================
+        // 1. CHECKS Phase: Read state, perform all checks, calculate totals.
+        // ==========================================================
         for (uint256 i = len; i > 0; --i) {
-            uint256 listingId = listingIds[i - 1];
-            uint256 amountToBuy = amountsToBuy[i - 1];
+            uint256 j = i - 1;
+            uint256 listingId = listingIds[j];
+            uint256 amountToBuy = amountsToBuy[j];
             Listing storage listing = listings[listingId];
 
             if (!listing.active) revert Marketplace__ListingNotActive();
@@ -358,32 +364,29 @@ contract Marketplace is
             if (listing.amount < amountToBuy) revert Marketplace__NotEnoughItemsInListing();
 
             uint256 price = amountToBuy * listing.pricePerUnit;
+            uint256 fee = (price * feeBps) / 10000;
+
+            // Store info for later phases
             totalPayment += price;
-            totalFee += (price * feeBps) / 10000;
+            totalFee += fee;
+            sellers[j] = listing.seller;
+            sellerProceeds[j] = price - fee;
+            tokenIds[j] = listing.tokenId;
         }
 
         if (paymentToken.balanceOf(_msgSender()) < totalPayment) revert Marketplace__InsufficientBalance();
 
-        // Transfer total fee to treasury in one go.
-        if (totalFee > 0) {
-            if (!paymentToken.transferFrom(_msgSender(), treasury, totalFee)) {
-                revert Marketplace__TransferFailed();
-            }
-            emit FeePaid(treasury, totalFee);
-        }
-
-        // Second loop for EFFECTS and INTERACTIONS (Seller payments).
-        // Down-counting loop is more gas-efficient.
+        // ==========================================================
+        // 2. EFFECTS Phase: Write all state changes. NO external calls.
+        // ==========================================================
         for (uint256 i = len; i > 0; --i) {
-            uint256 listingId = listingIds[i - 1];
-            uint256 amountToBuy = amountsToBuy[i - 1];
-            Listing storage listing = listings[listingId];
+            uint256 j = i - 1;
+            uint256 listingId = listingIds[j];
+            uint256 amountToBuy = amountsToBuy[j];
+            Listing storage listing = listings[listingId]; // Get pointer again
 
             uint256 price = amountToBuy * listing.pricePerUnit;
-            uint256 fee = (price * feeBps) / 10000;
-            uint256 sellerProceeds = price - fee;
 
-            // --- EFFECTS ---
             listing.amount -= uint96(amountToBuy);
             if (listing.amount == 0) {
                 listing.active = false;
@@ -392,18 +395,30 @@ contract Marketplace is
             } else {
                 emit PartialSold(listingId, _msgSender(), amountToBuy, price);
             }
+        }
 
-            tokenIds[i - 1] = listing.tokenId;
+        // ==========================================================
+        // 3. INTERACTIONS Phase: All external calls happen here.
+        // ==========================================================
+        // 3a. Pay Treasury
+        if (totalFee > 0) {
+            if (!paymentToken.transferFrom(_msgSender(), treasury, totalFee)) {
+                revert Marketplace__TransferFailed();
+            }
+            emit FeePaid(treasury, totalFee);
+        }
 
-            // --- INTERACTIONS (Seller Only) ---
-            if (sellerProceeds > 0) {
-                if (!paymentToken.transferFrom(_msgSender(), listing.seller, sellerProceeds)) {
+        // 3b. Pay Sellers
+        for (uint256 i = len; i > 0; --i) {
+            uint256 j = i - 1;
+            if (sellerProceeds[j] > 0) {
+                if (!paymentToken.transferFrom(_msgSender(), sellers[j], sellerProceeds[j])) {
                     revert Marketplace__TransferFailed();
                 }
             }
         }
 
-        // Final Interaction: Batch transfer all NFTs to buyer.
+        // 3c. Transfer NFTs to buyer
         creditContract.safeBatchTransferFrom(address(this), _msgSender(), tokenIds, amountsToBuy, "");
     }
 
