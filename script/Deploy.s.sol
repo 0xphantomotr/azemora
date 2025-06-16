@@ -17,13 +17,6 @@ contract Deploy is Script {
     bytes32 public constant DMRV_MANAGER_ROLE = keccak256("DMRV_MANAGER_ROLE");
     bytes32 public constant METADATA_UPDATER_ROLE = keccak256("METADATA_UPDATER_ROLE");
 
-    // Deployed contract instances (at proxy addresses)
-    ProjectRegistry private _projectRegistry;
-    DMRVManager private _dMRVManager;
-    DynamicImpactCredit private _dynamicImpactCredit;
-    Marketplace private _marketplace;
-    ERC20Mock private _mockErc20;
-
     function run() external returns (address) {
         // --- Setup ---
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
@@ -36,77 +29,135 @@ contract Deploy is Script {
         vm.startBroadcast(deployerPrivateKey);
 
         // --- Deployment Sequence ---
-
-        // 1. ProjectRegistry
-        console.log("Deploying ProjectRegistry implementation...");
-        ProjectRegistry projectRegistryImpl = new ProjectRegistry();
-        console.log("Deploying ProjectRegistry proxy...");
-        bytes memory projectRegistryInitData = abi.encodeWithSelector(ProjectRegistry.initialize.selector);
-        ERC1967Proxy projectRegistryProxy = new ERC1967Proxy(address(projectRegistryImpl), projectRegistryInitData);
-        _projectRegistry = ProjectRegistry(payable(address(projectRegistryProxy)));
-
-        // 2. DynamicImpactCredit
-        console.log("Deploying DynamicImpactCredit implementation...");
-        DynamicImpactCredit dynamicImpactCreditImpl = new DynamicImpactCredit(address(_projectRegistry));
-        console.log("Deploying DynamicImpactCredit proxy...");
-        bytes memory dicInitData =
-            abi.encodeWithSelector(DynamicImpactCredit.initialize.selector, "https://api.azemora.io/contract/d-ic");
-        ERC1967Proxy dicProxy = new ERC1967Proxy(address(dynamicImpactCreditImpl), dicInitData);
-        _dynamicImpactCredit = DynamicImpactCredit(payable(address(dicProxy)));
-
-        // 3. dMRVManager
-        console.log("Deploying DMRVManager implementation...");
-        DMRVManager dMRVManagerImpl = new DMRVManager(address(_projectRegistry), address(_dynamicImpactCredit));
-        console.log("Deploying DMRVManager proxy...");
-        bytes memory dMRVInitData = abi.encodeWithSelector(DMRVManager.initialize.selector);
-        ERC1967Proxy dMRVProxy = new ERC1967Proxy(address(dMRVManagerImpl), dMRVInitData);
-        _dMRVManager = DMRVManager(payable(address(dMRVProxy)));
-
-        // 4. MockERC20 (No proxy needed)
-        console.log("Deploying MockERC20 as payment token...");
-        _mockErc20 = new ERC20Mock();
-        _mockErc20.mint(deployerAddress, 1_000_000 * 10 ** 18);
-
-        // 5. Marketplace
-        console.log("Deploying Marketplace implementation...");
-        Marketplace marketplaceImpl = new Marketplace();
-        console.log("Deploying Marketplace proxy...");
-        bytes memory marketplaceInitData =
-            abi.encodeWithSelector(Marketplace.initialize.selector, address(_dynamicImpactCredit), address(_mockErc20));
-        ERC1967Proxy marketplaceProxy = new ERC1967Proxy(address(marketplaceImpl), marketplaceInitData);
-        _marketplace = Marketplace(payable(address(marketplaceProxy)));
+        ProjectRegistry projectRegistry = _deployProjectRegistry();
+        DynamicImpactCredit dynamicImpactCredit = _deployDynamicImpactCredit(projectRegistry);
+        DMRVManager dMRVManager = _deployDMRVManager(projectRegistry, dynamicImpactCredit);
+        ERC20Mock mockErc20 = _deployMockERC20(deployerAddress);
+        Marketplace marketplace = _deployMarketplace(dynamicImpactCredit, mockErc20);
 
         // --- Post-Deployment Configuration ---
-        console.log("Granting roles...");
-        _dynamicImpactCredit.grantRole(DMRV_MANAGER_ROLE, address(_dMRVManager));
-        _dynamicImpactCredit.grantRole(METADATA_UPDATER_ROLE, address(_dMRVManager));
-
-        console.log("Setting Marketplace Treasury and Fee...");
-        _marketplace.setTreasury(deployerAddress);
-        _marketplace.setFee(250); // 2.5% fee
+        _configureRoles(dynamicImpactCredit, dMRVManager);
+        _configureMarketplace(marketplace, deployerAddress);
 
         // --- Store Deployment Addresses ---
+        DeploymentAddresses deploymentAddresses = _storeAddresses(
+            Addresses({
+                projectRegistry: address(projectRegistry),
+                dMRVManager: address(dMRVManager),
+                dynamicImpactCredit: address(dynamicImpactCredit),
+                marketplace: address(marketplace),
+                mockErc20: address(mockErc20)
+            })
+        );
+
+        vm.stopBroadcast();
+
+        // --- Log Deployed Addresses ---
+        _logAddresses(
+            AllAddresses({
+                projectRegistry: address(projectRegistry),
+                dMRVManager: address(dMRVManager),
+                dynamicImpactCredit: address(dynamicImpactCredit),
+                marketplace: address(marketplace),
+                mockErc20: address(mockErc20),
+                deploymentAddresses: address(deploymentAddresses)
+            })
+        );
+
+        return address(deploymentAddresses);
+    }
+
+    function _deployProjectRegistry() internal returns (ProjectRegistry) {
+        console.log("Deploying ProjectRegistry...");
+        ProjectRegistry impl = new ProjectRegistry();
+        bytes memory initData = abi.encodeWithSelector(ProjectRegistry.initialize.selector);
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
+        return ProjectRegistry(payable(address(proxy)));
+    }
+
+    function _deployDynamicImpactCredit(ProjectRegistry registry) internal returns (DynamicImpactCredit) {
+        console.log("Deploying DynamicImpactCredit...");
+        DynamicImpactCredit impl = new DynamicImpactCredit(address(registry));
+        bytes memory initData =
+            abi.encodeWithSelector(DynamicImpactCredit.initialize.selector, "https://api.azemora.io/contract/d-ic");
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
+        return DynamicImpactCredit(payable(address(proxy)));
+    }
+
+    function _deployDMRVManager(ProjectRegistry registry, DynamicImpactCredit credit) internal returns (DMRVManager) {
+        console.log("Deploying DMRVManager...");
+        DMRVManager impl = new DMRVManager(address(registry), address(credit));
+        bytes memory initData = abi.encodeWithSelector(DMRVManager.initialize.selector);
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
+        return DMRVManager(payable(address(proxy)));
+    }
+
+    function _deployMockERC20(address deployer) internal returns (ERC20Mock) {
+        console.log("Deploying MockERC20...");
+        ERC20Mock mock = new ERC20Mock();
+        mock.mint(deployer, 1_000_000 * 10 ** 18);
+        return mock;
+    }
+
+    function _deployMarketplace(DynamicImpactCredit credit, ERC20Mock paymentToken) internal returns (Marketplace) {
+        console.log("Deploying Marketplace...");
+        Marketplace impl = new Marketplace();
+        bytes memory initData =
+            abi.encodeWithSelector(Marketplace.initialize.selector, address(credit), address(paymentToken));
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
+        return Marketplace(payable(address(proxy)));
+    }
+
+    function _configureRoles(DynamicImpactCredit credit, DMRVManager manager) internal {
+        console.log("Granting roles...");
+        credit.grantRole(DMRV_MANAGER_ROLE, address(manager));
+        credit.grantRole(METADATA_UPDATER_ROLE, address(manager));
+    }
+
+    function _configureMarketplace(Marketplace marketplace, address deployer) internal {
+        console.log("Setting Marketplace Treasury and Fee...");
+        marketplace.setTreasury(deployer);
+        marketplace.setFee(250); // 2.5% fee
+    }
+
+    struct Addresses {
+        address projectRegistry;
+        address dMRVManager;
+        address dynamicImpactCredit;
+        address marketplace;
+        address mockErc20;
+    }
+
+    function _storeAddresses(Addresses memory addrs) internal returns (DeploymentAddresses) {
         console.log("Storing deployment addresses...");
         DeploymentAddresses deploymentAddresses = new DeploymentAddresses();
 
         string memory runName = "deployment";
-        vm.serializeAddress(runName, "ProjectRegistry", address(_projectRegistry));
-        vm.serializeAddress(runName, "DMRVManager", address(_dMRVManager));
-        vm.serializeAddress(runName, "DynamicImpactCredit", address(_dynamicImpactCredit));
-        vm.serializeAddress(runName, "Marketplace", address(_marketplace));
-        vm.serializeAddress(runName, "ERC20Mock", address(_mockErc20));
+        vm.serializeAddress(runName, "ProjectRegistry", addrs.projectRegistry);
+        vm.serializeAddress(runName, "DMRVManager", addrs.dMRVManager);
+        vm.serializeAddress(runName, "DynamicImpactCredit", addrs.dynamicImpactCredit);
+        vm.serializeAddress(runName, "Marketplace", addrs.marketplace);
+        vm.serializeAddress(runName, "ERC20Mock", addrs.mockErc20);
         vm.serializeAddress(runName, "DeploymentAddresses", address(deploymentAddresses));
+        return deploymentAddresses;
+    }
 
-        vm.stopBroadcast();
+    struct AllAddresses {
+        address projectRegistry;
+        address dMRVManager;
+        address dynamicImpactCredit;
+        address marketplace;
+        address mockErc20;
+        address deploymentAddresses;
+    }
 
+    function _logAddresses(AllAddresses memory addrs) internal {
         console.log("--- Deployment Complete ---");
-        console.log("ProjectRegistry (Proxy): ", address(_projectRegistry));
-        console.log("DMRVManager (Proxy): ", address(_dMRVManager));
-        console.log("DynamicImpactCredit (Proxy): ", address(_dynamicImpactCredit));
-        console.log("Marketplace (Proxy): ", address(_marketplace));
-        console.log("ERC20Mock (Payment Token): ", address(_mockErc20));
-        console.log("DeploymentAddresses: ", address(deploymentAddresses));
-
-        return address(deploymentAddresses);
+        console.log("ProjectRegistry (Proxy): ", addrs.projectRegistry);
+        console.log("DMRVManager (Proxy): ", addrs.dMRVManager);
+        console.log("DynamicImpactCredit (Proxy): ", addrs.dynamicImpactCredit);
+        console.log("Marketplace (Proxy): ", addrs.marketplace);
+        console.log("ERC20Mock (Payment Token): ", addrs.mockErc20);
+        console.log("DeploymentAddresses: ", addrs.deploymentAddresses);
     }
 }
