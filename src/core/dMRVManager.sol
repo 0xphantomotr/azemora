@@ -43,7 +43,11 @@ contract DMRVManager is
     // Mapping to track verification requests by request ID
     mapping(bytes32 => VerificationRequest) private _requests;
 
-    uint256[50] private __gap;
+    // A nonce for each project to ensure unique, predictable request IDs
+    mapping(bytes32 => uint256) private _projectRequestNonce;
+
+    // Adjusted gap to maintain storage layout for UUPS proxy compatibility
+    uint256[49] private __gap;
 
     // Structure for tracking verification requests
     // Struct is packed to save gas on storage.
@@ -117,14 +121,15 @@ contract DMRVManager is
     function requestVerification(bytes32 projectId) external nonReentrant whenNotPaused returns (bytes32 requestId) {
         if (!projectRegistry.isProjectActive(projectId)) revert DMRVManager__ProjectNotActive();
 
-        // For MVP: Generate a simple request ID.
-        // In production, this would come from the Chainlink request.
-        requestId = keccak256(abi.encodePacked(projectId, _msgSender(), block.timestamp));
+        // New, deterministic way to generate the request ID
+        uint256 nonce = _projectRequestNonce[projectId];
+        requestId = keccak256(abi.encodePacked(projectId, _msgSender(), nonce));
+        _projectRequestNonce[projectId]++; // Increment nonce for the next request
 
         _requests[requestId] = VerificationRequest({
             projectId: projectId,
             requestor: _msgSender(),
-            timestamp: uint64(block.timestamp),
+            timestamp: uint64(block.timestamp), // Still useful for tracking when it happened
             fulfilled: false
         });
 
@@ -186,6 +191,16 @@ contract DMRVManager is
                 emit MissingProjectError(projectId);
             }
         }
+    }
+
+    /**
+     * @notice Returns the next request nonce for a given project.
+     * @dev Used for off-chain tools and scripts to predict the next request ID.
+     * @param projectId The ID of the project.
+     * @return The next nonce to be used.
+     */
+    function getProjectRequestNonce(bytes32 projectId) external view returns (uint256) {
+        return _projectRequestNonce[projectId];
     }
 
     /**

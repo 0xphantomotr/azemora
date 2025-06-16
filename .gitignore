@@ -20,3 +20,5 @@ echidna_corpus/
 crytic-export/
 slither-report.json
 .slither.json
+
+broadcast/
