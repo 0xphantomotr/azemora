@@ -41,4 +41,4 @@ contract ApproveProjectScript is Script {
         console.log("\nProject approval transaction sent successfully!");
         console.log("You can run the 'CheckProject.s.sol' script again to see the updated status.");
     }
-} 
+}

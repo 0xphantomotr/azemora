@@ -40,7 +40,7 @@ contract MintCreditScript is Script {
         uint256 creditAmount = 100 * 1e18; // Mint 100 credits
         string memory newMetaURI = "ipfs://bafkreinewmetadataforproject1";
         bytes memory verificationData = abi.encode(creditAmount, false, bytes32(0), newMetaURI);
-        
+
         console.log("Fulfilling with amount:", creditAmount);
         dMRVManager.fulfillVerification(requestId, verificationData);
 
@@ -49,4 +49,4 @@ contract MintCreditScript is Script {
         console.log("\nCredit minting transaction sent successfully!");
         console.log("You can now use the Marketplace script to list this credit for sale.");
     }
-} 
+}

@@ -296,4 +296,59 @@ contract FullFlowTest is Test {
             "Fee Recipient should receive funds"
         );
     }
+
+    function test_Marketplace_Cancel_Flow() public {
+        // --- STAGE 1: Project Creation & Minting (abbreviated) ---
+        bytes32 projectId = keccak256("Cancellable Project");
+        vm.prank(projectDeveloper);
+        registry.registerProject(projectId, "ipfs://cancellable");
+        vm.prank(verifier);
+        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+
+        vm.prank(projectDeveloper);
+        bytes32 requestId = dmrvManager.requestVerification(projectId);
+        vm.prank(dmrvOracle);
+        bytes memory verificationData = abi.encode(100, false, bytes32(0), "ipfs://verify-cancel");
+        dmrvManager.fulfillVerification(requestId, verificationData);
+
+        uint256 developerInitialBalance = credit.balanceOf(projectDeveloper, uint256(projectId));
+        assertTrue(developerInitialBalance > 0, "Developer must have credits to list");
+
+        // --- STAGE 2: List and then Cancel ---
+        uint256 listAmount = 50;
+        uint256 pricePerUnit = 10 * 1e18;
+        uint256 listingId;
+
+        vm.startPrank(projectDeveloper);
+        credit.setApprovalForAll(address(marketplace), true);
+        listingId = marketplace.list(uint256(projectId), listAmount, pricePerUnit, 1 days);
+
+        // Verify tokens are now held by the marketplace
+        assertEq(
+            credit.balanceOf(address(marketplace), uint256(projectId)), listAmount, "Marketplace should custody tokens"
+        );
+
+        // Now, cancel the listing
+        marketplace.cancelListing(listingId);
+        vm.stopPrank();
+
+        // --- STAGE 3: Final Verification ---
+        // Verify the listing is no longer active
+        Marketplace.Listing memory l = marketplace.getListing(listingId);
+        assertFalse(l.active, "Listing should be inactive after cancellation");
+
+        // Verify the tokens have been returned to the developer
+        assertEq(
+            credit.balanceOf(projectDeveloper, uint256(projectId)),
+            developerInitialBalance,
+            "Developer should have all their credits back after cancellation"
+        );
+
+        // Verify the marketplace no longer holds the tokens
+        assertEq(
+            credit.balanceOf(address(marketplace), uint256(projectId)),
+            0,
+            "Marketplace should have no credits after cancellation"
+        );
+    }
 }

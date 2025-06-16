@@ -6,4 +6,4 @@ contract DeploymentAddresses {
     address public dMRVManager;
     address public dynamicImpactCredit;
     address public marketplace;
-} 
+}

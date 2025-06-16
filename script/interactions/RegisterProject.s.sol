@@ -47,4 +47,4 @@ contract RegisterProjectScript is Script {
         console.log("\nProject registration transaction sent successfully!");
         console.log("Run the 'CheckProject.s.sol' script to verify its status.");
     }
-} 
+}

@@ -49,10 +49,11 @@ contract Deploy is Script {
         console.log("Deploying DynamicImpactCredit implementation...");
         DynamicImpactCredit dynamicImpactCreditImpl = new DynamicImpactCredit(address(_projectRegistry));
         console.log("Deploying DynamicImpactCredit proxy...");
-        bytes memory dicInitData = abi.encodeWithSelector(DynamicImpactCredit.initialize.selector, "https://api.azemora.io/contract/d-ic");
+        bytes memory dicInitData =
+            abi.encodeWithSelector(DynamicImpactCredit.initialize.selector, "https://api.azemora.io/contract/d-ic");
         ERC1967Proxy dicProxy = new ERC1967Proxy(address(dynamicImpactCreditImpl), dicInitData);
         _dynamicImpactCredit = DynamicImpactCredit(payable(address(dicProxy)));
-        
+
         // 3. dMRVManager
         console.log("Deploying DMRVManager implementation...");
         DMRVManager dMRVManagerImpl = new DMRVManager(address(_projectRegistry), address(_dynamicImpactCredit));
@@ -70,7 +71,8 @@ contract Deploy is Script {
         console.log("Deploying Marketplace implementation...");
         Marketplace marketplaceImpl = new Marketplace();
         console.log("Deploying Marketplace proxy...");
-        bytes memory marketplaceInitData = abi.encodeWithSelector(Marketplace.initialize.selector, address(_dynamicImpactCredit), address(_mockErc20));
+        bytes memory marketplaceInitData =
+            abi.encodeWithSelector(Marketplace.initialize.selector, address(_dynamicImpactCredit), address(_mockErc20));
         ERC1967Proxy marketplaceProxy = new ERC1967Proxy(address(marketplaceImpl), marketplaceInitData);
         _marketplace = Marketplace(payable(address(marketplaceProxy)));
 
@@ -86,7 +88,7 @@ contract Deploy is Script {
         // --- Store Deployment Addresses ---
         console.log("Storing deployment addresses...");
         DeploymentAddresses deploymentAddresses = new DeploymentAddresses();
-        
+
         string memory runName = "deployment";
         vm.serializeAddress(runName, "ProjectRegistry", address(_projectRegistry));
         vm.serializeAddress(runName, "DMRVManager", address(_dMRVManager));
@@ -107,4 +109,4 @@ contract Deploy is Script {
 
         return address(deploymentAddresses);
     }
-} 
+}
