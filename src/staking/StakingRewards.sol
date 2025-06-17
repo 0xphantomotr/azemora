@@ -64,7 +64,7 @@ contract StakingRewards is Ownable, ReentrancyGuard {
         require(amount > 0, "Cannot stake 0");
         totalSupply += amount;
         balanceOf[msg.sender] += amount;
-        rewardsToken.transferFrom(msg.sender, address(this), amount);
+        require(rewardsToken.transferFrom(msg.sender, address(this), amount), "Token transfer failed");
         emit Staked(msg.sender, amount);
     }
 
@@ -76,7 +76,7 @@ contract StakingRewards is Ownable, ReentrancyGuard {
         require(amount > 0, "Cannot unstake 0");
         totalSupply -= amount;
         balanceOf[msg.sender] -= amount;
-        rewardsToken.transfer(msg.sender, amount);
+        require(rewardsToken.transfer(msg.sender, amount), "Token transfer failed");
         emit Unstaked(msg.sender, amount);
     }
 
@@ -87,7 +87,7 @@ contract StakingRewards is Ownable, ReentrancyGuard {
         uint256 reward = rewards[msg.sender];
         if (reward > 0) {
             rewards[msg.sender] = 0;
-            rewardsToken.transfer(msg.sender, reward);
+            require(rewardsToken.transfer(msg.sender, reward), "Token transfer failed");
             emit RewardPaid(msg.sender, reward);
         }
     }
