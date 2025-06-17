@@ -29,7 +29,11 @@ contract ProposeScript is Script {
         // This is the address that will receive the withdrawn fees.
         // For this example, we'll send them to the proposer's address.
         address feeRecipient = proposerAddress;
-        string memory description = "Proposal #1: Withdraw accumulated marketplace fees to the proposer's address.";
+        string memory description = string(
+            abi.encodePacked(
+                "Proposal #2: Withdraw accumulated marketplace fees. Nonce: ", vm.toString(block.timestamp)
+            )
+        );
 
         // --- Contract Instances ---
         AzemoraGovernor governor = AzemoraGovernor(payable(governorAddress));
