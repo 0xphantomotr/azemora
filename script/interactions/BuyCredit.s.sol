@@ -10,7 +10,7 @@ contract BuyCreditScript is Script {
     function run() external {
         // --- Load Environment Variables ---
         address marketplaceAddress = vm.envAddress("MARKETPLACE_ADDRESS");
-        address paymentTokenAddress = vm.envAddress("MOCK_ERC20_ADDRESS");
+        address paymentTokenAddress = vm.envAddress("TOKEN_ADDRESS");
         uint256 buyerPrivateKey = vm.envUint("PRIVATE_KEY");
         address buyerAddress = vm.addr(buyerPrivateKey);
 

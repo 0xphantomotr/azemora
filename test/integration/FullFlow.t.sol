@@ -10,47 +10,12 @@ import "../../src/marketplace/Marketplace.sol";
 import "../../src/core/DynamicImpactCredit.sol";
 import "../../src/core/ProjectRegistry.sol";
 import "../../src/core/dMRVManager.sol";
+import "../../src/staking/StakingRewards.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import "forge-std/console.sol";
 
-// Re-using the mock from marketplace tests
-contract MockERC20ForFlowTest {
-    event Transfer(address indexed from, address indexed to, uint256 value);
-    event Approval(address indexed owner, address indexed spender, uint256 value);
-
-    mapping(address => uint256) public balanceOf;
-    mapping(address => mapping(address => uint256)) public allowance;
-
-    function approve(address spender, uint256 amount) public returns (bool) {
-        allowance[msg.sender][spender] = amount;
-        emit Approval(msg.sender, spender, amount);
-        return true;
-    }
-
-    function transferFrom(address from, address to, uint256 amount) public returns (bool) {
-        require(allowance[from][msg.sender] >= amount, "ERC20: insufficient allowance");
-        if (allowance[from][msg.sender] != type(uint256).max) {
-            allowance[from][msg.sender] -= amount;
-        }
-        balanceOf[from] -= amount;
-        balanceOf[to] += amount;
-        emit Transfer(from, to, amount);
-        return true;
-    }
-
-    function transfer(address to, uint256 amount) public returns (bool) {
-        // In the context of the treasury withdrawal, msg.sender will be the treasury contract
-        require(balanceOf[msg.sender] >= amount, "ERC20: insufficient balance");
-        balanceOf[msg.sender] -= amount;
-        balanceOf[to] += amount;
-        emit Transfer(msg.sender, to, amount);
-        return true;
-    }
-
-    function mint(address to, uint256 amount) public {
-        balanceOf[to] += amount;
-        emit Transfer(address(0), to, amount);
-    }
-}
+// Mock is no longer needed
+// contract MockERC20ForFlowTest { ... }
 
 contract FullFlowTest is Test {
     // --- Contracts ---
@@ -64,8 +29,8 @@ contract FullFlowTest is Test {
     AzemoraGovernor governor;
     AzemoraTimelockController timelock;
     Treasury treasury;
-    // Mocks
-    MockERC20ForFlowTest paymentToken;
+    // Staking
+    StakingRewards stakingRewards;
 
     // --- Actors ---
     address admin = makeAddr("admin");
@@ -75,6 +40,7 @@ contract FullFlowTest is Test {
     address buyer = makeAddr("buyer");
     address governanceProposer = makeAddr("governanceProposer");
     address feeRecipient = makeAddr("feeRecipient");
+    address staker = makeAddr("staker");
 
     // --- Constants ---
     uint256 constant VOTING_DELAY = 1; // blocks
@@ -140,16 +106,18 @@ contract FullFlowTest is Test {
             DMRVManager(address(new ERC1967Proxy(address(dmrvManagerImpl), abi.encodeCall(DMRVManager.initialize, ()))));
 
         // --- 3. DEPLOY MARKETPLACE ---
-        paymentToken = new MockERC20ForFlowTest();
         Marketplace marketplaceImpl = new Marketplace();
         marketplace = Marketplace(
             address(
                 new ERC1967Proxy(
                     address(marketplaceImpl),
-                    abi.encodeCall(Marketplace.initialize, (address(credit), address(paymentToken)))
+                    abi.encodeCall(Marketplace.initialize, (address(credit), address(govToken)))
                 )
             )
         );
+
+        // --- DEPLOY STAKING ---
+        stakingRewards = new StakingRewards(address(govToken));
 
         // --- 4. CONFIGURE ROLES & OWNERSHIP ---
         // Grant dMRVManager the right to mint credits
@@ -158,8 +126,8 @@ contract FullFlowTest is Test {
         registry.grantRole(registry.VERIFIER_ROLE(), verifier);
         // Grant oracle role in dMRV Manager
         dmrvManager.grantRole(dmrvManager.ORACLE_ROLE(), dmrvOracle);
-        // Set marketplace treasury
-        marketplace.setTreasury(address(treasury));
+        // Set marketplace treasury TO THE STAKING CONTRACT
+        marketplace.setTreasury(address(stakingRewards));
         marketplace.setFee(500); // 5% fee
 
         // Configure Governance
@@ -172,6 +140,7 @@ contract FullFlowTest is Test {
 
         // Transfer contract ownership to the Timelock/DAO
         treasury.transferOwnership(address(timelock));
+        stakingRewards.transferOwnership(address(timelock));
         // Note: Other contracts with admin roles would also be transferred here in a real scenario
         // e.g., marketplace.grantRole(marketplace.DEFAULT_ADMIN_ROLE(), address(timelock));
 
@@ -179,8 +148,10 @@ contract FullFlowTest is Test {
         timelock.renounceRole(timelockAdminRole, admin);
 
         // --- 5. SETUP ACTOR STATE ---
-        // Fund buyer with payment tokens
-        paymentToken.mint(buyer, 1_000_000 * 1e18);
+        // Fund buyer with governance tokens (which are now also the payment token)
+        govToken.transfer(buyer, 1_000_000 * 1e18);
+        // Fund staker with payment tokens
+        govToken.transfer(staker, 500_000 * 1e18);
         // Fund proposer with enough governance tokens to pass quorum (4% of 1B)
         govToken.transfer(governanceProposer, 40_000_000e18);
 
@@ -245,56 +216,74 @@ contract FullFlowTest is Test {
         uint256 totalPrice = buyAmount * pricePerUnit;
         uint256 fee = (totalPrice * marketplace.feeBps()) / 10000;
 
-        uint256 treasuryInitialBalance = paymentToken.balanceOf(address(treasury));
+        uint256 stakingContractInitialBalance = govToken.balanceOf(address(stakingRewards));
 
         vm.startPrank(buyer);
-        paymentToken.approve(address(marketplace), totalPrice);
+        govToken.approve(address(marketplace), totalPrice);
         marketplace.buy(listingId, buyAmount);
         vm.stopPrank();
 
         assertEq(credit.balanceOf(buyer, uint256(projectId)), buyAmount, "Buyer should receive purchased credits");
         assertEq(
-            paymentToken.balanceOf(address(treasury)), treasuryInitialBalance + fee, "Treasury should receive fees"
+            govToken.balanceOf(address(stakingRewards)),
+            stakingContractInitialBalance + fee,
+            "Staking contract should receive fees"
         );
 
-        // --- STAGE 4: Governance Withdraws Fees ---
-        uint256 treasuryBalanceBefore = paymentToken.balanceOf(address(treasury));
-        uint256 recipientBalanceBefore = paymentToken.balanceOf(feeRecipient);
+        // --- STAGE 4: Staking & Governance Approves Reward Distribution ---
 
-        // 4.1 Propose
+        // 4.1. A staker stakes their tokens, expecting a future reward
+        vm.startPrank(staker);
+        govToken.approve(address(stakingRewards), 500_000 * 1e18);
+        stakingRewards.stake(500_000 * 1e18);
+        vm.stopPrank();
+
+        // 4.2. Governance must now approve the distribution of the collected fees.
+        // To avoid precision loss in rewardRate calculation, we use a duration that divides the fee perfectly.
+        // fee = 50e18, so we can use a duration of 50.
+        uint256 rewardDuration = 50; // seconds
+
+        // 4.2.1 Create Proposal
         address[] memory targets = new address[](1);
-        targets[0] = address(treasury); // The timelock will call the Treasury contract
-        uint256[] memory values = new uint256[](1); // No ETH
-        bytes[] memory calldatas = new bytes[](1);
-        // The proposal tells the timelock to call 'withdrawERC20' on the treasury
-        calldatas[0] = abi.encodeWithSelector(
-            Treasury.withdrawERC20.selector, address(paymentToken), feeRecipient, treasuryBalanceBefore
-        );
+        targets[0] = address(stakingRewards);
 
-        string memory description = "Withdraw collected fees from Treasury";
+        uint256[] memory values = new uint256[](1);
+        values[0] = 0;
+
+        bytes[] memory calldatas = new bytes[](1);
+        calldatas[0] = abi.encodeWithSelector(StakingRewards.notifyRewardAmount.selector, fee, rewardDuration);
+
+        string memory description = "Distribute marketplace fees to stakers";
         bytes32 descriptionHash = keccak256(bytes(description));
 
         vm.prank(governanceProposer);
         uint256 proposalId = governor.propose(targets, values, calldatas, description);
 
-        // 4.2 Vote
+        // 4.2.2 Vote
         vm.roll(block.number + VOTING_DELAY + 1);
-        vm.prank(governanceProposer);
-        governor.castVote(proposalId, uint8(1)); // Vote FOR
+        assertEq(uint256(governor.state(proposalId)), 1, "Proposal should be Active"); // 1 = Active
 
-        // 4.3 Queue & Execute
+        vm.prank(governanceProposer);
+        governor.castVote(proposalId, 1); // 1 = For
+
+        // 4.2.3 Queue & Execute
         vm.roll(block.number + VOTING_PERIOD + 1);
+        assertEq(uint256(governor.state(proposalId)), 4, "Proposal should be Succeeded"); // 4 = Succeeded
+
         governor.queue(targets, values, calldatas, descriptionHash);
+
         vm.warp(block.timestamp + MIN_DELAY + 1);
         governor.execute(targets, values, calldatas, descriptionHash);
+        assertEq(uint256(governor.state(proposalId)), 7, "Proposal should be Executed"); // 7 = Executed
 
-        // --- STAGE 5: Final Verification ---
-        assertEq(paymentToken.balanceOf(address(treasury)), 0, "Treasury should be empty after withdrawal");
-        assertEq(
-            paymentToken.balanceOf(feeRecipient),
-            recipientBalanceBefore + treasuryBalanceBefore,
-            "Fee Recipient should receive funds"
-        );
+        // --- STAGE 5: Staker Claims Rewards ---
+        vm.warp(block.timestamp + rewardDuration); // Advance time to the end of the reward period
+
+        uint256 stakerBalanceBeforeClaim = govToken.balanceOf(staker);
+        vm.prank(staker);
+        stakingRewards.claimReward();
+        uint256 stakerBalanceAfterClaim = govToken.balanceOf(staker);
+        assertApproxEqAbs(stakerBalanceAfterClaim, stakerBalanceBeforeClaim + fee, 1, "Staker should earn full fee");
     }
 
     function test_Marketplace_Cancel_Flow() public {

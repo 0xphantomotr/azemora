@@ -9,7 +9,7 @@ import {DMRVManager} from "../src/core/dMRVManager.sol";
 import {DynamicImpactCredit} from "../src/core/DynamicImpactCredit.sol";
 import {Marketplace} from "../src/marketplace/Marketplace.sol";
 import {DeploymentAddresses} from "./utils/DeploymentAddresses.sol";
-import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
+import {AzemoraToken} from "../src/token/AzemoraToken.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 contract Deploy is Script {
@@ -21,6 +21,8 @@ contract Deploy is Script {
         // --- Setup ---
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployerAddress = vm.addr(deployerPrivateKey);
+        address treasuryAddress = vm.envAddress("TREASURY_ADDRESS");
+        address paymentTokenAddress = vm.envAddress("TOKEN_ADDRESS");
 
         if (block.chainid == 31337) {
             vm.deal(deployerAddress, 100 ether);
@@ -32,12 +34,11 @@ contract Deploy is Script {
         ProjectRegistry projectRegistry = _deployProjectRegistry();
         DynamicImpactCredit dynamicImpactCredit = _deployDynamicImpactCredit(projectRegistry);
         DMRVManager dMRVManager = _deployDMRVManager(projectRegistry, dynamicImpactCredit);
-        ERC20Mock mockErc20 = _deployMockERC20(deployerAddress);
-        Marketplace marketplace = _deployMarketplace(dynamicImpactCredit, mockErc20);
+        Marketplace marketplace = _deployMarketplace(dynamicImpactCredit, AzemoraToken(payable(paymentTokenAddress)));
 
         // --- Post-Deployment Configuration ---
         _configureRoles(dynamicImpactCredit, dMRVManager);
-        _configureMarketplace(marketplace, deployerAddress);
+        _configureMarketplace(marketplace, treasuryAddress);
 
         // --- Store Deployment Addresses ---
         DeploymentAddresses deploymentAddresses = _storeAddresses(
@@ -46,7 +47,7 @@ contract Deploy is Script {
                 dMRVManager: address(dMRVManager),
                 dynamicImpactCredit: address(dynamicImpactCredit),
                 marketplace: address(marketplace),
-                mockErc20: address(mockErc20)
+                paymentToken: paymentTokenAddress
             })
         );
 
@@ -59,7 +60,7 @@ contract Deploy is Script {
                 dMRVManager: address(dMRVManager),
                 dynamicImpactCredit: address(dynamicImpactCredit),
                 marketplace: address(marketplace),
-                mockErc20: address(mockErc20),
+                paymentToken: paymentTokenAddress,
                 deploymentAddresses: address(deploymentAddresses)
             })
         );
@@ -92,14 +93,7 @@ contract Deploy is Script {
         return DMRVManager(payable(address(proxy)));
     }
 
-    function _deployMockERC20(address deployer) internal returns (ERC20Mock) {
-        console.log("Deploying MockERC20...");
-        ERC20Mock mock = new ERC20Mock();
-        mock.mint(deployer, 1_000_000 * 10 ** 18);
-        return mock;
-    }
-
-    function _deployMarketplace(DynamicImpactCredit credit, ERC20Mock paymentToken) internal returns (Marketplace) {
+    function _deployMarketplace(DynamicImpactCredit credit, AzemoraToken paymentToken) internal returns (Marketplace) {
         console.log("Deploying Marketplace...");
         Marketplace impl = new Marketplace();
         bytes memory initData =
@@ -114,9 +108,9 @@ contract Deploy is Script {
         credit.grantRole(METADATA_UPDATER_ROLE, address(manager));
     }
 
-    function _configureMarketplace(Marketplace marketplace, address deployer) internal {
+    function _configureMarketplace(Marketplace marketplace, address treasury) internal {
         console.log("Setting Marketplace Treasury and Fee...");
-        marketplace.setTreasury(deployer);
+        marketplace.setTreasury(treasury);
         marketplace.setFee(250); // 2.5% fee
     }
 
@@ -125,7 +119,7 @@ contract Deploy is Script {
         address dMRVManager;
         address dynamicImpactCredit;
         address marketplace;
-        address mockErc20;
+        address paymentToken;
     }
 
     function _storeAddresses(Addresses memory addrs) internal returns (DeploymentAddresses) {
@@ -137,7 +131,7 @@ contract Deploy is Script {
         vm.serializeAddress(runName, "DMRVManager", addrs.dMRVManager);
         vm.serializeAddress(runName, "DynamicImpactCredit", addrs.dynamicImpactCredit);
         vm.serializeAddress(runName, "Marketplace", addrs.marketplace);
-        vm.serializeAddress(runName, "ERC20Mock", addrs.mockErc20);
+        vm.serializeAddress(runName, "PaymentToken", addrs.paymentToken);
         vm.serializeAddress(runName, "DeploymentAddresses", address(deploymentAddresses));
         return deploymentAddresses;
     }
@@ -147,7 +141,7 @@ contract Deploy is Script {
         address dMRVManager;
         address dynamicImpactCredit;
         address marketplace;
-        address mockErc20;
+        address paymentToken;
         address deploymentAddresses;
     }
 
@@ -157,7 +151,7 @@ contract Deploy is Script {
         console.log("DMRVManager (Proxy): ", addrs.dMRVManager);
         console.log("DynamicImpactCredit (Proxy): ", addrs.dynamicImpactCredit);
         console.log("Marketplace (Proxy): ", addrs.marketplace);
-        console.log("ERC20Mock (Payment Token): ", addrs.mockErc20);
+        console.log("PaymentToken (AzemoraToken): ", addrs.paymentToken);
         console.log("DeploymentAddresses: ", addrs.deploymentAddresses);
     }
 }
