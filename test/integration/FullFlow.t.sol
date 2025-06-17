@@ -11,6 +11,7 @@ import "../../src/core/DynamicImpactCredit.sol";
 import "../../src/core/ProjectRegistry.sol";
 import "../../src/core/dMRVManager.sol";
 import "../../src/staking/StakingRewards.sol";
+import "../../src/core/Bonding.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "forge-std/console.sol";
 
@@ -31,6 +32,8 @@ contract FullFlowTest is Test {
     Treasury treasury;
     // Staking
     StakingRewards stakingRewards;
+    // Bonding
+    Bonding bonding;
 
     // --- Actors ---
     address admin = makeAddr("admin");
@@ -86,7 +89,11 @@ contract FullFlowTest is Test {
 
         Treasury treasuryImpl = new Treasury();
         treasury = Treasury(
-            payable(address(new ERC1967Proxy(address(treasuryImpl), abi.encodeCall(Treasury.initialize, (admin)))))
+            payable(
+                address(
+                    new ERC1967Proxy(address(treasuryImpl), abi.encodeWithSelector(Treasury.initialize.selector, admin))
+                )
+            )
         );
         vm.deal(address(treasury), 10 ether); // Pre-fund treasury for other tests if needed
 
@@ -119,6 +126,9 @@ contract FullFlowTest is Test {
         // --- DEPLOY STAKING ---
         stakingRewards = new StakingRewards(address(govToken));
 
+        // --- DEPLOY BONDING ---
+        bonding = new Bonding(address(govToken), address(treasury));
+
         // --- 4. CONFIGURE ROLES & OWNERSHIP ---
         // Grant dMRVManager the right to mint credits
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), address(dmrvManager));
@@ -140,12 +150,16 @@ contract FullFlowTest is Test {
 
         // Transfer contract ownership to the Timelock/DAO
         treasury.transferOwnership(address(timelock));
+        bonding.transferOwnership(address(timelock));
         stakingRewards.transferOwnership(address(timelock));
         // Note: Other contracts with admin roles would also be transferred here in a real scenario
         // e.g., marketplace.grantRole(marketplace.DEFAULT_ADMIN_ROLE(), address(timelock));
 
         // Renounce initial admin control
         timelock.renounceRole(timelockAdminRole, admin);
+
+        // --- FUND TREASURY ---
+        govToken.transfer(address(treasury), 10_000_000e18);
 
         // --- 5. SETUP ACTOR STATE ---
         // Fund buyer with governance tokens (which are now also the payment token)
@@ -339,5 +353,75 @@ contract FullFlowTest is Test {
             0,
             "Marketplace should have no credits after cancellation"
         );
+    }
+
+    function test_Bonding_Full_Lifecycle_With_Governance() public {
+        // --- Define Parameters ---
+        bytes32 projectId = keccak256("Unique Bonding Project");
+        uint256 tokenId = uint256(projectId);
+        uint256 pricePerCredit = 95e18; // 95 AZE per credit (5% discount from a hypothetical 100 AZE market price)
+        uint256 vestingPeriod = 7 days;
+        uint256 bondingContractFunding = 1_000_000e18; // 1M AZE to fund the contract
+
+        // --- 1. GOVERNANCE: Propose to fund and activate the bonding program ---
+
+        // We need two actions:
+        // 1. Treasury sends AZE to the Bonding contract.
+        // 2. Bonding contract sets the terms for the bond.
+        address[] memory targets = new address[](2);
+        targets[0] = address(treasury);
+        targets[1] = address(bonding);
+
+        uint256[] memory values = new uint256[](2); // No direct ETH transfers
+
+        bytes[] memory calldatas = new bytes[](2);
+        // Action 1: Treasury withdraws AZE to the Bonding contract
+        calldatas[0] = abi.encodeWithSelector(
+            treasury.withdrawERC20.selector, address(govToken), address(bonding), bondingContractFunding
+        );
+        // Action 2: Bonding contract sets the new bond term
+        calldatas[1] = abi.encodeWithSelector(
+            bonding.setBondTerm.selector, tokenId, address(credit), pricePerCredit, vestingPeriod, true
+        );
+
+        string memory description = "Activate and fund Impact Credit bonding program";
+        bytes32 descriptionHash = keccak256(bytes(description));
+
+        // Propose
+        vm.prank(governanceProposer);
+        uint256 proposalId = governor.propose(targets, values, calldatas, description);
+
+        // --- 2. GOVERNANCE: Vote and Execute ---
+        vm.roll(block.number + VOTING_DELAY + 1);
+        vm.prank(governanceProposer);
+        governor.castVote(proposalId, 1); // Vote FOR
+        vm.roll(block.number + VOTING_PERIOD + 1);
+        governor.queue(targets, values, calldatas, descriptionHash);
+        vm.warp(block.timestamp + MIN_DELAY + 1);
+        governor.execute(targets, values, calldatas, descriptionHash);
+
+        // --- 3. USER: Bond Assets ---
+        // First, mint some credits to the project developer to bond with
+        vm.startPrank(projectDeveloper);
+        registry.registerProject(projectId, "ipfs://unique-bond-project");
+        vm.stopPrank();
+        vm.prank(verifier);
+        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        vm.prank(projectDeveloper);
+        bytes32 requestId = dmrvManager.requestVerification(projectId);
+        vm.prank(dmrvOracle);
+        bytes memory verificationData = abi.encode(100, false, bytes32(0), "ipfs://verify-bond");
+        dmrvManager.fulfillVerification(requestId, verificationData);
+
+        uint256 amountToBond = 50;
+        vm.startPrank(projectDeveloper);
+        credit.setApprovalForAll(address(bonding), true);
+        bonding.bond(tokenId, amountToBond);
+        vm.stopPrank();
+
+        // --- 4. USER: Claim Vested Tokens ---
+        vm.warp(block.timestamp + vestingPeriod + 1);
+        vm.prank(projectDeveloper);
+        bonding.claim(0);
     }
 }
