@@ -11,17 +11,23 @@ import {UserOperationLib} from "@account-abstraction/core/UserOperationLib.sol";
 contract AccountAbstractionFuzzTest is AccountAbstractionTest {
     function setUp() public override {
         super.setUp();
+        // Fuzz-specific setup can go here if needed in the future.
     }
 
-    function test_fuzz_SponsorPaymasterRevertsForUnsponsored(PackedUserOperation calldata op, address randomTarget)
-        public
-    {
+    function test_fuzz_SponsorPaymasterRevertsForUnsponsored(
+        PackedUserOperation calldata op,
+        address randomTarget,
+        bytes4 randomSelector
+    ) public {
         // We only want to test the sponsorship logic.
-        // Assume the fuzzed target is not the one we sponsor, and not the zero address.
-        vm.assume(randomTarget != address(projectRegistry) && randomTarget != address(0));
+        // Assume the fuzzed target/selector is not the one we sponsor.
+        vm.assume(
+            randomTarget != address(projectRegistry) || randomSelector != projectRegistry.registerProject.selector
+        );
+        vm.assume(randomTarget != address(0));
 
         // Manually construct a valid calldata, overriding the fuzzer's potentially invalid one.
-        bytes memory innerCallData = abi.encodeWithSelector(bytes4(0xdeadbeef)); // A simple placeholder call
+        bytes memory innerCallData = abi.encodeWithSelector(randomSelector); // A simple placeholder call
         bytes memory validCallData =
             abi.encodeWithSelector(AzemoraSmartWallet.execute.selector, randomTarget, 0, innerCallData);
 
@@ -33,7 +39,7 @@ contract AccountAbstractionFuzzTest is AccountAbstractionTest {
         entryPoint.depositTo{value: 1 ether}(op.sender);
 
         vm.prank(address(entryPoint));
-        vm.expectRevert("SponsorPaymaster: operation not sponsored");
+        vm.expectRevert("SponsorPaymaster: action not sponsored");
         sponsorPaymaster.validatePaymasterUserOp(mutableOp, bytes32(0), 1e18);
     }
 
@@ -61,7 +67,7 @@ contract AccountAbstractionFuzzTest is AccountAbstractionTest {
             projectId = bytes32("default-fuzz-id");
         }
 
-        sponsorPaymaster.setContractSponsorship(address(projectRegistry), true);
+        sponsorPaymaster.setActionSponsorship(address(projectRegistry), projectRegistry.registerProject.selector, true);
 
         bytes memory innerCallData =
             abi.encodeWithSelector(ProjectRegistry.registerProject.selector, projectId, metadata);

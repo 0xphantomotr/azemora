@@ -19,6 +19,9 @@ contract TokenPaymaster is IPaymaster, ReentrancyGuard {
     IERC20 public immutable token;
     IPriceOracle public immutable oracle;
     address public owner;
+    uint256 public feePercentage; // e.g., 5 for a 5% fee
+
+    event TokensCharged(address indexed user, uint256 actualGasCost, uint256 tokenCost);
 
     modifier onlyOwner() {
         require(msg.sender == owner, "not owner");
@@ -36,14 +39,21 @@ contract TokenPaymaster is IPaymaster, ReentrancyGuard {
         owner = newOwner;
     }
 
+    function setFeePercentage(uint256 _feePercentage) external onlyOwner {
+        feePercentage = _feePercentage;
+    }
+
     function _getRequiredTokenAmount(uint256 gasCostInEthWei) internal view returns (uint256) {
         int256 exchangeRate = oracle.latestAnswer();
         require(exchangeRate > 0, "Invalid exchange rate");
-        return (gasCostInEthWei * uint256(exchangeRate)) / 1e18;
+        // Apply the fee
+        uint256 costWithFee = (gasCostInEthWei * (100 + feePercentage)) / 100;
+        return (costWithFee * uint256(exchangeRate)) / 1e18;
     }
 
     function validatePaymasterUserOp(PackedUserOperation calldata userOp, bytes32, uint256 maxCost)
         external
+        view
         override
         returns (bytes memory context, uint256 validationData)
     {
@@ -54,20 +64,28 @@ contract TokenPaymaster is IPaymaster, ReentrancyGuard {
             revert("TokenPaymaster: insufficient token allowance");
         }
 
-        context = abi.encode(userOp.sender, requiredTokenAmount);
+        // The context only needs to contain enough information to identify the user in postOp.
+        // We no longer pass the token amount here.
+        context = abi.encode(userOp.sender);
         return (context, 0);
     }
 
     function postOp(
-        IPaymaster.PostOpMode, /* mode */
+        IPaymaster.PostOpMode mode,
         bytes calldata context,
-        uint256, /* actualGasCost */
+        uint256 actualGasCost,
         uint256 /* actualUserOpFeePerGas */
     ) external override nonReentrant {
         require(msg.sender == address(entryPoint), "Sender not EntryPoint");
-        if (context.length > 0) {
-            (address user, uint256 tokenCost) = abi.decode(context, (address, uint256));
-            require(token.transferFrom(user, address(this), tokenCost), "TokenPaymaster: transfer failed");
+        // Only charge the user if the main operation succeeded.
+        if (mode == IPaymaster.PostOpMode.opSucceeded && context.length > 0) {
+            (address user) = abi.decode(context, (address));
+
+            // Calculate the final token cost based on the *actual* gas used.
+            uint256 finalTokenCost = _getRequiredTokenAmount(actualGasCost);
+
+            require(token.transferFrom(user, address(this), finalTokenCost), "TokenPaymaster: transfer failed");
+            emit TokensCharged(user, actualGasCost, finalTokenCost);
         }
     }
 

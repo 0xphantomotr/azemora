@@ -5,6 +5,7 @@ import {PackedUserOperation} from "@account-abstraction/interfaces/PackedUserOpe
 import {IEntryPoint} from "@account-abstraction/interfaces/IEntryPoint.sol";
 import {IAccount} from "@account-abstraction/interfaces/IAccount.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 
 /**
  * @title AzemoraSmartWallet
@@ -12,17 +13,26 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
  * @dev A simple, single-owner smart contract wallet for Azemora users.
  * Implements the EIP-4337 IAccount interface. It can execute arbitrary calls
  * and validates UserOperations based on the owner's signature.
+ * Now upgradeable and initializable for use with a proxy factory.
  */
-contract AzemoraSmartWallet is IAccount {
+contract AzemoraSmartWallet is IAccount, Initializable {
     // Constants for signature validation
     uint256 private constant SIG_VALIDATION_SUCCESS = 0;
     uint256 private constant SIG_VALIDATION_FAILED = 1;
 
-    IEntryPoint public immutable entryPoint;
-    address public immutable owner;
+    IEntryPoint public entryPoint;
+    address public owner;
 
-    constructor(address _entryPoint, address _owner) {
-        entryPoint = IEntryPoint(_entryPoint);
+    // The constructor is now empty for use with proxies.
+    constructor() {}
+
+    /**
+     * @dev Initializes the smart wallet. Can only be called once.
+     * @param _entryPoint The address of the EntryPoint contract.
+     * @param _owner The address of the wallet owner.
+     */
+    function initialize(IEntryPoint _entryPoint, address _owner) public initializer {
+        entryPoint = _entryPoint;
         owner = _owner;
     }
 
@@ -39,6 +49,7 @@ contract AzemoraSmartWallet is IAccount {
 
     function validateUserOp(PackedUserOperation calldata userOp, bytes32 userOpHash, uint256 /* missingAccountFunds */ )
         external
+        view
         override
         returns (uint256 validationData)
     {
