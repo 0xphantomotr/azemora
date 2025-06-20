@@ -346,4 +346,72 @@ contract AccountAbstractionTest is Test {
         // Final verification that the project was registered.
         projectRegistry.getProject(projectId);
     }
+
+    function test_AA_ExecuteBatch() public {
+        bytes32 projectId1 = bytes32("batch-project-1");
+        bytes32 projectId2 = bytes32("batch-project-2");
+        uint256 batchSalt = 2;
+        address batchWalletAddr = factory.getAddress(owner, batchSalt);
+
+        // --- Scope for Arrange & Act ---
+        {
+            entryPoint.depositTo{value: 1 ether}(batchWalletAddr);
+
+            bytes memory initCode = abi.encodePacked(
+                address(factory), abi.encodeWithSelector(factory.createAccount.selector, owner, batchSalt)
+            );
+
+            address[] memory dests = new address[](2);
+            dests[0] = address(projectRegistry);
+            dests[1] = address(projectRegistry);
+
+            bytes[] memory funcs = new bytes[](2);
+            funcs[0] = abi.encodeWithSelector(ProjectRegistry.registerProject.selector, projectId1, "http://batch1.uri");
+            funcs[1] = abi.encodeWithSelector(ProjectRegistry.registerProject.selector, projectId2, "http://batch2.uri");
+
+            bytes memory batchCallData = abi.encodeWithSelector(AzemoraSmartWallet.executeBatch.selector, dests, funcs);
+
+            PackedUserOperation memory op = PackedUserOperation({
+                sender: batchWalletAddr,
+                nonce: 0,
+                initCode: initCode,
+                callData: batchCallData,
+                accountGasLimits: bytes32(abi.encodePacked(uint128(5e6), uint128(5e6))),
+                preVerificationGas: 10e6,
+                gasFees: bytes32(abi.encodePacked(uint128(1e9), uint128(1e9))),
+                paymasterAndData: "",
+                signature: ""
+            });
+            bytes32 opHash = entryPoint.getUserOpHash(op);
+            (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerPrivateKey, opHash);
+            op.signature = abi.encodePacked(r, s, v);
+
+            PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+            ops[0] = op;
+            entryPoint.handleOps(ops, beneficiary);
+        }
+
+        // --- Scope for Assert ---
+        // Verify that both projects were registered successfully.
+        ProjectRegistry.Project memory project1 = projectRegistry.getProject(projectId1);
+        ProjectRegistry.Project memory project2 = projectRegistry.getProject(projectId2);
+        assertEq(project1.owner, batchWalletAddr, "Project 1 should be registered to the wallet");
+        assertEq(project2.owner, batchWalletAddr, "Project 2 should be registered to the wallet");
+    }
+
+    function test_Fail_SponsorPaymaster_InvalidCalldata_NotExecute() public {
+        // This test ensures the paymaster rejects a UserOp if its calldata
+        // does not target the wallet's `execute` or `executeBatch` function.
+
+        // This is a dummy calldata that does NOT start with the `execute` selector.
+        bytes memory invalidCallData = abi.encodeWithSelector(bytes4(0xdeadbeef));
+
+        PackedUserOperation memory op = _createAndSignOp(invalidCallData, abi.encode(address(sponsorPaymaster)), "", 0);
+
+        // We call the paymaster's validation function directly, as the EntryPoint
+        // would not even let us get this far with invalid calldata.
+        vm.prank(address(entryPoint));
+        vm.expectRevert("SponsorPaymaster: sponsored action must be via execute()");
+        sponsorPaymaster.validatePaymasterUserOp(op, bytes32(0), 1e18);
+    }
 }
