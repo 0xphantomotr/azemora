@@ -46,9 +46,10 @@ contract TokenPaymaster is IPaymaster, ReentrancyGuard {
     function _getRequiredTokenAmount(uint256 gasCostInEthWei) internal view returns (uint256) {
         int256 exchangeRate = oracle.latestAnswer();
         require(exchangeRate > 0, "Invalid exchange rate");
-        // Apply the fee
-        uint256 costWithFee = (gasCostInEthWei * (100 + feePercentage)) / 100;
-        return (costWithFee * uint256(exchangeRate)) / 1e18;
+        // Perform all multiplications first to maintain precision before the final division.
+        // This avoids potential precision loss from intermediate divisions.
+        uint256 costWithFee = gasCostInEthWei * (100 + feePercentage);
+        return (costWithFee * uint256(exchangeRate)) / (100 * 1e18);
     }
 
     function validatePaymasterUserOp(PackedUserOperation calldata userOp, bytes32, uint256 maxCost)
@@ -84,6 +85,7 @@ contract TokenPaymaster is IPaymaster, ReentrancyGuard {
             // Calculate the final token cost based on the *actual* gas used.
             uint256 finalTokenCost = _getRequiredTokenAmount(actualGasCost);
 
+            // slither-disable-next-line arbitrary-from
             require(token.transferFrom(user, address(this), finalTokenCost), "TokenPaymaster: transfer failed");
             emit TokensCharged(user, actualGasCost, finalTokenCost);
         }

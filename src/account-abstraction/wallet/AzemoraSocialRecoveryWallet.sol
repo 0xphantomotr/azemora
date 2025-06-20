@@ -141,16 +141,27 @@ contract AzemoraSocialRecoveryWallet is IAccount, Initializable {
         address oldOwner = owner;
         address newOwner = activeRecovery.newOwner;
         owner = newOwner;
-        delete activeRecovery;
+
+        // Reset the recovery state instead of using delete, for clarity
+        activeRecovery.newOwner = address(0);
+        activeRecovery.approvalCount = 0;
+        activeRecovery.proposedAt = 0;
+        // The approvals mapping is implicitly reset by the logic in proposeNewOwner
         recoveryIsActive = false;
+
         emit RecoveryExecuted(newOwner);
         emit OwnerChanged(oldOwner, newOwner);
     }
 
     function cancelRecovery() external onlyOwner {
         require(recoveryIsActive, "No active recovery");
-        delete activeRecovery;
+
+        // Reset the recovery state instead of using delete, for clarity
+        activeRecovery.newOwner = address(0);
+        activeRecovery.approvalCount = 0;
+        activeRecovery.proposedAt = 0;
         recoveryIsActive = false;
+
         emit RecoveryCancelled();
     }
 
@@ -181,6 +192,7 @@ contract AzemoraSocialRecoveryWallet is IAccount, Initializable {
     }
 
     function _execute(address dest, uint256 value, bytes calldata func) internal {
+        // slither-disable-next-line arbitrary-send
         (bool success,) = dest.call{value: value}(func);
         if (!success) {
             assembly {

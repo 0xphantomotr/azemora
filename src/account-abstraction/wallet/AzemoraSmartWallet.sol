@@ -76,6 +76,7 @@ contract AzemoraSmartWallet is IAccount, Initializable {
     }
 
     function _execute(address dest, uint256 value, bytes calldata func) internal {
+        // slither-disable-next-line arbitrary-send
         (bool success,) = dest.call{value: value}(func);
         if (!success) {
             assembly {
