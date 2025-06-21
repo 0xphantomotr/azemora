@@ -147,6 +147,14 @@ contract QuestManager is Initializable, AccessControlUpgradeable, UUPSUpgradeabl
         emit AdminQuestCompletion(user, questId);
     }
 
+    /**
+     * @notice Allows an admin to withdraw any ERC20 tokens from this contract.
+     * @dev Useful for managing funds or recovering accidentally sent tokens.
+     */
+    function withdrawTokens(address tokenAddress, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        IERC20(tokenAddress).safeTransfer(_msgSender(), amount);
+    }
+
     // --- User Functions ---
 
     /**

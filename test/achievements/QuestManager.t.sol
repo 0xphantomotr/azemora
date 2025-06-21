@@ -88,7 +88,7 @@ contract QuestManagerTest is Test {
     uint256 public constant SBT_ID = 1;
     uint256 public constant REP_REWARD = 50;
 
-    function setUp() public {
+    function setUp() public virtual {
         // Deploy implementation
         QuestManager impl = new QuestManager();
 
@@ -103,11 +103,15 @@ contract QuestManagerTest is Test {
         rep = new MockReputationManager();
         verifier = new MockQuestVerifier();
 
-        // Grant the designated admin account its role.
-        questManager.grantRole(questManager.QUEST_ADMIN_ROLE(), admin);
+        // 1. The test contract (current admin) grants the DEFAULT_ADMIN_ROLE to our designated admin.
+        questManager.grantRole(questManager.DEFAULT_ADMIN_ROLE(), admin);
 
-        // Revoke the role from the test contract itself to keep the state clean and unambiguous.
+        // 2. The new admin now takes over all other role management.
+        vm.startPrank(admin);
+        questManager.grantRole(questManager.QUEST_ADMIN_ROLE(), admin);
+        questManager.revokeRole(questManager.DEFAULT_ADMIN_ROLE(), address(this));
         questManager.revokeRole(questManager.QUEST_ADMIN_ROLE(), address(this));
+        vm.stopPrank();
 
         // Fund QuestManager with AZE
         aze.mint(address(questManager), 1_000_000 * 10 ** 18);
@@ -160,6 +164,36 @@ contract QuestManagerTest is Test {
         );
     }
 
+    function test_Fail_CreateQuest_ZeroAddress() public {
+        vm.startPrank(admin);
+
+        // Test zero rewardContract
+        vm.expectRevert(QuestManager.QuestManager__InvalidAddress.selector);
+        questManager.createQuest(
+            "ipfs://test",
+            QuestManager.RewardType.AZE,
+            address(0),
+            AZE_REWARD,
+            address(verifier),
+            verifier.verify.selector,
+            true
+        );
+
+        // Test zero verificationContract
+        vm.expectRevert(QuestManager.QuestManager__InvalidAddress.selector);
+        questManager.createQuest(
+            "ipfs://test",
+            QuestManager.RewardType.AZE,
+            address(aze),
+            AZE_REWARD,
+            address(0),
+            verifier.verify.selector,
+            true
+        );
+
+        vm.stopPrank();
+    }
+
     function test_ToggleQuestStatus() public {
         // Create quest first
         vm.prank(admin);
@@ -184,6 +218,12 @@ contract QuestManagerTest is Test {
         questManager.toggleQuestStatus(1, true);
         quest = questManager.getQuest(1);
         assertTrue(quest.isActive);
+    }
+
+    function test_Fail_ToggleQuestStatus_QuestNotFound() public {
+        vm.prank(admin);
+        vm.expectRevert(QuestManager.QuestManager__QuestNotFound.selector);
+        questManager.toggleQuestStatus(999, false); // Use a non-existent quest ID
     }
 
     // --- Claim Reward Tests ---
@@ -277,6 +317,52 @@ contract QuestManagerTest is Test {
         questManager.claimReward(1);
     }
 
+    function test_Fail_ClaimReward_QuestIsInactive() public {
+        // 1. Admin creates a quest but it is inactive
+        vm.prank(admin);
+        questManager.createQuest(
+            "ipfs://test",
+            QuestManager.RewardType.AZE,
+            address(aze),
+            AZE_REWARD,
+            address(verifier),
+            verifier.verify.selector,
+            false
+        );
+
+        // 2. User tries to claim
+        vm.prank(user);
+        vm.expectRevert(QuestManager.QuestManager__QuestNotActive.selector);
+        questManager.claimReward(1);
+    }
+
+    function test_Fail_ClaimReward_InsufficientAZEReward() public {
+        // 1. Admin creates a quest
+        vm.prank(admin);
+        questManager.createQuest(
+            "ipfs://test",
+            QuestManager.RewardType.AZE,
+            address(aze),
+            AZE_REWARD,
+            address(verifier),
+            verifier.verify.selector,
+            true
+        );
+
+        // 2. Drain the contract's AZE balance
+        uint256 contractBalance = aze.balanceOf(address(questManager));
+        vm.prank(admin);
+        questManager.withdrawTokens(address(aze), contractBalance);
+
+        // 3. Set verifier to succeed
+        verifier.setShouldSucceed(true);
+
+        // 4. User tries to claim, should fail on the transfer
+        vm.prank(user);
+        vm.expectRevert(); // Expects a generic revert from SafeERC20
+        questManager.claimReward(1);
+    }
+
     function test_Fail_ClaimReward_VerificationFails() public {
         vm.prank(admin);
         questManager.createQuest(
@@ -295,5 +381,84 @@ contract QuestManagerTest is Test {
         vm.prank(user);
         vm.expectRevert(QuestManager.QuestManager__VerificationFailed.selector);
         questManager.claimReward(1);
+    }
+
+    // --- Admin Mark Quest Completed Tests ---
+
+    function test_AdminMarkQuestCompleted() public {
+        // 1. Admin creates a quest
+        vm.prank(admin);
+        questManager.createQuest(
+            "ipfs://test",
+            QuestManager.RewardType.AZE,
+            address(aze),
+            AZE_REWARD,
+            address(verifier),
+            verifier.verify.selector,
+            true
+        );
+
+        // 2. Admin marks it complete for the user
+        uint256 balanceBefore = aze.balanceOf(user);
+        vm.prank(admin);
+        questManager.adminMarkQuestCompleted(user, 1);
+        uint256 balanceAfter = aze.balanceOf(user);
+
+        // 3. Check reward and completion status
+        assertEq(balanceAfter, balanceBefore + AZE_REWARD);
+        assertTrue(questManager.questCompleted(1, user));
+    }
+
+    function test_Fail_AdminMarkQuestCompleted_NotAdmin() public {
+        // 1. Admin creates a quest
+        vm.prank(admin);
+        questManager.createQuest(
+            "ipfs://test",
+            QuestManager.RewardType.AZE,
+            address(aze),
+            AZE_REWARD,
+            address(verifier),
+            verifier.verify.selector,
+            true
+        );
+
+        // 2. User (not admin) tries to mark it complete
+        bytes32 questAdminRole = questManager.QUEST_ADMIN_ROLE();
+        vm.prank(user);
+
+        bytes memory expectedRevertData = abi.encodeWithSelector(
+            bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)")), user, questAdminRole
+        );
+        vm.expectRevert(expectedRevertData);
+        questManager.adminMarkQuestCompleted(user, 1);
+    }
+
+    function test_Fail_AdminMarkQuestCompleted_QuestNotFound() public {
+        vm.prank(admin);
+        vm.expectRevert(QuestManager.QuestManager__QuestNotFound.selector);
+        questManager.adminMarkQuestCompleted(user, 999);
+    }
+
+    function test_Fail_AdminMarkQuestCompleted_AlreadyCompleted() public {
+        // 1. Admin creates a quest
+        vm.prank(admin);
+        questManager.createQuest(
+            "ipfs://test",
+            QuestManager.RewardType.AZE,
+            address(aze),
+            AZE_REWARD,
+            address(verifier),
+            verifier.verify.selector,
+            true
+        );
+
+        // 2. Admin marks it complete once
+        vm.prank(admin);
+        questManager.adminMarkQuestCompleted(user, 1);
+
+        // 3. Admin tries to mark it complete again
+        vm.prank(admin);
+        vm.expectRevert(QuestManager.QuestManager__QuestAlreadyCompleted.selector);
+        questManager.adminMarkQuestCompleted(user, 1);
     }
 }
