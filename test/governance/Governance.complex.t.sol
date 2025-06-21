@@ -11,10 +11,45 @@ import "../../src/marketplace/Marketplace.sol";
 import "../../src/core/DynamicImpactCredit.sol";
 import "../../src/core/ProjectRegistry.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC1155/utils/ERC1155HolderUpgradeable.sol";
 
 // A mock ERC20 is needed for the Marketplace setup.
 contract MockERC20ForGovTest {
     function mint(address, uint256) public {}
+}
+
+/**
+ * @dev A mock V2 contract to test the upgrade process.
+ * It must also be UUPS-compliant and storage-compatible with Treasury.
+ */
+contract TreasuryV2 is
+    Initializable,
+    OwnableUpgradeable,
+    ReentrancyGuardUpgradeable,
+    UUPSUpgradeable,
+    ERC1155HolderUpgradeable
+{
+    // This ensures the storage layout of TreasuryV2 is compatible with Treasury.
+    // The new state variable `greeting` will be stored in a new slot after the parent contracts' storage.
+    string public greeting;
+
+    // The _authorizeUpgrade function must be present for UUPS and maintain the same access control.
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+
+    function setGreeting(string memory _greeting) public {
+        greeting = _greeting;
+    }
+
+    function greet() public view returns (string memory) {
+        return greeting;
+    }
+
+    // Gap for future upgrades, matching the original Treasury contract's gap to ensure layout compatibility.
+    uint256[50] private __gap;
 }
 
 contract GovernanceComplexTest is Test {
@@ -39,6 +74,7 @@ contract GovernanceComplexTest is Test {
     uint256 constant VOTING_PERIOD = 5; // blocks
     uint256 constant MIN_DELAY = 1; // seconds
     uint256 constant PROPOSAL_THRESHOLD = 1000e18;
+    uint256 constant QUORUM_PERCENTAGE = 4; // 4%
 
     function setUp() public {
         admin = address(this);
@@ -65,7 +101,8 @@ contract GovernanceComplexTest is Test {
                 AzemoraTimelockController(timelockAddr),
                 uint48(VOTING_DELAY),
                 uint32(VOTING_PERIOD),
-                PROPOSAL_THRESHOLD
+                PROPOSAL_THRESHOLD,
+                QUORUM_PERCENTAGE
             )
         );
         ERC1967Proxy governorProxy = new ERC1967Proxy(address(governorImpl), governorInitData);
@@ -318,5 +355,41 @@ contract GovernanceComplexTest is Test {
         // Queue the second proposal
         AzemoraGovernor(governorAddr).queue(targets, values, calldatas, descriptionHash2);
         assertTrue(AzemoraTimelockController(timelockAddr).isOperation(opId2), "Op 2 should now be scheduled");
+    }
+
+    /**
+     * @dev Ensures a voter's power is snapshotted when a proposal is made
+     * and subsequent token acquisitions do not affect their vote weight.
+     */
+    function test_Vote_Snapshot_Is_Correct() public {
+        // voter starts with 50M tokens.
+
+        // Propose a simple action.
+        address[] memory targets = new address[](1);
+        targets[0] = address(marketplace);
+        uint256[] memory values = new uint256[](1);
+        bytes[] memory calldatas = new bytes[](1);
+        calldatas[0] = abi.encodeWithSelector(Marketplace.setFee.selector, 100);
+        string memory description = "Test Vote Snapshot";
+
+        // Propose the action. The snapshot of the voter's 50M tokens is taken here.
+        vm.prank(voter);
+        uint256 proposalId = AzemoraGovernor(governorAddr).propose(targets, values, calldatas, description);
+
+        // The snapshot for voting power is taken at `voteStart`, which is `proposal_block + voting_delay`.
+        // We must advance the block *past* the snapshot block for the token balance change to not affect voting power.
+        vm.roll(block.number + VOTING_DELAY + 1);
+
+        // AFTER the proposal is made, the voter acquires more tokens.
+        // These should NOT count towards the vote.
+        token.transfer(voter, 100_000_000e18); // voter now has 150M tokens.
+
+        // Vote on the proposal.
+        vm.prank(voter);
+        AzemoraGovernor(governorAddr).castVote(proposalId, 1); // Vote For.
+
+        // Check the vote weight. It should be the original 50M, not the new 150M.
+        (, uint256 forVotes,) = AzemoraGovernor(governorAddr).proposalVotes(proposalId);
+        assertEq(forVotes, 50_000_000e18, "Vote weight should match pre-proposal snapshot");
     }
 }

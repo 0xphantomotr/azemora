@@ -39,6 +39,7 @@ contract GovernanceTest is Test {
     uint256 constant VOTING_PERIOD = 5; // blocks
     uint256 constant MIN_DELAY = 1; // seconds
     uint256 constant PROPOSAL_THRESHOLD = 1000e18;
+    uint256 constant QUORUM_PERCENTAGE = 4; // 4%
 
     function setUp() public {
         admin = address(this);
@@ -66,7 +67,8 @@ contract GovernanceTest is Test {
                 AzemoraTimelockController(timelockAddr),
                 uint48(VOTING_DELAY),
                 uint32(VOTING_PERIOD),
-                PROPOSAL_THRESHOLD
+                PROPOSAL_THRESHOLD,
+                QUORUM_PERCENTAGE
             )
         );
         ERC1967Proxy governorProxy = new ERC1967Proxy(address(governorImpl), governorInitData);

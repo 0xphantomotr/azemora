@@ -49,6 +49,7 @@ contract FullFlowTest is Test {
     uint256 constant VOTING_DELAY = 1; // blocks
     uint256 constant VOTING_PERIOD = 5; // blocks
     uint256 constant MIN_DELAY = 1; // seconds
+    uint256 constant QUORUM_PERCENTAGE = 4; // 4%
 
     function setUp() public {
         vm.startPrank(admin);
@@ -80,7 +81,7 @@ contract FullFlowTest is Test {
                         address(governorImpl),
                         abi.encodeCall(
                             AzemoraGovernor.initialize,
-                            (govToken, timelock, uint48(VOTING_DELAY), uint32(VOTING_PERIOD), 0)
+                            (govToken, timelock, uint48(VOTING_DELAY), uint32(VOTING_PERIOD), 0, QUORUM_PERCENTAGE)
                         )
                     )
                 )

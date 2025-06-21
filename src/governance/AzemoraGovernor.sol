@@ -37,12 +37,13 @@ contract AzemoraGovernor is
         TimelockControllerUpgradeable timelock,
         uint48 _votingDelay,
         uint32 _votingPeriod,
-        uint256 _proposalThreshold
+        uint256 _proposalThreshold,
+        uint256 _quorumFraction
     ) public initializer {
         __Governor_init("AzemoraGovernor");
         __GovernorSettings_init(_votingDelay, _votingPeriod, _proposalThreshold);
         __GovernorVotes_init(token);
-        __GovernorVotesQuorumFraction_init(4); // 4% quorum
+        __GovernorVotesQuorumFraction_init(_quorumFraction);
         __GovernorTimelockControl_init(timelock);
 
         // The deployer is granted the proposer role by default,
