@@ -36,7 +36,10 @@ contract AchievementsSBT is
     mapping(uint256 => string) private _achievementURIs;
     string private _contractURI;
 
-    uint256[50] private __gap;
+    // Mapping from achievement ID to its total supply.
+    mapping(uint256 => uint256) private _totalSupplies;
+
+    uint256[49] private __gap;
 
     // --- Events ---
     event AchievementURIUpdated(uint256 indexed achievementId, string newURI);
@@ -96,6 +99,14 @@ contract AchievementsSBT is
         whenNotPaused
     {
         _burn(from, achievementId, amount);
+    }
+
+    /**
+     * @notice Returns the total supply of a specific achievement.
+     * @param id The ID of the achievement.
+     */
+    function totalSupply(uint256 id) public view returns (uint256) {
+        return _totalSupplies[id];
     }
 
     // --- Metadata Management ---
@@ -161,7 +172,8 @@ contract AchievementsSBT is
     // --- Overrides for Non-Transferability and Interface Support ---
 
     /**
-     * @dev Overrides the internal `_update` function to enforce non-transferability.
+     * @dev Overrides the internal `_update` function to enforce non-transferability
+     * and to track total supply for each token ID.
      * Transfers are only allowed for minting (from address(0)) and burning (to address(0)).
      */
     function _update(address from, address to, uint256[] memory ids, uint256[] memory amounts)
@@ -169,9 +181,25 @@ contract AchievementsSBT is
         override
         whenNotPaused
     {
+        // Enforce non-transferability for any transfer that is not a mint or burn
         if (from != address(0) && to != address(0)) {
             revert AchievementsSBT__TransferDisabled();
         }
+
+        // Update total supply for each token ID
+        for (uint256 i = 0; i < ids.length; ++i) {
+            uint256 id = ids[i];
+            uint256 amount = amounts[i];
+            if (from == address(0)) {
+                // Mint
+                _totalSupplies[id] += amount;
+            }
+            if (to == address(0)) {
+                // Burn
+                _totalSupplies[id] -= amount;
+            }
+        }
+
         super._update(from, to, ids, amounts);
     }
 
