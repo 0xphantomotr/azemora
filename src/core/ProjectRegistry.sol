@@ -28,6 +28,7 @@ error ProjectRegistry__InvalidPauseState();
 error ProjectRegistry__InvalidStatusTransition();
 error ProjectRegistry__NotProjectOwner();
 error ProjectRegistry__NewOwnerIsZeroAddress();
+error ProjectRegistry__InvalidProjectId();
 
 /**
  * @title ProjectRegistry
@@ -116,6 +117,7 @@ contract ProjectRegistry is
      * @param metaURI A URI pointing to an off-chain JSON file (e.g., on IPFS) with project details.
      */
     function registerProject(bytes32 projectId, string calldata metaURI) external nonReentrant whenNotPaused {
+        if (projectId == bytes32(0)) revert ProjectRegistry__InvalidProjectId();
         if (_projects[projectId].id != 0) revert ProjectRegistry__IdAlreadyExists();
 
         _projects[projectId] =

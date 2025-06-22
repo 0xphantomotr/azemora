@@ -57,6 +57,12 @@ contract ProjectRegistryTest is Test {
         registry.registerProject(projectId, "ipfs://duplicate.json");
     }
 
+    function test_Register_RevertsOnZeroProjectId() public {
+        vm.prank(anotherUser);
+        vm.expectRevert(ProjectRegistry__InvalidProjectId.selector);
+        registry.registerProject(bytes32(0), "ipfs://zero.json");
+    }
+
     /* ----------------- */
     /*    Status Changes */
     /* ----------------- */
