@@ -99,8 +99,9 @@ contract QuestManagerTest is Test {
 
         // Deploy ReputationManager (implementation and proxy)
         ReputationManager repImpl = new ReputationManager();
-        // Initialize with QuestManager as the initial updater
-        bytes memory repData = abi.encodeWithSelector(ReputationManager.initialize.selector, address(questManager));
+        // Initialize with QuestManager as the initial updater and a null slasher
+        bytes memory repData =
+            abi.encodeWithSelector(ReputationManager.initialize.selector, address(questManager), address(0));
         reputationManager = ReputationManager(address(new ERC1967Proxy(address(repImpl), repData)));
 
         // Deploy mocks and verifiers

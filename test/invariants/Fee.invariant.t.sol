@@ -135,10 +135,16 @@ contract FeeInvariantTest is Test, IFeeCallback {
         registry = ProjectRegistry(
             address(new ERC1967Proxy(address(registryImpl), abi.encodeCall(ProjectRegistry.initialize, ())))
         );
-        treasury = Treasury(payable(address(new ERC1967Proxy(address(new Treasury()), ""))));
-        treasury.initialize(admin);
-        credit = DynamicImpactCredit(address(new ERC1967Proxy(address(new DynamicImpactCredit(address(registry))), "")));
-        credit.initialize("ipfs://");
+
+        Treasury treasuryImpl = new Treasury();
+        bytes memory treasuryInitData = abi.encodeCall(Treasury.initialize, (admin));
+        treasury = Treasury(payable(address(new ERC1967Proxy(address(treasuryImpl), treasuryInitData))));
+
+        DynamicImpactCredit creditImpl = new DynamicImpactCredit();
+        bytes memory creditInitData =
+            abi.encodeCall(DynamicImpactCredit.initializeDynamicImpactCredit, (address(registry), "ipfs://"));
+        credit = DynamicImpactCredit(address(new ERC1967Proxy(address(creditImpl), creditInitData)));
+
         paymentToken = new ERC20Mock();
         marketplace = Marketplace(
             address(

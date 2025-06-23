@@ -35,11 +35,14 @@ contract MarketplaceFuzzTest is Test {
         );
         registry.grantRole(registry.VERIFIER_ROLE(), verifier);
 
+        DynamicImpactCredit creditImpl = new DynamicImpactCredit();
         credit = DynamicImpactCredit(
             address(
                 new ERC1967Proxy(
-                    address(new DynamicImpactCredit(address(registry))),
-                    abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://meta.json"))
+                    address(creditImpl),
+                    abi.encodeCall(
+                        DynamicImpactCredit.initializeDynamicImpactCredit, (address(registry), "ipfs://meta.json")
+                    )
                 )
             )
         );

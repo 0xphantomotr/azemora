@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "./interfaces/IReputationManager.sol";
 
 /**
  * @title ReputationManager
@@ -15,9 +16,11 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
  * non-transferable and can only be increased by authorized contracts.
  * It is upgradeable using the UUPS pattern.
  */
-contract ReputationManager is Initializable, AccessControlUpgradeable, UUPSUpgradeable {
+contract ReputationManager is Initializable, AccessControlUpgradeable, UUPSUpgradeable, IReputationManager {
     // --- Custom Errors ---
     error ReputationManager__Unauthorized();
+    error ReputationManager__AmountCannotBeZero();
+    error ReputationManager__ReputationCannotGoNegative();
 
     // --- Roles ---
     /**
@@ -25,6 +28,12 @@ contract ReputationManager is Initializable, AccessControlUpgradeable, UUPSUpgra
      * Initially, this will be the QuestManager.
      */
     bytes32 public constant REPUTATION_UPDATER_ROLE = keccak256("REPUTATION_UPDATER_ROLE");
+
+    /**
+     * @dev Role granted to contracts that can slash (reduce) user reputation.
+     * This will be the VerifierManager.
+     */
+    bytes32 public constant REPUTATION_SLASHER_ROLE = keccak256("REPUTATION_SLASHER_ROLE");
 
     // --- State ---
     /// @dev Mapping from a user's address to their total reputation score.
@@ -34,6 +43,7 @@ contract ReputationManager is Initializable, AccessControlUpgradeable, UUPSUpgra
 
     // --- Events ---
     event ReputationAdded(address indexed user, address indexed source, uint256 amount, uint256 newTotal);
+    event ReputationSlashed(address indexed user, address indexed source, uint256 amount, uint256 newTotal);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -44,13 +54,25 @@ contract ReputationManager is Initializable, AccessControlUpgradeable, UUPSUpgra
      * @notice Initializes the contract.
      * @dev The deployer is granted admin and updater roles.
      * @param initialUpdater The initial address to be granted the REPUTATION_UPDATER_ROLE (e.g., QuestManager).
+     * @param initialSlasher The initial address to be granted the REPUTATION_SLASHER_ROLE (e.g., VerifierManager).
      */
-    function initialize(address initialUpdater) public initializer {
+    function initialize(address initialUpdater, address initialSlasher) public initializer {
+        __ReputationManager_init(initialUpdater, initialSlasher);
+    }
+
+    function __ReputationManager_init(address initialUpdater, address initialSlasher) internal onlyInitializing {
         __AccessControl_init();
         __UUPSUpgradeable_init();
+        __ReputationManager_init_unchained(initialUpdater, initialSlasher);
+    }
 
+    function __ReputationManager_init_unchained(address initialUpdater, address initialSlasher)
+        internal
+        onlyInitializing
+    {
         _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
         _grantRole(REPUTATION_UPDATER_ROLE, initialUpdater);
+        _grantRole(REPUTATION_SLASHER_ROLE, initialSlasher);
     }
 
     // --- Core Logic ---
@@ -63,11 +85,30 @@ contract ReputationManager is Initializable, AccessControlUpgradeable, UUPSUpgra
      * @param amount The number of points to add.
      */
     function addReputation(address user, uint256 amount) external onlyRole(REPUTATION_UPDATER_ROLE) {
+        if (amount == 0) revert ReputationManager__AmountCannotBeZero();
         uint256 currentScore = reputationScores[user];
         uint256 newScore = currentScore + amount;
         reputationScores[user] = newScore;
 
         emit ReputationAdded(user, _msgSender(), amount, newScore);
+    }
+
+    /**
+     * @notice Slashes (reduces) reputation points from a user's score.
+     * @dev Can only be called by an address with `REPUTATION_SLASHER_ROLE`.
+     * The caller (`_msgSender()`) is logged as the source of the update for traceability.
+     * @param user The address of the user whose reputation is being slashed.
+     * @param amount The number of points to subtract.
+     */
+    function slashReputation(address user, uint256 amount) external onlyRole(REPUTATION_SLASHER_ROLE) {
+        if (amount == 0) revert ReputationManager__AmountCannotBeZero();
+        uint256 currentScore = reputationScores[user];
+        if (amount > currentScore) revert ReputationManager__ReputationCannotGoNegative();
+
+        uint256 newScore = currentScore - amount;
+        reputationScores[user] = newScore;
+
+        emit ReputationSlashed(user, _msgSender(), amount, newScore);
     }
 
     // --- View Functions ---

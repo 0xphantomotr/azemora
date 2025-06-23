@@ -5,6 +5,8 @@ import "forge-std/Test.sol";
 import "../../src/core/ProjectRegistry.sol";
 import "../../src/core/dMRVManager.sol";
 import "../../src/core/DynamicImpactCredit.sol";
+import "../../src/core/interfaces/IVerifierModule.sol";
+import "../mocks/MockVerifierModule.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
@@ -18,9 +20,10 @@ contract DynamicImpactCreditTest is Test {
     DynamicImpactCredit creditImpl;
     DynamicImpactCredit credit; // proxy cast
     ProjectRegistry registry;
+    DMRVManager dmrvManager;
+    MockVerifierModule mockModule;
 
     address admin = address(0xA11CE);
-    address dmrvManager = address(0xB01D);
     address user = address(0xCAFE);
     address other = address(0xD00D);
     address verifier = address(0xC1E4);
@@ -41,21 +44,38 @@ contract DynamicImpactCreditTest is Test {
         registry.grantRole(registry.VERIFIER_ROLE(), verifier);
 
         // Deploy Credit Contract
-        creditImpl = new DynamicImpactCredit(address(registry));
+        creditImpl = new DynamicImpactCredit();
 
-        bytes memory creditInitData = abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://contract-metadata.json"));
+        bytes memory creditInitData = abi.encodeCall(
+            DynamicImpactCredit.initializeDynamicImpactCredit, (address(registry), "ipfs://contract-metadata.json")
+        );
 
         ERC1967Proxy creditProxy = new ERC1967Proxy(address(creditImpl), creditInitData);
         credit = DynamicImpactCredit(address(creditProxy));
 
-        credit.grantRole(credit.DMRV_MANAGER_ROLE(), dmrvManager);
+        // Deploy dMRVManager
+        DMRVManager dmrvManagerImpl = new DMRVManager();
+        bytes memory dmrvInitData =
+            abi.encodeCall(DMRVManager.initializeDMRVManager, (address(registry), address(credit)));
+        ERC1967Proxy dmrvManagerProxy = new ERC1967Proxy(address(dmrvManagerImpl), dmrvInitData);
+        dmrvManager = DMRVManager(address(dmrvManagerProxy));
+
+        // Deploy Mock Verifier Module and add it to the manager
+        mockModule = new MockVerifierModule();
+        dmrvManager.registerVerifierModule("mock", address(mockModule));
+
+        credit.grantRole(credit.DMRV_MANAGER_ROLE(), address(dmrvManager));
         credit.grantRole(credit.METADATA_UPDATER_ROLE(), admin);
+        credit.grantRole(credit.PAUSER_ROLE(), admin);
 
         vm.stopPrank();
 
         // Register the project here so it exists for all tests that need it.
         vm.prank(user);
         registry.registerProject(setupProjectId, "ipfs://project-for-setup.json");
+
+        vm.prank(verifier);
+        registry.setProjectStatus(setupProjectId, ProjectRegistry.ProjectStatus.Active);
     }
 
     /* ---------- single mint ---------- */
@@ -66,8 +86,8 @@ contract DynamicImpactCreditTest is Test {
         vm.prank(verifier);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
 
-        vm.prank(dmrvManager);
-        credit.mintCredits(user, projectId, 100, "ipfs://t1.json");
+        vm.prank(admin);
+        dmrvManager.adminSubmitVerification(projectId, 100, "ipfs://t1.json", false);
 
         assertEq(credit.balanceOf(user, uint256(projectId)), 100);
         assertEq(credit.uri(uint256(projectId)), "ipfs://t1.json");
@@ -86,7 +106,7 @@ contract DynamicImpactCreditTest is Test {
         uris[0] = "ipfs://a.json";
         uris[1] = "ipfs://b.json";
 
-        // Register and activate projects - FIX: separate prank calls for each registration
+        // Register and activate projects
         vm.prank(user);
         registry.registerProject(ids[0], "p10.json");
 
@@ -98,8 +118,10 @@ contract DynamicImpactCreditTest is Test {
         registry.setProjectStatus(ids[1], ProjectRegistry.ProjectStatus.Active);
         vm.stopPrank();
 
-        vm.prank(dmrvManager);
-        credit.batchMintCredits(user, ids, amounts, uris);
+        vm.startPrank(admin);
+        dmrvManager.adminSubmitVerification(ids[0], amounts[0], uris[0], false);
+        dmrvManager.adminSubmitVerification(ids[1], amounts[1], uris[1], false);
+        vm.stopPrank();
 
         assertEq(credit.balanceOf(user, uint256(ids[0])), 5);
         assertEq(credit.balanceOf(user, uint256(ids[1])), 7);
@@ -132,8 +154,8 @@ contract DynamicImpactCreditTest is Test {
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
 
         string memory oldURI = "ipfs://old.json";
-        vm.startPrank(dmrvManager);
-        credit.mintCredits(user, projectId, 1, oldURI);
+        vm.prank(admin);
+        dmrvManager.adminSubmitVerification(projectId, 1, oldURI, false);
         vm.stopPrank();
 
         vm.prank(admin);
@@ -155,8 +177,8 @@ contract DynamicImpactCreditTest is Test {
         vm.prank(verifier);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
 
-        vm.prank(dmrvManager);
-        credit.mintCredits(user, projectId, 10, "ipfs://t.json");
+        vm.prank(admin);
+        dmrvManager.adminSubmitVerification(projectId, 10, "ipfs://t.json", false);
 
         vm.prank(user);
         credit.retire(user, projectId, 6);
@@ -172,8 +194,8 @@ contract DynamicImpactCreditTest is Test {
         vm.prank(verifier);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
 
-        vm.prank(dmrvManager);
-        credit.mintCredits(user, projectId, 1, "ipfs://t.json");
+        vm.prank(admin);
+        dmrvManager.adminSubmitVerification(projectId, 1, "ipfs://t.json", false);
 
         vm.prank(user);
         vm.expectRevert();
@@ -183,7 +205,7 @@ contract DynamicImpactCreditTest is Test {
     /* ---------- re-initialization blocked ---------- */
     function testCannotReinitialize() public {
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        credit.initialize("ipfs://again");
+        credit.initializeDynamicImpactCredit(address(registry), "ipfs://again");
     }
 
     /* ---------- upgrade keeps state ---------- */
@@ -194,11 +216,11 @@ contract DynamicImpactCreditTest is Test {
         vm.prank(verifier);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
 
-        vm.prank(dmrvManager);
-        credit.mintCredits(user, projectId, 42, "ipfs://state.json");
+        vm.prank(admin);
+        dmrvManager.adminSubmitVerification(projectId, 42, "ipfs://state.json", false);
 
         // deploy V2 with new variable
-        DynamicImpactCreditV2 v2 = new DynamicImpactCreditV2(address(registry));
+        DynamicImpactCreditV2 v2 = new DynamicImpactCreditV2();
 
         vm.startPrank(admin);
         // Empty bytes for data since we don't need initialization logic
@@ -252,15 +274,18 @@ contract DynamicImpactCreditTest is Test {
         credit.pause();
 
         vm.expectRevert("EnforcedPause()");
-        vm.prank(dmrvManager);
-        credit.mintCredits(user, projectId, 1, "ipfs://fail-paused.json");
+        vm.prank(admin);
+        dmrvManager.adminSubmitVerification(projectId, 1, "ipfs://fail-paused.json", false);
     }
 
     function test_MintCredits_RevertsForNonActiveProject() public {
-        // setupProjectId is registered but not activated
-        vm.prank(dmrvManager);
-        vm.expectRevert(DynamicImpactCredit__ProjectNotActive.selector);
-        credit.mintCredits(user, setupProjectId, 100, "ipfs://t1.json");
+        bytes32 inactiveProjectId = keccak256("Project-Inactive-Single-Mint");
+        vm.prank(user);
+        registry.registerProject(inactiveProjectId, "ipfs://inactive.json");
+
+        vm.prank(admin);
+        vm.expectRevert(DMRVManager__ProjectNotActive.selector);
+        dmrvManager.adminSubmitVerification(inactiveProjectId, 1, "ipfs://t.json", false);
     }
 
     function test_Retire_RevertsWhenNotAuthorized() public {
@@ -273,8 +298,8 @@ contract DynamicImpactCreditTest is Test {
         vm.prank(verifier);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
 
-        vm.prank(dmrvManager);
-        credit.mintCredits(user, projectId, 10, "ipfs://t.json");
+        vm.prank(admin);
+        dmrvManager.adminSubmitVerification(projectId, 10, "ipfs://t.json", false);
 
         // 'other' user, who is not the owner and not approved, tries to retire
         vm.prank(other);
@@ -298,7 +323,7 @@ contract DynamicImpactCreditTest is Test {
         uris[0] = "u1";
         uris[1] = "u2";
 
-        vm.prank(dmrvManager);
+        vm.prank(admin);
         vm.expectRevert(DynamicImpactCredit__LengthMismatch.selector);
         credit.batchMintCredits(user, ids, amounts, uris);
     }
@@ -308,12 +333,16 @@ contract DynamicImpactCreditTest is Test {
         uint256[] memory amounts = new uint256[](2);
         string[] memory uris = new string[](2);
 
-        ids[0] = setupProjectId; // This project is not active by default in setUp
+        ids[0] = keccak256("inactive-project"); // This project is not active
         ids[1] = keccak256("another-active-one");
         amounts[0] = 5;
         amounts[1] = 7;
         uris[0] = "ipfs://a.json";
         uris[1] = "ipfs://b.json";
+
+        // Register the inactive project
+        vm.prank(user);
+        registry.registerProject(ids[0], "p10-inactive.json");
 
         // Activate the second project
         vm.prank(user);
@@ -321,9 +350,9 @@ contract DynamicImpactCreditTest is Test {
         vm.prank(verifier);
         registry.setProjectStatus(ids[1], ProjectRegistry.ProjectStatus.Active);
 
-        vm.prank(dmrvManager);
-        vm.expectRevert(DynamicImpactCredit__ProjectNotActive.selector);
-        credit.batchMintCredits(user, ids, amounts, uris);
+        vm.prank(admin);
+        vm.expectRevert(DMRVManager__ProjectNotActive.selector);
+        dmrvManager.adminSubmitVerification(ids[0], amounts[0], uris[0], false);
     }
 }
 
@@ -331,7 +360,7 @@ contract DynamicImpactCreditTest is Test {
 contract DynamicImpactCreditV2 is UUPSUpgradeable, DynamicImpactCredit {
     uint256 public constant VERSION = 2;
 
-    constructor(address registryAddress) DynamicImpactCredit(registryAddress) {}
+    constructor() DynamicImpactCredit() {}
 
     function getVersion() external pure returns (uint256) {
         return VERSION;

@@ -5,285 +5,148 @@ import "forge-std/Test.sol";
 import "../../src/core/dMRVManager.sol";
 import "../../src/core/ProjectRegistry.sol";
 import "../../src/core/DynamicImpactCredit.sol";
+import "../mocks/MockVerifierModule.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
-contract DMRVManagerTest is Test {
-    DMRVManager manager;
+contract DMRVManagerUncovered is Test {
+    DMRVManager dMRVManager;
     ProjectRegistry registry;
     DynamicImpactCredit credit;
+    MockVerifierModule mockModule;
 
     address admin = address(0xA11CE);
-    address oracle = address(0x0AC1E);
-    address verifier = address(0xC1E4);
+    address user = address(0xDEADBEEF);
     address projectOwner = address(0x044E);
 
+    bytes32 public constant MOCK_MODULE_TYPE = keccak256("mock");
     bytes32 projectId = keccak256("Test Project");
 
     function setUp() public {
-        // Deploy and set up the contract infrastructure
         vm.startPrank(admin);
-
-        // 1. Deploy Registry
+        // --- Registry Setup ---
         ProjectRegistry registryImpl = new ProjectRegistry();
         bytes memory registryInitData = abi.encodeCall(ProjectRegistry.initialize, ());
         ERC1967Proxy registryProxy = new ERC1967Proxy(address(registryImpl), registryInitData);
         registry = ProjectRegistry(address(registryProxy));
-        registry.grantRole(registry.VERIFIER_ROLE(), verifier);
 
-        // 2. Deploy DynamicImpactCredit
-        DynamicImpactCredit creditImpl = new DynamicImpactCredit(address(registry));
-        bytes memory creditInitData = abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://contract-metadata.json"));
+        // --- Credit Setup ---
+        DynamicImpactCredit creditImpl = new DynamicImpactCredit();
+        bytes memory creditInitData =
+            abi.encodeCall(DynamicImpactCredit.initializeDynamicImpactCredit, (address(registry), "ipfs://collection"));
         ERC1967Proxy creditProxy = new ERC1967Proxy(address(creditImpl), creditInitData);
         credit = DynamicImpactCredit(address(creditProxy));
+        credit.grantRole(credit.DMRV_MANAGER_ROLE(), address(dMRVManager));
 
-        // 3. Deploy DMRVManager
-        DMRVManager managerImpl = new DMRVManager(address(registry), address(credit));
-        bytes memory managerInitData = abi.encodeCall(DMRVManager.initialize, ());
-        ERC1967Proxy managerProxy = new ERC1967Proxy(address(managerImpl), managerInitData);
-        manager = DMRVManager(address(managerProxy));
+        // --- dMRVManager Setup ---
+        DMRVManager dMRVManagerImpl = new DMRVManager();
+        bytes memory dMRVManagerInitData =
+            abi.encodeCall(DMRVManager.initializeDMRVManager, (address(registry), address(credit)));
+        ERC1967Proxy dMRVManagerProxy = new ERC1967Proxy(address(dMRVManagerImpl), dMRVManagerInitData);
+        dMRVManager = DMRVManager(address(dMRVManagerProxy));
 
-        // 4. Set up roles
-        credit.grantRole(credit.DMRV_MANAGER_ROLE(), address(manager));
-        credit.grantRole(credit.METADATA_UPDATER_ROLE(), address(manager));
-        manager.grantRole(manager.ORACLE_ROLE(), oracle);
+        // Grant role back to the proxy address
+        credit.grantRole(credit.DMRV_MANAGER_ROLE(), address(dMRVManager));
+        credit.grantRole(credit.METADATA_UPDATER_ROLE(), address(dMRVManager));
+        dMRVManager.grantRole(dMRVManager.PAUSER_ROLE(), admin);
+
+        // --- Mock Module Setup ---
+        mockModule = new MockVerifierModule();
 
         vm.stopPrank();
 
-        // 5. Register and activate a test project
+        // --- Initial State ---
         vm.prank(projectOwner);
         registry.registerProject(projectId, "ipfs://initial.json");
-
-        vm.prank(verifier);
+        vm.prank(admin);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
     }
 
-    /* ---------- Basic Functionality Tests ---------- */
-
-    function test_Initialization() public view {
-        assertEq(address(manager.projectRegistry()), address(registry));
-        assertEq(address(manager.creditContract()), address(credit));
-        assertTrue(manager.hasRole(manager.ORACLE_ROLE(), oracle));
-        assertTrue(manager.hasRole(manager.DEFAULT_ADMIN_ROLE(), admin));
-    }
-
-    function test_RequestVerification() public {
-        vm.prank(projectOwner);
-        bytes32 requestId = manager.requestVerification(projectId);
-
-        // Verify requestId is not zero
-        assertTrue(requestId != bytes32(0));
-    }
-
-    /* ---------- Oracle Fulfillment Tests ---------- */
-
-    function test_OracleFulfillment_MintCredits() public {
-        // 1. Create a verification request
-        vm.prank(projectOwner);
-        bytes32 requestId = manager.requestVerification(projectId);
-
-        // 2. Prepare oracle data for minting 100 credits
-        uint256 creditAmount = 100;
-        string memory metadataURI = "ipfs://new-verification.json";
-        bool updateMetadataOnly = false;
-        bytes32 signature = keccak256(abi.encodePacked("test-signature"));
-
-        // 3. Encode the data according to our expected format
-        bytes memory data = abi.encode(creditAmount, updateMetadataOnly, signature, metadataURI);
-
-        // 4. Oracle fulfills the verification
-        vm.prank(oracle);
-        manager.fulfillVerification(requestId, data);
-
-        // 5. Check that credits were minted to project owner
-        assertEq(credit.balanceOf(projectOwner, uint256(projectId)), 100);
-        assertEq(credit.uri(uint256(projectId)), metadataURI);
-    }
-
-    function test_OracleFulfillment_UpdateMetadataOnly() public {
-        // 1. First mint some initial credits directly instead of calling the other test
-        vm.prank(projectOwner);
-        bytes32 initialRequestId = manager.requestVerification(projectId);
-
-        // Set up initial minting data
-        bytes memory initialData = abi.encode(
-            uint256(100), // creditAmount
-            false, // updateMetadataOnly
-            bytes32(0), // signature
-            "ipfs://initial.json" // metadataURI
-        );
-
-        vm.prank(oracle);
-        manager.fulfillVerification(initialRequestId, initialData);
-
-        uint256 initialBalance = credit.balanceOf(projectOwner, uint256(projectId));
-
-        // 2. Create a new verification request
-        vm.prank(projectOwner);
-        bytes32 requestId = manager.requestVerification(projectId);
-
-        // 3. Prepare oracle data for updating metadata only
-        uint256 creditAmount = 0; // No new credits
-        string memory metadataURI = "ipfs://updated-verification.json";
-        bool updateMetadataOnly = true;
-        bytes32 signature = keccak256(abi.encodePacked("test-signature-2"));
-
-        // 4. Encode the data
-        bytes memory data = abi.encode(creditAmount, updateMetadataOnly, signature, metadataURI);
-
-        // 5. Oracle fulfills the verification
-        vm.prank(oracle);
-        manager.fulfillVerification(requestId, data);
-
-        // 6. Check that only metadata was updated (balance unchanged)
-        assertEq(credit.balanceOf(projectOwner, uint256(projectId)), initialBalance);
-        assertEq(credit.uri(uint256(projectId)), metadataURI);
-    }
-
-    function test_OracleFulfillment_RecordsUriHistory() public {
-        uint256 tokenId = uint256(projectId);
-
-        // --- 1. First fulfillment (mints and sets initial URI) ---
-        string memory uri1 = "ipfs://report-v1.json";
-        bytes memory data1 = abi.encode(uint256(100), false, bytes32(0), uri1);
-        // Request by projectOwner
-        vm.prank(projectOwner);
-        bytes32 requestId1 = manager.requestVerification(projectId);
-        // Fulfill by oracle
-        vm.prank(oracle);
-        manager.fulfillVerification(requestId1, data1);
-
-        // --- 2. Second fulfillment (updates metadata only) ---
-        string memory uri2 = "ipfs://report-v2.json";
-        bytes memory data2 = abi.encode(uint256(0), true, bytes32(0), uri2);
-        // Request by projectOwner
-        vm.prank(projectOwner);
-        bytes32 requestId2 = manager.requestVerification(projectId);
-        // Fulfill by oracle
-        vm.prank(oracle);
-        manager.fulfillVerification(requestId2, data2);
-
-        // --- 3. Third fulfillment (mints more credits and updates URI again) ---
-        string memory uri3 = "ipfs://report-v3.json";
-        bytes memory data3 = abi.encode(uint256(50), false, bytes32(0), uri3);
-        // Request by projectOwner
-        vm.prank(projectOwner);
-        bytes32 requestId3 = manager.requestVerification(projectId);
-        // Fulfill by oracle
-        vm.prank(oracle);
-        manager.fulfillVerification(requestId3, data3);
-
-        // --- 4. Verify the entire URI history ---
-        string[] memory history = credit.getTokenURIHistory(tokenId);
-
-        assertEq(history.length, 3, "URI history should have 3 entries");
-        assertEq(history[0], uri1, "First URI in history is incorrect");
-        assertEq(history[1], uri2, "Second URI in history is incorrect");
-        assertEq(history[2], uri3, "Third URI in history is incorrect");
-
-        // Also check that the current URI is the latest one
-        assertEq(credit.uri(tokenId), uri3, "Current URI should be the latest one");
-        assertEq(credit.balanceOf(projectOwner, tokenId), 150, "Final balance should be sum of mints");
-    }
-
-    /* ---------- Admin Functions ---------- */
-
-    function test_AdminSubmitVerification() public {
-        // Admin can directly set verification without oracle
-        vm.prank(admin);
-        manager.adminSubmitVerification(projectId, 50, "ipfs://admin-set.json", false);
-
-        // Check credits were minted
-        assertEq(credit.balanceOf(projectOwner, uint256(projectId)), 50);
-        assertEq(credit.uri(uint256(projectId)), "ipfs://admin-set.json");
-    }
-
-    /* ---------- Error Cases ---------- */
-
-    function test_RequestVerification_RequiresActiveProject() public {
-        // Create an inactive project
-        bytes32 inactiveId = keccak256("Inactive Project");
-        vm.prank(projectOwner);
-        registry.registerProject(inactiveId, "ipfs://inactive.json");
-        // Note: We don't activate it
-
-        // Attempt to request verification should fail
-        vm.prank(projectOwner);
-        vm.expectRevert(DMRVManager__ProjectNotActive.selector);
-        manager.requestVerification(inactiveId);
-    }
-
-    function test_FulfillVerification_OnlyOracle() public {
-        // 1. Create a request
-        vm.prank(projectOwner);
-        bytes32 requestId = manager.requestVerification(projectId);
-
-        // 2. Prepare some data
-        bytes memory data = abi.encode(uint256(100), false, bytes32(0), "ipfs://test.json");
-
-        // 3. Attempt to fulfill from non-oracle account
-        vm.prank(projectOwner);
-        vm.expectRevert(); // Will revert due to AccessControl
-        manager.fulfillVerification(requestId, data);
-    }
+    /* ---------- Uncovered Edge Cases ---------- */
 
     function test_FulfillVerification_CannotFulfillTwice() public {
-        // 1. Create a request
-        vm.prank(projectOwner);
-        bytes32 requestId = manager.requestVerification(projectId);
+        // Setup: Register module and request verification
+        vm.prank(admin);
+        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+        bytes32 claimId = keccak256("claim-double-fulfill");
+        vm.prank(user);
+        dMRVManager.requestVerification(projectId, claimId, "ipfs://evidence.json", MOCK_MODULE_TYPE);
+        bytes memory fulfillmentData = abi.encode(100e18, false, bytes32(0), "ipfs://new-metadata.json");
 
-        // 2. Prepare some data
-        bytes memory data = abi.encode(uint256(100), false, bytes32(0), "ipfs://test.json");
+        // Fulfill once successfully
+        vm.prank(address(mockModule));
+        dMRVManager.fulfillVerification(projectId, claimId, fulfillmentData);
 
-        // 3. Oracle fulfills the verification
-        vm.prank(oracle);
-        manager.fulfillVerification(requestId, data);
-
-        // 4. Try to fulfill again should fail
-        vm.prank(oracle);
-        vm.expectRevert(DMRVManager__RequestAlreadyFulfilled.selector);
-        manager.fulfillVerification(requestId, data);
+        // Try to fulfill again, expecting our new error
+        vm.prank(address(mockModule));
+        vm.expectRevert(DMRVManager__ClaimNotFoundOrAlreadyFulfilled.selector);
+        dMRVManager.fulfillVerification(projectId, claimId, fulfillmentData);
     }
 
-    /* ---------- Pausable Tests ---------- */
+    function test_GetModuleForClaim() public {
+        // Setup
+        vm.prank(admin);
+        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+        bytes32 claimId = keccak256("claim-get-module");
 
-    function test_PauseAndUnpause() public {
-        bytes32 pauserRole = manager.PAUSER_ROLE();
+        // Action
+        vm.prank(user);
+        dMRVManager.requestVerification(projectId, claimId, "ipfs://evidence.json", MOCK_MODULE_TYPE);
 
-        vm.startPrank(admin);
-        // Admin has pauser role by default from setUp
-        manager.pause();
-        assertTrue(manager.paused());
-        manager.unpause();
-        assertFalse(manager.paused());
-        vm.stopPrank();
+        // Assert
+        assertEq(dMRVManager.getModuleForClaim(claimId), MOCK_MODULE_TYPE);
+    }
 
-        // Non-pauser cannot pause
+    function test_AdminSubmitVerification_RevertsForInactiveProject() public {
+        // Setup: Create an inactive project
+        bytes32 inactiveProjectId = keccak256("Inactive Project");
         vm.prank(projectOwner);
+        registry.registerProject(inactiveProjectId, "ipfs://inactive.json");
+
+        // Action & Assert
+        vm.prank(admin);
+        vm.expectRevert(DMRVManager__ProjectNotActive.selector);
+        dMRVManager.adminSubmitVerification(inactiveProjectId, 100, "ipfs://meta.json", false);
+    }
+
+    function test_Pause_RevertsForNonPauser() public {
+        vm.startPrank(user); // Non-pauser
+        bytes32 pauserRole = dMRVManager.PAUSER_ROLE();
         vm.expectRevert(
             abi.encodeWithSelector(
-                bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)")), projectOwner, pauserRole
+                bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)")), user, pauserRole
             )
         );
-        manager.pause();
+        dMRVManager.pause();
+        vm.stopPrank();
     }
 
     function test_RevertsWhenPaused() public {
         vm.prank(admin);
-        manager.pause();
+        dMRVManager.pause();
 
         bytes4 expectedRevert = bytes4(keccak256("EnforcedPause()"));
 
-        vm.prank(projectOwner);
+        // Test requestVerification
+        vm.prank(user);
         vm.expectRevert(expectedRevert);
-        manager.requestVerification(projectId);
+        dMRVManager.requestVerification(projectId, keccak256("c1"), "uri", MOCK_MODULE_TYPE);
 
-        vm.prank(oracle);
-        bytes memory data = abi.encode(1, false, bytes32(0), "ipfs://fail.json");
-        vm.expectRevert(expectedRevert);
-        manager.fulfillVerification(bytes32(0), data);
-
+        // Test fulfillVerification
+        // Note: Can't test fulfill because request is blocked, so we test admin submit
         vm.prank(admin);
         vm.expectRevert(expectedRevert);
-        manager.adminSubmitVerification(projectId, 1, "ipfs://fail.json", false);
+        dMRVManager.adminSubmitVerification(projectId, 1, "uri", false);
+    }
+
+    function test_GetRoles() public {
+        bytes32[] memory roles = dMRVManager.getRoles(admin);
+        // Admin gets DEFAULT_ADMIN_ROLE, MODULE_ADMIN_ROLE, PAUSER_ROLE
+        assertEq(roles.length, 3);
+        assertEq(roles[0], dMRVManager.DEFAULT_ADMIN_ROLE());
+        assertEq(roles[1], dMRVManager.MODULE_ADMIN_ROLE());
+        assertEq(roles[2], dMRVManager.PAUSER_ROLE());
+
+        bytes32[] memory emptyRoles = dMRVManager.getRoles(user);
+        assertEq(emptyRoles.length, 0);
     }
 }

@@ -35,8 +35,8 @@ contract InterfaceComplianceTest is Test {
         // We only need to deploy the implementations, as we are just checking interface support
         // which does not depend on state or initialization. We DO NOT initialize them.
         registry = new ProjectRegistry();
-        dmrvManager = new DMRVManager(address(0x1), address(0x2)); // Pass non-zero dummy addresses
-        credit = new DynamicImpactCredit(address(0x3));
+        dmrvManager = new DMRVManager();
+        credit = new DynamicImpactCredit();
         marketplace = new Marketplace();
         token = new AzemoraToken();
     }

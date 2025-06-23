@@ -38,14 +38,25 @@ contract StakingIntegrationTest is Test {
             address(new ERC1967Proxy(address(registryImpl), abi.encodeCall(ProjectRegistry.initialize, ())))
         );
 
-        DynamicImpactCredit creditImpl = new DynamicImpactCredit(address(registry));
+        DynamicImpactCredit creditImpl = new DynamicImpactCredit();
         credit = DynamicImpactCredit(
-            address(new ERC1967Proxy(address(creditImpl), abi.encodeCall(DynamicImpactCredit.initialize, ("uri"))))
+            address(
+                new ERC1967Proxy(
+                    address(creditImpl),
+                    abi.encodeCall(DynamicImpactCredit.initializeDynamicImpactCredit, (address(registry), "uri"))
+                )
+            )
         );
 
-        DMRVManager dmrvManagerImpl = new DMRVManager(address(registry), address(credit));
-        dmrvManager =
-            DMRVManager(address(new ERC1967Proxy(address(dmrvManagerImpl), abi.encodeCall(DMRVManager.initialize, ()))));
+        DMRVManager dmrvManagerImpl = new DMRVManager();
+        dmrvManager = DMRVManager(
+            address(
+                new ERC1967Proxy(
+                    address(dmrvManagerImpl),
+                    abi.encodeCall(DMRVManager.initializeDMRVManager, (address(registry), address(credit)))
+                )
+            )
+        );
 
         // --- Deploy Staking & Marketplace ---
         stakingRewards = new StakingRewards(address(azemoraToken));
@@ -67,7 +78,7 @@ contract StakingIntegrationTest is Test {
         // Grant Roles for Minting and Ownership Transfer
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), address(dmrvManager));
         registry.grantRole(registry.VERIFIER_ROLE(), admin);
-        dmrvManager.grantRole(dmrvManager.ORACLE_ROLE(), admin);
+        dmrvManager.grantRole(dmrvManager.DEFAULT_ADMIN_ROLE(), admin);
 
         // --- Distribute Assets ---
         azemoraToken.transfer(buyer, 1000 ether);
@@ -77,9 +88,8 @@ contract StakingIntegrationTest is Test {
         bytes32 projectId = keccak256("Test Project For Staking");
         registry.registerProject(projectId, "ipfs://");
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
-        bytes32 requestId = dmrvManager.requestVerification(projectId);
         // Admin (as oracle) fulfills, minting credits to Admin (as project owner)
-        dmrvManager.fulfillVerification(requestId, abi.encode(uint256(100), false, bytes32(0), ""));
+        dmrvManager.adminSubmitVerification(projectId, 100, "", false);
 
         // Explicitly transfer the newly minted credits from Admin to the designated Seller
         credit.safeTransferFrom(admin, seller, uint256(projectId), 100, "");

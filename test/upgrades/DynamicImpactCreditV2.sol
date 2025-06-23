@@ -11,7 +11,7 @@ contract DynamicImpactCreditV2 is DynamicImpactCredit {
     /// @notice A new state variable to demonstrate a storage-extending upgrade.
     bool public isV2;
 
-    constructor(address registryAddress) DynamicImpactCredit(registryAddress) {}
+    constructor() {}
 
     /// @notice An initializer for the V2 contract.
     function initializeV2() public {

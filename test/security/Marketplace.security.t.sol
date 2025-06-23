@@ -54,16 +54,27 @@ contract MarketplaceSecurityTest is Test {
 
     function setUp() public {
         vm.startPrank(admin);
-        registry = ProjectRegistry(address(new ERC1967Proxy(address(new ProjectRegistry()), "")));
-        registry.initialize();
-        credit = DynamicImpactCredit(address(new ERC1967Proxy(address(new DynamicImpactCredit(address(registry))), "")));
-        credit.initialize("ipfs://");
+        ProjectRegistry registryImpl = new ProjectRegistry();
+        registry = ProjectRegistry(
+            address(new ERC1967Proxy(address(registryImpl), abi.encodeCall(ProjectRegistry.initialize, ())))
+        );
+
+        DynamicImpactCredit creditImpl = new DynamicImpactCredit();
+        credit = DynamicImpactCredit(
+            address(
+                new ERC1967Proxy(
+                    address(creditImpl),
+                    abi.encodeCall(DynamicImpactCredit.initializeDynamicImpactCredit, (address(registry), "ipfs://"))
+                )
+            )
+        );
 
         maliciousPaymentToken = new MaliciousERC20();
+        Marketplace marketplaceImpl = new Marketplace();
         marketplace = Marketplace(
             address(
                 new ERC1967Proxy(
-                    address(new Marketplace()),
+                    address(marketplaceImpl),
                     abi.encodeCall(Marketplace.initialize, (address(credit), address(maliciousPaymentToken)))
                 )
             )

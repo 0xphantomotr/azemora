@@ -86,8 +86,9 @@ contract GovernanceFuzzTest is Test {
         ERC1967Proxy registryProxy = new ERC1967Proxy(address(registryImpl), registryInitData);
         ProjectRegistry registry = ProjectRegistry(address(registryProxy));
 
-        DynamicImpactCredit creditImpl = new DynamicImpactCredit(address(registry));
-        bytes memory creditInitData = abi.encodeCall(DynamicImpactCredit.initialize, ("uri"));
+        DynamicImpactCredit creditImpl = new DynamicImpactCredit();
+        bytes memory creditInitData =
+            abi.encodeCall(DynamicImpactCredit.initializeDynamicImpactCredit, (address(registry), "uri"));
         ERC1967Proxy creditProxy = new ERC1967Proxy(address(creditImpl), creditInitData);
         credit = DynamicImpactCredit(address(creditProxy));
 

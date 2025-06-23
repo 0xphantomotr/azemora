@@ -56,13 +56,15 @@ contract HandoffTest is Test {
         registry = ProjectRegistry(address(new ERC1967Proxy(address(registryImpl), registryInit)));
 
         // 3. Deploy DynamicImpactCredit
-        DynamicImpactCredit creditImpl = new DynamicImpactCredit(address(registry));
-        bytes memory creditInit = abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://"));
+        DynamicImpactCredit creditImpl = new DynamicImpactCredit();
+        bytes memory creditInit =
+            abi.encodeCall(DynamicImpactCredit.initializeDynamicImpactCredit, (address(registry), "ipfs://"));
         credit = DynamicImpactCredit(address(new ERC1967Proxy(address(creditImpl), creditInit)));
 
         // 4. Deploy DMRVManager
-        DMRVManager dmrvManagerImpl = new DMRVManager(address(registry), address(credit));
-        bytes memory dmrvManagerInit = abi.encodeCall(DMRVManager.initialize, ());
+        DMRVManager dmrvManagerImpl = new DMRVManager();
+        bytes memory dmrvManagerInit =
+            abi.encodeCall(DMRVManager.initializeDMRVManager, (address(registry), address(credit)));
         dmrvManager = DMRVManager(address(new ERC1967Proxy(address(dmrvManagerImpl), dmrvManagerInit)));
 
         // 5. Deploy Marketplace

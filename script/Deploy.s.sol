@@ -13,10 +13,6 @@ import {AzemoraToken} from "../src/token/AzemoraToken.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 contract Deploy is Script {
-    // Role identifiers
-    bytes32 public constant DMRV_MANAGER_ROLE = keccak256("DMRV_MANAGER_ROLE");
-    bytes32 public constant METADATA_UPDATER_ROLE = keccak256("METADATA_UPDATER_ROLE");
-
     function run() external returns (address) {
         // --- Setup ---
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
@@ -71,24 +67,26 @@ contract Deploy is Script {
     function _deployProjectRegistry() internal returns (ProjectRegistry) {
         console.log("Deploying ProjectRegistry...");
         ProjectRegistry impl = new ProjectRegistry();
-        bytes memory initData = abi.encodeWithSelector(ProjectRegistry.initialize.selector);
+        bytes memory initData = abi.encodeCall(ProjectRegistry.initialize, ());
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         return ProjectRegistry(payable(address(proxy)));
     }
 
     function _deployDynamicImpactCredit(ProjectRegistry registry) internal returns (DynamicImpactCredit) {
         console.log("Deploying DynamicImpactCredit...");
-        DynamicImpactCredit impl = new DynamicImpactCredit(address(registry));
-        bytes memory initData =
-            abi.encodeWithSelector(DynamicImpactCredit.initialize.selector, "https://api.azemora.io/contract/d-ic");
+        DynamicImpactCredit impl = new DynamicImpactCredit();
+        bytes memory initData = abi.encodeCall(
+            DynamicImpactCredit.initializeDynamicImpactCredit,
+            (address(registry), "https://api.azemora.io/contract/d-ic")
+        );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         return DynamicImpactCredit(payable(address(proxy)));
     }
 
     function _deployDMRVManager(ProjectRegistry registry, DynamicImpactCredit credit) internal returns (DMRVManager) {
         console.log("Deploying DMRVManager...");
-        DMRVManager impl = new DMRVManager(address(registry), address(credit));
-        bytes memory initData = abi.encodeWithSelector(DMRVManager.initialize.selector);
+        DMRVManager impl = new DMRVManager();
+        bytes memory initData = abi.encodeCall(DMRVManager.initializeDMRVManager, (address(registry), address(credit)));
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         return DMRVManager(payable(address(proxy)));
     }
@@ -104,8 +102,8 @@ contract Deploy is Script {
 
     function _configureRoles(DynamicImpactCredit credit, DMRVManager manager) internal {
         console.log("Granting roles...");
-        credit.grantRole(DMRV_MANAGER_ROLE, address(manager));
-        credit.grantRole(METADATA_UPDATER_ROLE, address(manager));
+        credit.grantRole(credit.DMRV_MANAGER_ROLE(), address(manager));
+        credit.grantRole(credit.METADATA_UPDATER_ROLE(), address(manager));
     }
 
     function _configureMarketplace(Marketplace marketplace, address treasury) internal {

@@ -24,9 +24,11 @@ contract DynamicImpactCreditFuzzTest is Test {
         registry.grantRole(registry.VERIFIER_ROLE(), verifier);
 
         // Deploy Credit Contract
-        DynamicImpactCredit impl = new DynamicImpactCredit(address(registry));
+        DynamicImpactCredit impl = new DynamicImpactCredit();
 
-        bytes memory initData = abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://contract-metadata.json"));
+        bytes memory initData = abi.encodeCall(
+            DynamicImpactCredit.initializeDynamicImpactCredit, (address(registry), "ipfs://contract-metadata.json")
+        );
 
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         credit = DynamicImpactCredit(address(proxy));

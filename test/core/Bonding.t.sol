@@ -33,9 +33,14 @@ contract BondingTest is Test {
         registry = ProjectRegistry(
             address(new ERC1967Proxy(address(registryImpl), abi.encodeCall(ProjectRegistry.initialize, ())))
         );
-        DynamicImpactCredit creditImpl = new DynamicImpactCredit(address(registry));
+        DynamicImpactCredit creditImpl = new DynamicImpactCredit();
         credit = DynamicImpactCredit(
-            address(new ERC1967Proxy(address(creditImpl), abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://"))))
+            address(
+                new ERC1967Proxy(
+                    address(creditImpl),
+                    abi.encodeCall(DynamicImpactCredit.initializeDynamicImpactCredit, (address(registry), "ipfs://"))
+                )
+            )
         );
 
         // Deploy Bonding Contract

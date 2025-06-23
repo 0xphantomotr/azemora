@@ -22,7 +22,7 @@ contract DynamicImpactCreditExtendedV2 is DynamicImpactCredit {
 
     mapping(uint256 => mapping(address => RetirementInfo)) public retirementInfo;
 
-    constructor(address registry) DynamicImpactCredit(registry) {}
+    constructor() DynamicImpactCredit() {}
 
     function retireWithReason(address from, bytes32 id, uint256 amount, string calldata reason) external {
         super.retire(from, id, amount);
@@ -72,11 +72,15 @@ contract DynamicImpactCreditComplexTest is Test {
         registry.grantRole(registry.VERIFIER_ROLE(), verifier);
 
         // Deploy Credit Contract
-        DynamicImpactCredit impl = new DynamicImpactCredit(address(registry));
+        DynamicImpactCredit impl = new DynamicImpactCredit();
         credit = DynamicImpactCredit(
             address(
                 new ERC1967Proxy(
-                    address(impl), abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://contract-metadata.json"))
+                    address(impl),
+                    abi.encodeCall(
+                        DynamicImpactCredit.initializeDynamicImpactCredit,
+                        (address(registry), "ipfs://contract-metadata.json")
+                    )
                 )
             )
         );
@@ -188,7 +192,7 @@ contract DynamicImpactCreditComplexTest is Test {
         assertEq(credit.balanceOf(user3, uint256(projects[1].id)), 0);
 
         // STEP 5: Upgrade to V2 with enhanced features
-        DynamicImpactCreditExtendedV2 v2 = new DynamicImpactCreditExtendedV2(address(registry));
+        DynamicImpactCreditExtendedV2 v2 = new DynamicImpactCreditExtendedV2();
 
         vm.prank(admin);
         IUUPS(address(credit)).upgradeToAndCall(address(v2), "");
@@ -286,9 +290,7 @@ contract DynamicImpactCreditComplexTest is Test {
 
         // STEP 5: User2 attempts to transfer more tokens (should fail)
         vm.prank(user2);
-        vm.expectRevert(
-            abi.encodeWithSelector(bytes4(keccak256("ERC1155MissingApprovalForAll(address,address)")), user2, user1)
-        );
+        vm.expectRevert(abi.encodeWithSignature("ERC1155MissingApprovalForAll(address,address)", user2, user1));
         credit.safeTransferFrom(user1, user3, uint256(ids[0]), 10, "");
     }
 }

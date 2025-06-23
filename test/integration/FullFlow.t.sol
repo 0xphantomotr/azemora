@@ -104,14 +104,25 @@ contract FullFlowTest is Test {
             address(new ERC1967Proxy(address(registryImpl), abi.encodeCall(ProjectRegistry.initialize, ())))
         );
 
-        DynamicImpactCredit creditImpl = new DynamicImpactCredit(address(registry));
+        DynamicImpactCredit creditImpl = new DynamicImpactCredit();
         credit = DynamicImpactCredit(
-            address(new ERC1967Proxy(address(creditImpl), abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://"))))
+            address(
+                new ERC1967Proxy(
+                    address(creditImpl),
+                    abi.encodeCall(DynamicImpactCredit.initializeDynamicImpactCredit, (address(registry), "ipfs://"))
+                )
+            )
         );
 
-        DMRVManager dmrvManagerImpl = new DMRVManager(address(registry), address(credit));
-        dmrvManager =
-            DMRVManager(address(new ERC1967Proxy(address(dmrvManagerImpl), abi.encodeCall(DMRVManager.initialize, ()))));
+        DMRVManager dmrvManagerImpl = new DMRVManager();
+        dmrvManager = DMRVManager(
+            address(
+                new ERC1967Proxy(
+                    address(dmrvManagerImpl),
+                    abi.encodeCall(DMRVManager.initializeDMRVManager, (address(registry), address(credit)))
+                )
+            )
+        );
 
         // --- 3. DEPLOY MARKETPLACE ---
         Marketplace marketplaceImpl = new Marketplace();
@@ -135,8 +146,8 @@ contract FullFlowTest is Test {
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), address(dmrvManager));
         // Grant verifier role in the registry
         registry.grantRole(registry.VERIFIER_ROLE(), verifier);
-        // Grant oracle role in dMRV Manager
-        dmrvManager.grantRole(dmrvManager.ORACLE_ROLE(), dmrvOracle);
+        // Grant admin role in dMRV Manager to the oracle for simplified testing
+        dmrvManager.grantRole(dmrvManager.DEFAULT_ADMIN_ROLE(), dmrvOracle);
         // Set marketplace treasury TO THE STAKING CONTRACT
         marketplace.setTreasury(address(stakingRewards));
         marketplace.setFee(500); // 5% fee
@@ -196,14 +207,10 @@ contract FullFlowTest is Test {
         uint256 creditsToMint = 500;
         string memory verificationURI = "ipfs://verification-report-1";
 
-        // 2.1 Project developer requests verification
-        vm.prank(projectDeveloper);
-        bytes32 requestId = dmrvManager.requestVerification(projectId);
-
-        // 2.2 Oracle fulfills the verification request
+        // Oracle (with admin role) directly submits verification data,
+        // bypassing the request/fulfill flow for this integration test.
         vm.prank(dmrvOracle);
-        bytes memory verificationData = abi.encode(creditsToMint, false, bytes32(0), verificationURI);
-        dmrvManager.fulfillVerification(requestId, verificationData);
+        dmrvManager.adminSubmitVerification(projectId, creditsToMint, verificationURI, false);
 
         assertEq(
             credit.balanceOf(projectDeveloper, uint256(projectId)),
@@ -309,11 +316,9 @@ contract FullFlowTest is Test {
         vm.prank(verifier);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
 
-        vm.prank(projectDeveloper);
-        bytes32 requestId = dmrvManager.requestVerification(projectId);
+        // Directly submit verification as admin instead of request/fulfill
         vm.prank(dmrvOracle);
-        bytes memory verificationData = abi.encode(100, false, bytes32(0), "ipfs://verify-cancel");
-        dmrvManager.fulfillVerification(requestId, verificationData);
+        dmrvManager.adminSubmitVerification(projectId, 100, "ipfs://verify-cancel", false);
 
         uint256 developerInitialBalance = credit.balanceOf(projectDeveloper, uint256(projectId));
         assertTrue(developerInitialBalance > 0, "Developer must have credits to list");
@@ -408,11 +413,10 @@ contract FullFlowTest is Test {
         vm.stopPrank();
         vm.prank(verifier);
         registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
-        vm.prank(projectDeveloper);
-        bytes32 requestId = dmrvManager.requestVerification(projectId);
+
+        // Oracle (with admin role) directly submits verification data
         vm.prank(dmrvOracle);
-        bytes memory verificationData = abi.encode(100, false, bytes32(0), "ipfs://verify-bond");
-        dmrvManager.fulfillVerification(requestId, verificationData);
+        dmrvManager.adminSubmitVerification(projectId, 100, "ipfs://verify-bond", false);
 
         uint256 amountToBond = 50;
         vm.startPrank(projectDeveloper);

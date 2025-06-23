@@ -175,6 +175,10 @@ contract MarketplaceHandler is Test {
 // The Invariant Test Contract
 contract MarketplaceInvariantTest is StdInvariant, Test {
     MarketplaceHandler handler;
+    ProjectRegistry registry;
+    DynamicImpactCredit credit;
+    Marketplace marketplace;
+    MockERC20 paymentToken;
 
     function setUp() public {
         // --- Deploy Infrastructure ---
@@ -184,26 +188,29 @@ contract MarketplaceInvariantTest is StdInvariant, Test {
         address treasury = address(0xFE35);
 
         vm.startPrank(admin);
-        ProjectRegistry registry = ProjectRegistry(
-            address(new ERC1967Proxy(address(new ProjectRegistry()), abi.encodeCall(ProjectRegistry.initialize, ())))
+        ProjectRegistry registryImpl = new ProjectRegistry();
+        registry = ProjectRegistry(
+            address(new ERC1967Proxy(address(registryImpl), abi.encodeCall(ProjectRegistry.initialize, ())))
         );
         registry.grantRole(registry.VERIFIER_ROLE(), verifier);
 
-        DynamicImpactCredit credit = DynamicImpactCredit(
+        DynamicImpactCredit creditImpl = new DynamicImpactCredit();
+        credit = DynamicImpactCredit(
             address(
                 new ERC1967Proxy(
-                    address(new DynamicImpactCredit(address(registry))),
-                    abi.encodeCall(DynamicImpactCredit.initialize, ("uri"))
+                    address(creditImpl),
+                    abi.encodeCall(DynamicImpactCredit.initializeDynamicImpactCredit, (address(registry), "uri"))
                 )
             )
         );
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), dmrvManager);
 
-        MockERC20 paymentToken = new MockERC20("USD Coin", "USDC", 6);
-        Marketplace marketplace = Marketplace(
+        paymentToken = new MockERC20("USD Coin", "USDC", 6);
+        Marketplace marketplaceImpl = new Marketplace();
+        marketplace = Marketplace(
             address(
                 new ERC1967Proxy(
-                    address(new Marketplace()),
+                    address(marketplaceImpl),
                     abi.encodeCall(Marketplace.initialize, (address(credit), address(paymentToken)))
                 )
             )

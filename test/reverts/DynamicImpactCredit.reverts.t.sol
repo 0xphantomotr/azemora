@@ -30,14 +30,20 @@ contract DynamicImpactCreditRevertsTest is Test {
         // No verifier needed, we control status directly with admin for this test
 
         // Deploy Credits contract
-        DynamicImpactCredit creditImpl = new DynamicImpactCredit(address(registry));
+        DynamicImpactCredit creditImpl = new DynamicImpactCredit();
         credit = DynamicImpactCredit(
-            address(new ERC1967Proxy(address(creditImpl), abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://"))))
+            address(
+                new ERC1967Proxy(
+                    address(creditImpl),
+                    abi.encodeCall(DynamicImpactCredit.initializeDynamicImpactCredit, (address(registry), "ipfs://"))
+                )
+            )
         );
 
         // Grant necessary roles
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), dmrvManager);
         credit.grantRole(credit.METADATA_UPDATER_ROLE(), metadataUpdater);
+        credit.grantRole(credit.PAUSER_ROLE(), admin);
         vm.stopPrank();
 
         // Setup a pending and an active project
@@ -105,6 +111,6 @@ contract DynamicImpactCreditRevertsTest is Test {
 
         vm.expectRevert(bytes("EnforcedPause()"));
         vm.prank(dmrvManager);
-        credit.mintCredits(projectDeveloper, activeProjectId, 100, "ipfs://data");
+        credit.mintCredits(projectDeveloper, activeProjectId, 100, "ipfs://paused.json");
     }
 }

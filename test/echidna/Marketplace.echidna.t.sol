@@ -32,12 +32,13 @@ contract MarketplaceEchidnaTest is Test {
 
         // 1. Deploy Registry (logic and proxy)
         ProjectRegistry registryImpl = new ProjectRegistry();
-        bytes memory registryData = abi.encodeWithSelector(ProjectRegistry.initialize.selector);
+        bytes memory registryData = abi.encodeCall(ProjectRegistry.initialize, ());
         registry = ProjectRegistry(payable(address(new ERC1967Proxy(address(registryImpl), registryData))));
 
         // 2. Deploy Credit contract logic, passing it the *registry proxy* address
-        DynamicImpactCredit creditImpl = new DynamicImpactCredit(address(registry));
-        bytes memory creditData = abi.encodeWithSelector(creditImpl.initialize.selector, "contract_uri");
+        DynamicImpactCredit creditImpl = new DynamicImpactCredit();
+        bytes memory creditData =
+            abi.encodeCall(DynamicImpactCredit.initializeDynamicImpactCredit, (address(registry), "contract_uri"));
         credit = DynamicImpactCredit(payable(address(new ERC1967Proxy(address(creditImpl), creditData))));
 
         // 3. Deploy Payment Token
@@ -46,7 +47,7 @@ contract MarketplaceEchidnaTest is Test {
         // 4. Deploy Marketplace (logic and proxy)
         Marketplace marketplaceImpl = new Marketplace();
         bytes memory marketplaceData =
-            abi.encodeWithSelector(marketplaceImpl.initialize.selector, address(credit), address(paymentToken));
+            abi.encodeCall(marketplaceImpl.initialize, (address(credit), address(paymentToken)));
         marketplace = Marketplace(payable(address(new ERC1967Proxy(address(marketplaceImpl), marketplaceData))));
 
         // --- Grant Roles ---

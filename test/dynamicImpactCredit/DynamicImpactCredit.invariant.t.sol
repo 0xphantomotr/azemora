@@ -177,11 +177,15 @@ contract DynamicImpactCreditInvariantTest is StdInvariant, Test {
         registry = ProjectRegistry(
             address(new ERC1967Proxy(address(registryImpl), abi.encodeCall(ProjectRegistry.initialize, ())))
         );
-        DynamicImpactCredit impl = new DynamicImpactCredit(address(registry));
+        DynamicImpactCredit impl = new DynamicImpactCredit();
         credit = DynamicImpactCredit(
             address(
                 new ERC1967Proxy(
-                    address(impl), abi.encodeCall(DynamicImpactCredit.initialize, ("ipfs://contract-metadata.json"))
+                    address(impl),
+                    abi.encodeCall(
+                        DynamicImpactCredit.initializeDynamicImpactCredit,
+                        (address(registry), "ipfs://contract-metadata.json")
+                    )
                 )
             )
         );

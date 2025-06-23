@@ -76,12 +76,19 @@ contract UpgradeInvariantTest is Test {
 
         // --- Deploy all contracts (V1 setup) ---
         ProjectRegistry registryImpl = new ProjectRegistry();
-        registry = ProjectRegistry(address(new ERC1967Proxy(address(registryImpl), "")));
-        registry.initialize();
+        registry = ProjectRegistry(
+            address(new ERC1967Proxy(address(registryImpl), abi.encodeCall(ProjectRegistry.initialize, ())))
+        );
 
-        DynamicImpactCredit creditImpl = new DynamicImpactCredit(address(registry));
-        credit = DynamicImpactCredit(address(new ERC1967Proxy(address(creditImpl), "")));
-        credit.initialize("ipfs://");
+        DynamicImpactCredit creditImpl = new DynamicImpactCredit();
+        credit = DynamicImpactCredit(
+            address(
+                new ERC1967Proxy(
+                    address(creditImpl),
+                    abi.encodeCall(DynamicImpactCredit.initializeDynamicImpactCredit, (address(registry), "ipfs://"))
+                )
+            )
+        );
 
         paymentToken = new ERC20Mock();
         Marketplace marketplaceV1Impl = new Marketplace();

@@ -24,15 +24,23 @@ error DynamicImpactCredit__LengthMismatch();
  * It is upgradeable using the UUPS pattern.
  */
 contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgradeable, PausableUpgradeable {
-    bytes32 public constant DMRV_MANAGER_ROLE = keccak256("DMRV_MANAGER_ROLE");
-    bytes32 public constant METADATA_UPDATER_ROLE = keccak256("METADATA_UPDATER_ROLE");
-    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
+    function DMRV_MANAGER_ROLE() public pure returns (bytes32) {
+        return keccak256("DMRV_MANAGER_ROLE");
+    }
+
+    function METADATA_UPDATER_ROLE() public pure returns (bytes32) {
+        return keccak256("METADATA_UPDATER_ROLE");
+    }
+
+    function PAUSER_ROLE() public pure returns (bytes32) {
+        return keccak256("PAUSER_ROLE");
+    }
 
     bytes32[] private _roles;
 
     mapping(uint256 => string[]) private _tokenURIs;
     string private _contractURI;
-    IProjectRegistry public immutable projectRegistry;
+    IProjectRegistry public projectRegistry;
 
     uint256[50] private __gap;
 
@@ -41,33 +49,27 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
     event CreditsRetired(address indexed retirer, uint256 indexed tokenId, uint256 amount);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(address projectRegistry_) {
-        if (projectRegistry_ == address(0)) revert("Zero address not allowed");
-        projectRegistry = IProjectRegistry(projectRegistry_);
+    constructor() {
         _disableInitializers(); // protect the impl
     }
 
     /**
-     * @notice Initializes the contract, setting the contract URI and dependent contracts.
-     * @dev Sets up roles and contract dependencies. The deployer is granted `DEFAULT_ADMIN_ROLE`
-     * and `PAUSER_ROLE`. In a production environment, the other roles (`DMRV_MANAGER_ROLE`,
-     * `METADATA_UPDATER_ROLE`) must be granted to their respective contracts.
-     * @param contractURI_ The URI for the contract-level metadata.
+     * @notice Initializes the contract, setting the project registry and base URI.
+     * @param projectRegistryAddress The address of the ProjectRegistry contract.
+     * @param contractURI_ The base URI for all token types.
      */
-    function initialize(string memory contractURI_) public initializer {
-        __ERC1155_init(""); // base URI empty – each token has its own
+    function initializeDynamicImpactCredit(address projectRegistryAddress, string memory contractURI_)
+        public
+        initializer
+    {
+        __ERC1155_init(contractURI_);
         __AccessControl_init();
         __UUPSUpgradeable_init();
-        __Pausable_init();
 
-        _grantRole(DEFAULT_ADMIN_ROLE, _msgSender()); // This is required to make the initializer the admin.
-        _grantRole(PAUSER_ROLE, _msgSender());
-        _contractURI = contractURI_;
+        _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
+        _grantRole(DMRV_MANAGER_ROLE(), _msgSender()); // Initially grant to deployer
 
-        _roles.push(DEFAULT_ADMIN_ROLE);
-        _roles.push(DMRV_MANAGER_ROLE);
-        _roles.push(METADATA_UPDATER_ROLE);
-        _roles.push(PAUSER_ROLE);
+        projectRegistry = IProjectRegistry(projectRegistryAddress);
     }
 
     /**
@@ -82,7 +84,7 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
      */
     function mintCredits(address to, bytes32 projectId, uint256 amount, string calldata newUri)
         external
-        onlyRole(DMRV_MANAGER_ROLE)
+        onlyRole(DMRV_MANAGER_ROLE())
         whenNotPaused
     {
         if (!projectRegistry.isProjectActive(projectId)) revert DynamicImpactCredit__ProjectNotActive();
@@ -103,7 +105,7 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
      * @param id The project ID (`bytes32`) of the token to update.
      * @param newUri The new metadata URI to add to the token's history.
      */
-    function setTokenURI(bytes32 id, string calldata newUri) external onlyRole(METADATA_UPDATER_ROLE) whenNotPaused {
+    function setTokenURI(bytes32 id, string calldata newUri) external onlyRole(METADATA_UPDATER_ROLE()) whenNotPaused {
         uint256 tokenId = uint256(id);
         _tokenURIs[tokenId].push(newUri);
         emit URI(newUri, tokenId);
@@ -204,7 +206,7 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
      * This is a critical safety feature to halt activity in case of an emergency.
      * Emits a `Paused` event.
      */
-    function pause() external onlyRole(PAUSER_ROLE) {
+    function pause() external onlyRole(PAUSER_ROLE()) {
         _pause();
     }
 
@@ -213,7 +215,7 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
      * @dev Can only be called by an address with the `PAUSER_ROLE`.
      * Emits an `Unpaused` event.
      */
-    function unpause() external onlyRole(PAUSER_ROLE) {
+    function unpause() external onlyRole(PAUSER_ROLE()) {
         _unpause();
     }
 
@@ -244,30 +246,24 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
         bytes32[] calldata ids,
         uint256[] calldata amounts,
         string[] calldata uris // 1-to-1 with ids
-    ) external onlyRole(DMRV_MANAGER_ROLE) whenNotPaused {
+    ) external onlyRole(DMRV_MANAGER_ROLE()) whenNotPaused {
         uint256 idsLength = ids.length;
         if (idsLength != amounts.length || idsLength != uris.length) revert DynamicImpactCredit__LengthMismatch();
 
-        uint256[] memory tokenIds = new uint256[](idsLength);
-        for (uint256 i = 0; i < idsLength;) {
-            bytes32 projectId = ids[i];
-            if (!projectRegistry.isProjectActive(projectId)) revert DynamicImpactCredit__ProjectNotActive();
-            tokenIds[i] = uint256(projectId);
-            unchecked {
-                ++i;
+        for (uint256 i = 0; i < idsLength; i++) {
+            if (!projectRegistry.isProjectActive(ids[i])) {
+                revert DynamicImpactCredit__ProjectNotActive();
             }
+        }
+
+        uint256[] memory tokenIds = new uint256[](idsLength);
+        for (uint256 i = 0; i < idsLength; i++) {
+            tokenIds[i] = uint256(ids[i]);
+            _tokenURIs[tokenIds[i]].push(uris[i]);
         }
 
         _mintBatch(to, tokenIds, amounts, "");
 
-        for (uint256 i = 0; i < idsLength;) {
-            uint256 tokenId = tokenIds[i];
-            string memory newUri = uris[i];
-            _tokenURIs[tokenId].push(newUri);
-            emit URI(newUri, tokenId);
-            unchecked {
-                ++i;
-            }
-        }
+        // No individual URI events for batch minting to save gas
     }
 }

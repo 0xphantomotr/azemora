@@ -8,19 +8,23 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "./ProjectRegistry.sol";
 import "./DynamicImpactCredit.sol";
+import "./interfaces/IVerifierModule.sol";
 
 // --- Custom Errors ---
 error DMRVManager__ProjectNotActive();
-error DMRVManager__RequestNotFound();
-error DMRVManager__RequestAlreadyFulfilled();
+error DMRVManager__ModuleNotRegistered();
+error DMRVManager__ModuleAlreadyRegistered(bytes32 moduleType);
+error DMRVManager__CallerNotRegisteredModule();
+error DMRVManager__ZeroAddress();
+error DMRVManager__ClaimNotFoundOrAlreadyFulfilled();
 
 /**
  * @title DMRVManager
  * @author Genci Mehmeti
  * @dev Manages the retrieval and processing of digital Monitoring, Reporting, and
- * Verification (dMRV) data. This contract acts as the bridge between off-chain
- * data sources (oracles) and the on-chain minting of `DynamicImpactCredit` tokens,
- * ensuring that only verified environmental impact results in token creation.
+ * Verification (dMRV) data. This contract acts as a "router", delegating verification
+ * tasks to specialized, registered verifier modules. It then processes the trusted
+ * outcomes from these modules to mint `DynamicImpactCredit` tokens.
  * It is upgradeable using the UUPS pattern.
  */
 contract DMRVManager is
@@ -31,33 +35,27 @@ contract DMRVManager is
     PausableUpgradeable
 {
     // --- Roles ---
-    bytes32 public constant ORACLE_ROLE = keccak256("ORACLE_ROLE");
-    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
+    function MODULE_ADMIN_ROLE() public pure returns (bytes32) {
+        return keccak256("MODULE_ADMIN_ROLE");
+    }
+
+    function PAUSER_ROLE() public pure returns (bytes32) {
+        return keccak256("PAUSER_ROLE");
+    }
 
     bytes32[] private _roles;
 
     // --- State variables ---
-    ProjectRegistry public immutable projectRegistry;
-    DynamicImpactCredit public immutable creditContract;
+    ProjectRegistry public projectRegistry;
+    DynamicImpactCredit public creditContract;
 
-    // Mapping to track verification requests by request ID
-    mapping(bytes32 => VerificationRequest) private _requests;
-
-    // A nonce for each project to ensure unique, predictable request IDs
-    mapping(bytes32 => uint256) private _projectRequestNonce;
+    // Mapping from a module type identifier to its deployed contract address
+    mapping(bytes32 => address) public verifierModules;
+    // Mapping from a specific claim ID to the module type that is handling it
+    mapping(bytes32 => bytes32) private _claimToModuleType;
 
     // Adjusted gap to maintain storage layout for UUPS proxy compatibility
     uint256[49] private __gap;
-
-    // Structure for tracking verification requests
-    // Struct is packed to save gas on storage.
-    struct VerificationRequest {
-        bytes32 projectId; // 32 bytes - Slot 0
-        // --- Packed into a single 32-byte slot (Slot 1) ---
-        address requestor; // 20 bytes
-        uint64 timestamp; // 8 bytes
-        bool fulfilled; // 1 byte
-    }
 
     // Structure for representing parsed verification data
     struct VerificationData {
@@ -68,106 +66,106 @@ contract DMRVManager is
     }
 
     // --- Events ---
-    event VerificationRequested(bytes32 indexed requestId, bytes32 indexed projectId, address indexed requestor);
-    event VerificationFulfilled(bytes32 indexed requestId, bytes32 indexed projectId, uint256 creditAmount);
+    event VerificationDelegated(
+        bytes32 indexed claimId, bytes32 indexed projectId, bytes32 indexed moduleType, address moduleAddress
+    );
+    event VerificationFulfilled(bytes32 indexed claimId, bytes32 indexed projectId, bytes data);
     event AdminVerificationSubmitted(
         bytes32 indexed projectId, uint256 creditAmount, string metadataURI, bool updateMetadataOnly
     );
     event MetadataUpdated(bytes32 indexed projectId, string newURI);
     event CreditsMinted(bytes32 indexed projectId, address indexed owner, uint256 amount);
     event MissingProjectError(bytes32 indexed projectId);
+    event VerifierModuleRegistered(bytes32 indexed moduleType, address indexed moduleAddress);
+    event VerifierModuleRemoved(bytes32 indexed moduleType);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(address projectRegistry_, address creditContract_) {
-        if (projectRegistry_ == address(0) || creditContract_ == address(0)) {
-            revert("Zero address not allowed");
-        }
-        projectRegistry = ProjectRegistry(projectRegistry_);
-        creditContract = DynamicImpactCredit(creditContract_);
+    constructor() {
         _disableInitializers();
     }
 
     /**
      * @notice Initializes the contract with dependent contract addresses.
      * @dev Sets up roles and contract dependencies. The deployer is granted `DEFAULT_ADMIN_ROLE`,
-     * `ORACLE_ROLE`, and `PAUSER_ROLE`. In a production environment, the `ORACLE_ROLE` would be
-     * transferred to trusted oracle contracts.
+     * `MODULE_ADMIN_ROLE`, and `PAUSER_ROLE`.
      */
-    function initialize() public initializer {
+    function initializeDMRVManager(address _registryAddress, address _creditAddress) public initializer {
         __AccessControl_init();
-        __UUPSUpgradeable_init();
-        __ReentrancyGuard_init();
         __Pausable_init();
+        __ReentrancyGuard_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
-        // In a real deployment, this would be set to trusted oracle addresses
-        _grantRole(ORACLE_ROLE, _msgSender());
-        _grantRole(PAUSER_ROLE, _msgSender());
+        _grantRole(MODULE_ADMIN_ROLE(), _msgSender());
+        _grantRole(PAUSER_ROLE(), _msgSender());
 
         _roles.push(DEFAULT_ADMIN_ROLE);
-        _roles.push(ORACLE_ROLE);
-        _roles.push(PAUSER_ROLE);
+        _roles.push(MODULE_ADMIN_ROLE());
+        _roles.push(PAUSER_ROLE());
+
+        projectRegistry = ProjectRegistry(_registryAddress);
+        creditContract = DynamicImpactCredit(_creditAddress);
     }
 
     /**
-     * @notice Initiates a request for dMRV data from an oracle for a given project.
-     * @dev Emits a `VerificationRequested` event. For the MVP, this simulates an oracle request by
-     * creating a request entry. In a production environment, this function would be expanded to
-     * make a direct call to a decentralized oracle network like Chainlink.
-     * The project must be in the `Active` state.
+     * @notice Initiates a verification request by delegating it to a registered verifier module.
+     * @dev The project must be in the `Active` state. The specified `moduleType` must correspond
+     * to a registered and trusted verifier module contract.
      * @param projectId The unique identifier of the project to verify.
-     * @return requestId A unique ID for the verification request.
+     * @param claimId A unique identifier for the specific claim being verified.
+     * @param evidenceURI A URI pointing to off-chain evidence related to the claim.
+     * @param moduleType The type of verification module to use (e.g., "REPUTATION_WEIGHTED_V1").
+     * @return taskId A unique ID for the task, returned from the verifier module.
      */
-    function requestVerification(bytes32 projectId) external nonReentrant whenNotPaused returns (bytes32 requestId) {
+    function requestVerification(bytes32 projectId, bytes32 claimId, string calldata evidenceURI, bytes32 moduleType)
+        external
+        nonReentrant
+        whenNotPaused
+        returns (bytes32 taskId)
+    {
         if (!projectRegistry.isProjectActive(projectId)) revert DMRVManager__ProjectNotActive();
 
-        // New, deterministic way to generate the request ID
-        uint256 nonce = _projectRequestNonce[projectId];
-        requestId = keccak256(abi.encodePacked(projectId, _msgSender(), nonce));
-        _projectRequestNonce[projectId]++; // Increment nonce for the next request
+        address moduleAddress = verifierModules[moduleType];
+        if (moduleAddress == address(0)) revert DMRVManager__ModuleNotRegistered();
 
-        _requests[requestId] = VerificationRequest({
-            projectId: projectId,
-            requestor: _msgSender(),
-            timestamp: uint64(block.timestamp), // Still useful for tracking when it happened
-            fulfilled: false
-        });
+        _claimToModuleType[claimId] = moduleType;
 
-        emit VerificationRequested(requestId, projectId, _msgSender());
+        emit VerificationDelegated(claimId, projectId, moduleType, moduleAddress);
 
-        // In a real implementation, we'd make a Chainlink request here.
-        // For MVP purposes, we're simulating the oracle callback.
-
-        return requestId;
+        taskId = IVerifierModule(moduleAddress).startVerificationTask(projectId, claimId, evidenceURI);
     }
 
     /**
-     * @notice Callback function for oracles to deliver verified dMRV data.
-     * @dev This is a privileged function that can only be called by addresses with the `ORACLE_ROLE`.
-     * It marks the request as fulfilled and processes the incoming data to mint new impact credit tokens
-     * or update the metadata of existing ones. Emits a `VerificationFulfilled` event.
-     * @param requestId The ID of the verification request being fulfilled.
-     * @param data The raw, encoded verification data from the dMRV system.
+     * @notice Callback function for registered verifier modules to deliver a final, trusted result.
+     * @dev This is a privileged function that can only be called by the specific verifier module that
+     * was assigned to handle the claim. It processes the incoming data to mint new impact credit tokens
+     * or update the metadata of existing ones.
+     * @param projectId The ID of the project associated with the claim.
+     * @param claimId The ID of the verification claim being fulfilled.
+     * @param data The raw, encoded verification data from the module.
      */
-    function fulfillVerification(bytes32 requestId, bytes calldata data)
+    function fulfillVerification(bytes32 projectId, bytes32 claimId, bytes calldata data)
         external
-        onlyRole(ORACLE_ROLE)
         nonReentrant
         whenNotPaused
     {
-        VerificationRequest storage request = _requests[requestId];
-        if (request.timestamp == 0) revert DMRVManager__RequestNotFound();
-        if (request.fulfilled) revert DMRVManager__RequestAlreadyFulfilled();
+        bytes32 moduleType = _claimToModuleType[claimId];
+        if (moduleType == bytes32(0)) revert DMRVManager__ClaimNotFoundOrAlreadyFulfilled();
 
-        request.fulfilled = true;
+        address expectedModule = verifierModules[moduleType];
+
+        if (expectedModule == address(0)) revert DMRVManager__ModuleNotRegistered();
+        if (msg.sender != expectedModule) revert DMRVManager__CallerNotRegisteredModule();
+
+        // Clean up state BEFORE processing to prevent re-fulfillment (checks-effects-interactions)
+        delete _claimToModuleType[claimId];
 
         // Process the verification data
         VerificationData memory vData = parseVerificationData(data);
 
         // Act based on the verification data
-        processVerification(request.projectId, request.requestor, vData);
+        processVerification(projectId, vData);
 
-        emit VerificationFulfilled(requestId, request.projectId, vData.creditAmount);
+        emit VerificationFulfilled(claimId, projectId, data);
     }
 
     /**
@@ -176,7 +174,7 @@ contract DMRVManager is
      * @param projectId The project identifier.
      * @param data The parsed verification data.
      */
-    function processVerification(bytes32 projectId, address, /* requestor */ VerificationData memory data) internal {
+    function processVerification(bytes32 projectId, VerificationData memory data) internal {
         if (data.updateMetadataOnly) {
             // Update metadata only
             creditContract.setTokenURI(projectId, data.metadataURI);
@@ -194,13 +192,11 @@ contract DMRVManager is
     }
 
     /**
-     * @notice Returns the next request nonce for a given project.
-     * @dev Used for off-chain tools and scripts to predict the next request ID.
-     * @param projectId The ID of the project.
-     * @return The next nonce to be used.
+     * @notice Returns the module type handling a specific claim.
+     * @param claimId The ID of the claim.
      */
-    function getProjectRequestNonce(bytes32 projectId) external view returns (uint256) {
-        return _projectRequestNonce[projectId];
+    function getModuleForClaim(bytes32 claimId) external view returns (bytes32) {
+        return _claimToModuleType[claimId];
     }
 
     /**
@@ -246,8 +242,33 @@ contract DMRVManager is
             signature: bytes32(0) // Not needed for admin functions
         });
 
-        processVerification(projectId, _msgSender(), vData);
+        processVerification(projectId, vData);
         emit AdminVerificationSubmitted(projectId, creditAmount, metadataURI, updateMetadataOnly);
+    }
+
+    /**
+     * @notice Registers or updates a verifier module address.
+     * @dev Can only be called by an address with the `MODULE_ADMIN_ROLE`.
+     * @param moduleType The unique identifier for the module type (e.g., keccak256("REPUTATION_WEIGHTED_V1")).
+     * @param moduleAddress The deployed address of the verifier module contract.
+     */
+    function registerVerifierModule(bytes32 moduleType, address moduleAddress) external onlyRole(MODULE_ADMIN_ROLE()) {
+        if (moduleAddress == address(0)) revert DMRVManager__ZeroAddress();
+        if (verifierModules[moduleType] == moduleAddress) revert DMRVManager__ModuleAlreadyRegistered(moduleType);
+
+        verifierModules[moduleType] = moduleAddress;
+        emit VerifierModuleRegistered(moduleType, moduleAddress);
+    }
+
+    /**
+     * @notice Removes a verifier module from the registry.
+     * @dev Can only be called by an address with the `MODULE_ADMIN_ROLE`.
+     * @param moduleType The identifier of the module type to remove.
+     */
+    function removeVerifierModule(bytes32 moduleType) external onlyRole(MODULE_ADMIN_ROLE()) {
+        if (verifierModules[moduleType] == address(0)) revert DMRVManager__ModuleNotRegistered();
+        delete verifierModules[moduleType];
+        emit VerifierModuleRemoved(moduleType);
     }
 
     /**
@@ -256,7 +277,7 @@ contract DMRVManager is
      * This is a critical safety feature to halt activity in case of an emergency.
      * Emits a `Paused` event.
      */
-    function pause() external onlyRole(PAUSER_ROLE) {
+    function pause() external onlyRole(PAUSER_ROLE()) {
         _pause();
     }
 
@@ -265,7 +286,7 @@ contract DMRVManager is
      * @dev Can only be called by an address with the `PAUSER_ROLE`.
      * Emits an `Unpaused` event.
      */
-    function unpause() external onlyRole(PAUSER_ROLE) {
+    function unpause() external onlyRole(PAUSER_ROLE()) {
         _unpause();
     }
 

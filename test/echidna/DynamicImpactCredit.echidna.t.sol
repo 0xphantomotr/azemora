@@ -30,12 +30,13 @@ contract DynamicImpactCreditEchidnaTest is Test {
         // --- Deploy Logic & Proxies ---
         // 1. Registry
         ProjectRegistry registryImpl = new ProjectRegistry();
-        bytes memory registryData = abi.encodeWithSelector(ProjectRegistry.initialize.selector);
+        bytes memory registryData = abi.encodeCall(ProjectRegistry.initialize, ());
         registry = ProjectRegistry(payable(address(new ERC1967Proxy(address(registryImpl), registryData))));
 
         // 2. Credit
-        DynamicImpactCredit creditImpl = new DynamicImpactCredit(address(registry));
-        bytes memory creditData = abi.encodeWithSelector(creditImpl.initialize.selector, "contract_uri");
+        DynamicImpactCredit creditImpl = new DynamicImpactCredit();
+        bytes memory creditData =
+            abi.encodeCall(DynamicImpactCredit.initializeDynamicImpactCredit, (address(registry), "contract_uri"));
         credit = DynamicImpactCredit(payable(address(new ERC1967Proxy(address(creditImpl), creditData))));
 
         // --- Create Users and Roles ---
@@ -68,6 +69,26 @@ contract DynamicImpactCreditEchidnaTest is Test {
                 registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
             }
         }
+    }
+
+    function setUp() public {
+        vm.startPrank(admin);
+        // Deploy Registry
+        ProjectRegistry registryImpl = new ProjectRegistry();
+        registry = ProjectRegistry(
+            address(new ERC1967Proxy(address(registryImpl), abi.encodeCall(ProjectRegistry.initialize, ())))
+        );
+
+        // Deploy Credits contract
+        DynamicImpactCredit creditImpl = new DynamicImpactCredit();
+        bytes memory creditData =
+            abi.encodeCall(DynamicImpactCredit.initializeDynamicImpactCredit, (address(registry), "contract_uri"));
+
+        credit = DynamicImpactCredit(address(new ERC1967Proxy(address(creditImpl), creditData)));
+
+        // Grant roles
+        credit.grantRole(credit.DMRV_MANAGER_ROLE(), dMrvManager);
+        vm.stopPrank();
     }
 
     // =================================================================
