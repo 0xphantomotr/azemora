@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import "../../src/core/ProjectRegistry.sol";
 import "../../src/core/DynamicImpactCredit.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 
 contract DynamicImpactCreditFuzzTest is Test {
     DynamicImpactCredit credit;
@@ -21,20 +22,28 @@ contract DynamicImpactCreditFuzzTest is Test {
         registry = ProjectRegistry(
             address(new ERC1967Proxy(address(registryImpl), abi.encodeCall(ProjectRegistry.initialize, ())))
         );
-        registry.grantRole(registry.VERIFIER_ROLE(), verifier);
-
         // Deploy Credit Contract
         DynamicImpactCredit impl = new DynamicImpactCredit();
-
         bytes memory initData = abi.encodeCall(
             DynamicImpactCredit.initializeDynamicImpactCredit, (address(registry), "ipfs://contract-metadata.json")
         );
-
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         credit = DynamicImpactCredit(address(proxy));
 
+        // Grant roles
+        registry.grantRole(registry.VERIFIER_ROLE(), verifier);
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), dmrvManager);
         credit.grantRole(credit.METADATA_UPDATER_ROLE(), admin);
+        vm.stopPrank();
+
+        // Register and activate a project for fuzzing
+        bytes32 fuzzProjectId = keccak256("Fuzz-Project");
+        vm.startPrank(user);
+        registry.registerProject(fuzzProjectId, "fuzz.json");
+        vm.stopPrank();
+
+        vm.startPrank(verifier);
+        registry.setProjectStatus(fuzzProjectId, IProjectRegistry.ProjectStatus.Active);
         vm.stopPrank();
     }
 
@@ -60,7 +69,7 @@ contract DynamicImpactCreditFuzzTest is Test {
             vm.prank(user);
             registry.registerProject(ids[i], "meta.json");
             vm.prank(verifier);
-            registry.setProjectStatus(ids[i], ProjectRegistry.ProjectStatus.Active);
+            registry.setProjectStatus(ids[i], IProjectRegistry.ProjectStatus.Active);
         }
 
         vm.prank(dmrvManager);
@@ -84,7 +93,7 @@ contract DynamicImpactCreditFuzzTest is Test {
         vm.prank(user);
         registry.registerProject(projectId, "meta.json");
         vm.prank(verifier);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
 
         // Mint the tokens
         vm.prank(dmrvManager);
@@ -106,7 +115,7 @@ contract DynamicImpactCreditFuzzTest is Test {
         vm.prank(user);
         registry.registerProject(projectId, "meta.json");
         vm.prank(verifier);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
 
         // Mint with initial URI
         vm.prank(dmrvManager);

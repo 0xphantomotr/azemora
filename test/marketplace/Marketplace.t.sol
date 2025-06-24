@@ -7,6 +7,7 @@ import "../../src/core/ProjectRegistry.sol";
 import "../../src/core/dMRVManager.sol";
 import "../../src/core/DynamicImpactCredit.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 
 // Minimal mock ERC20 to avoid dependency on forge-std/mocks
 contract MockERC20 {
@@ -121,7 +122,7 @@ contract MarketplaceTest is Test {
         vm.prank(seller);
         registry.registerProject(projectId, "ipfs://project.json");
         vm.prank(verifier);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
 
         // 2. Mint some credits to the seller
         vm.prank(dmrvManager);

@@ -13,6 +13,7 @@ import {ProjectToken} from "../../src/fundraising/ProjectToken.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {MockCollateral} from "../mocks/MockCollateral.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 
 contract FundraisingIntegrationTest is Test {
     // --- Constants ---
@@ -73,7 +74,7 @@ contract FundraisingIntegrationTest is Test {
         vm.stopPrank();
 
         vm.startPrank(admin);
-        projectRegistry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        projectRegistry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
         vm.stopPrank();
     }
 

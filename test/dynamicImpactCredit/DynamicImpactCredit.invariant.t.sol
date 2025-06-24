@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import "./DynamicImpactCredit.t.sol";
-import "../../src/core/ProjectRegistry.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 import "../../src/core/DynamicImpactCredit.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
@@ -64,7 +64,7 @@ contract CreditHandler is Test {
             vm.prank(user); // Project owner registers
             registry.registerProject(projectId, "ipfs://meta.json");
             vm.prank(verifier);
-            registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+            registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
         }
 
         vm.prank(dmrvManager);
@@ -195,6 +195,18 @@ contract DynamicImpactCreditInvariantTest is StdInvariant, Test {
         credit.grantRole(credit.METADATA_UPDATER_ROLE(), admin);
         registry.grantRole(registry.VERIFIER_ROLE(), verifier);
         vm.stopPrank();
+
+        // Register and activate a project for these tests
+        bytes32 invariantProjectId = keccak256("Invariant-Project");
+        vm.prank(admin);
+        registry.registerProject(invariantProjectId, "inv.json");
+
+        vm.prank(verifier);
+        registry.setProjectStatus(invariantProjectId, IProjectRegistry.ProjectStatus.Active);
+
+        // Mint initial balance to the user. This must be done by the dmrvManager.
+        vm.prank(dmrvManager);
+        credit.mintCredits(admin, invariantProjectId, 10000, "ipfs://initial-balance.json");
 
         // Create handler and target it for invariant testing
         handler = new CreditHandler(credit, registry, admin, dmrvManager, verifier);

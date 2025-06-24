@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import "../../src/core/ProjectRegistry.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 contract ProjectRegistryTest is Test {
@@ -44,10 +45,10 @@ contract ProjectRegistryTest is Test {
         emit ProjectRegistry.ProjectRegistered(newId, anotherUser, uri);
         registry.registerProject(newId, uri);
 
-        ProjectRegistry.Project memory project = registry.getProject(newId);
+        IProjectRegistry.Project memory project = registry.getProject(newId);
         assertEq(project.id, newId);
         assertEq(project.owner, anotherUser);
-        assertEq(uint8(project.status), uint8(ProjectRegistry.ProjectStatus.Pending));
+        assertEq(uint8(project.status), uint8(IProjectRegistry.ProjectStatus.Pending));
         assertEq(project.metaURI, uri);
     }
 
@@ -71,93 +72,93 @@ contract ProjectRegistryTest is Test {
         vm.prank(verifier);
         vm.expectEmit(true, true, true, true, address(registry));
         emit ProjectRegistry.ProjectStatusChanged(
-            projectId, ProjectRegistry.ProjectStatus.Pending, ProjectRegistry.ProjectStatus.Active
+            projectId, IProjectRegistry.ProjectStatus.Pending, IProjectRegistry.ProjectStatus.Active
         );
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
         assertTrue(registry.isProjectActive(projectId));
     }
 
     function test_SetStatus_AdminCanPauseAndArchive() public {
         // First, activate the project
         vm.prank(verifier);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
 
         // Then, admin can pause it
         vm.startPrank(admin);
         vm.expectEmit(true, true, true, true, address(registry));
         emit ProjectRegistry.ProjectStatusChanged(
-            projectId, ProjectRegistry.ProjectStatus.Active, ProjectRegistry.ProjectStatus.Paused
+            projectId, IProjectRegistry.ProjectStatus.Active, IProjectRegistry.ProjectStatus.Paused
         );
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Paused);
-        assertEq(uint8(registry.getProject(projectId).status), uint8(ProjectRegistry.ProjectStatus.Paused));
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Paused);
+        assertEq(uint8(registry.getProject(projectId).status), uint8(IProjectRegistry.ProjectStatus.Paused));
 
         // And admin can archive it
         vm.expectEmit(true, true, true, true, address(registry));
         emit ProjectRegistry.ProjectStatusChanged(
-            projectId, ProjectRegistry.ProjectStatus.Paused, ProjectRegistry.ProjectStatus.Archived
+            projectId, IProjectRegistry.ProjectStatus.Paused, IProjectRegistry.ProjectStatus.Archived
         );
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Archived);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Archived);
         vm.stopPrank();
 
-        assertEq(uint8(registry.getProject(projectId).status), uint8(ProjectRegistry.ProjectStatus.Archived));
+        assertEq(uint8(registry.getProject(projectId).status), uint8(IProjectRegistry.ProjectStatus.Archived));
         assertFalse(registry.isProjectActive(projectId));
     }
 
     function test_SetStatus_RevertsForNonVerifier() public {
         vm.prank(anotherUser);
         vm.expectRevert(ProjectRegistry__CallerNotVerifier.selector);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
     }
 
     function test_SetStatus_RevertsForNonAdmin() public {
         vm.prank(anotherUser);
         vm.expectRevert(ProjectRegistry__CallerNotAdmin.selector);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Paused);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Paused);
 
         vm.expectRevert(ProjectRegistry__CallerNotAdmin.selector);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Archived);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Archived);
     }
 
     function test_SetStatus_RevertsOnInvalidTransition() public {
         // an already pending project cannot be set to pending again
         vm.prank(admin);
         vm.expectRevert(ProjectRegistry__StatusIsSame.selector);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Pending);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Pending);
     }
 
     function test_SetStatus_RevertsOnArchivedProject() public {
         // first, archive it
         vm.prank(verifier);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
         vm.prank(admin);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Archived);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Archived);
 
         // then, try to change it
         vm.prank(admin);
         vm.expectRevert(ProjectRegistry__ArchivedProjectCannotBeModified.selector);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Paused);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Paused);
     }
 
     function test_SetStatus_RevertsOnNonExistentProject() public {
         vm.prank(verifier);
         vm.expectRevert(ProjectRegistry__ProjectNotFound.selector);
-        registry.setProjectStatus(bytes32(uint256(420)), ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(bytes32(uint256(420)), IProjectRegistry.ProjectStatus.Active);
     }
 
     function test_SetStatus_RevertsOnInvalidTransitionToPaused() public {
         // cannot pause from pending
         vm.prank(admin);
         vm.expectRevert(ProjectRegistry__InvalidPauseState.selector);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Paused);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Paused);
     }
 
     function test_SetStatus_RevertsOnInvalidTransitionToPending() public {
         // cannot transition to pending from any other state
         vm.prank(verifier);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
         vm.prank(admin);
         vm.expectRevert(ProjectRegistry__InvalidStatusTransition.selector);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Pending);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Pending);
     }
 
     /* ----------------- */
@@ -254,7 +255,7 @@ contract ProjectRegistryTest is Test {
 
         vm.prank(verifier);
         vm.expectRevert(expectedRevert);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
 
         vm.prank(projectOwner);
         vm.expectRevert(expectedRevert);

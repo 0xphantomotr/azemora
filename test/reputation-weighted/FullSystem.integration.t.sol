@@ -11,6 +11,7 @@ import {DynamicImpactCredit} from "../../src/core/DynamicImpactCredit.sol";
 import {ReputationManager} from "../../src/achievements/ReputationManager.sol";
 import {VerifierManager} from "../../src/reputation-weighted/VerifierManager.sol";
 import {ReputationWeightedVerifier} from "../../src/reputation-weighted/ReputationWeightedVerifier.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 
 // Mocks & Tokens
 import {MockERC20} from "../mocks/MockERC20.sol";
@@ -155,7 +156,7 @@ contract FullSystemIntegrationTest is Test {
 
         // Admin must activate the project
         vm.prank(admin);
-        projectRegistry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        projectRegistry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
     }
 
     function test_fullFlow_successfulVerification() public {

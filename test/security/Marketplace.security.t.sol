@@ -8,6 +8,7 @@ import "../../src/core/ProjectRegistry.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 
 /*
  * @title MaliciousERC20
@@ -83,7 +84,7 @@ contract MarketplaceSecurityTest is Test {
         testProjectId = keccak256("Test Project");
         tokenId = uint256(testProjectId);
         registry.registerProject(testProjectId, "ipfs://");
-        registry.setProjectStatus(testProjectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(testProjectId, IProjectRegistry.ProjectStatus.Active);
 
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), seller);
         vm.stopPrank();

@@ -8,6 +8,7 @@ import "../../src/core/dMRVManager.sol";
 import "../../src/core/DynamicImpactCredit.sol";
 import "../../src/marketplace/Marketplace.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 
 contract MarketplaceComplexTest is Test {
     // Core contracts
@@ -82,7 +83,7 @@ contract MarketplaceComplexTest is Test {
         vm.prank(seller1);
         registry.registerProject(projectId1, "ipfs://alpha.json");
         vm.prank(verifier);
-        registry.setProjectStatus(projectId1, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId1, IProjectRegistry.ProjectStatus.Active);
         vm.prank(dmrvManager);
         credit.mintCredits(seller1, projectId1, 500, "ipfs://c-alpha.json");
 
@@ -90,7 +91,7 @@ contract MarketplaceComplexTest is Test {
         vm.prank(seller2);
         registry.registerProject(projectId2, "ipfs://beta.json");
         vm.prank(verifier);
-        registry.setProjectStatus(projectId2, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId2, IProjectRegistry.ProjectStatus.Active);
         vm.prank(dmrvManager);
         credit.mintCredits(seller2, projectId2, 1000, "ipfs://c-beta.json");
     }

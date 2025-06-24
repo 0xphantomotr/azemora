@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import "../../src/core/ProjectRegistry.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 import "../../src/core/dMRVManager.sol";
 import "../../src/core/DynamicImpactCredit.sol";
 import "../../src/core/interfaces/IVerifierModule.sol";
@@ -75,7 +76,7 @@ contract DynamicImpactCreditTest is Test {
         registry.registerProject(setupProjectId, "ipfs://project-for-setup.json");
 
         vm.prank(verifier);
-        registry.setProjectStatus(setupProjectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(setupProjectId, IProjectRegistry.ProjectStatus.Active);
     }
 
     /* ---------- single mint ---------- */
@@ -84,7 +85,7 @@ contract DynamicImpactCreditTest is Test {
         vm.prank(user);
         registry.registerProject(projectId, "ipfs://project1.json");
         vm.prank(verifier);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
 
         vm.prank(admin);
         dmrvManager.adminSubmitVerification(projectId, 100, "ipfs://t1.json", false);
@@ -114,8 +115,8 @@ contract DynamicImpactCreditTest is Test {
         registry.registerProject(ids[1], "p11.json");
 
         vm.startPrank(verifier);
-        registry.setProjectStatus(ids[0], ProjectRegistry.ProjectStatus.Active);
-        registry.setProjectStatus(ids[1], ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(ids[0], IProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(ids[1], IProjectRegistry.ProjectStatus.Active);
         vm.stopPrank();
 
         vm.startPrank(admin);
@@ -134,7 +135,7 @@ contract DynamicImpactCreditTest is Test {
         vm.prank(user);
         registry.registerProject(projectId, "p2.json");
         vm.prank(verifier);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
 
         vm.expectRevert(
             abi.encodeWithSignature(
@@ -151,7 +152,7 @@ contract DynamicImpactCreditTest is Test {
         vm.prank(user);
         registry.registerProject(projectId, "p3.json");
         vm.prank(verifier);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
 
         string memory oldURI = "ipfs://old.json";
         vm.prank(admin);
@@ -175,7 +176,7 @@ contract DynamicImpactCreditTest is Test {
         vm.prank(user);
         registry.registerProject(projectId, "p4.json");
         vm.prank(verifier);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
 
         vm.prank(admin);
         dmrvManager.adminSubmitVerification(projectId, 10, "ipfs://t.json", false);
@@ -192,7 +193,7 @@ contract DynamicImpactCreditTest is Test {
         vm.prank(user);
         registry.registerProject(projectId, "p5.json");
         vm.prank(verifier);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
 
         vm.prank(admin);
         dmrvManager.adminSubmitVerification(projectId, 1, "ipfs://t.json", false);
@@ -214,7 +215,7 @@ contract DynamicImpactCreditTest is Test {
         vm.prank(user);
         registry.registerProject(projectId, "p7.json");
         vm.prank(verifier);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
 
         vm.prank(admin);
         dmrvManager.adminSubmitVerification(projectId, 42, "ipfs://state.json", false);
@@ -268,7 +269,7 @@ contract DynamicImpactCreditTest is Test {
         vm.prank(user);
         registry.registerProject(projectId, "p-pausable.json");
         vm.prank(verifier);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
 
         vm.prank(admin);
         credit.pause();
@@ -296,7 +297,7 @@ contract DynamicImpactCreditTest is Test {
         registry.registerProject(projectId, "ipfs://retire.json");
 
         vm.prank(verifier);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
 
         vm.prank(admin);
         dmrvManager.adminSubmitVerification(projectId, 10, "ipfs://t.json", false);
@@ -348,7 +349,7 @@ contract DynamicImpactCreditTest is Test {
         vm.prank(user);
         registry.registerProject(ids[1], "p11.json");
         vm.prank(verifier);
-        registry.setProjectStatus(ids[1], ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(ids[1], IProjectRegistry.ProjectStatus.Active);
 
         vm.prank(admin);
         vm.expectRevert(DMRVManager__ProjectNotActive.selector);

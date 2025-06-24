@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Script.sol";
 import "forge-std/console.sol";
-import {ProjectRegistry} from "../../src/core/ProjectRegistry.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 
 /**
  * @title CheckProjectScript
@@ -26,12 +26,12 @@ contract CheckProjectScript is Script {
         console.log("Registry Contract:", projectRegistryAddress);
         console.log("Project ID:", vm.toString(projectId));
 
-        // Get an instance of the deployed ProjectRegistry contract
-        ProjectRegistry projectRegistry = ProjectRegistry(projectRegistryAddress);
+        // Get an instance of the deployed ProjectRegistry contract using its interface
+        IProjectRegistry projectRegistry = IProjectRegistry(projectRegistryAddress);
 
         // --- Execute Read Call ---
         // No broadcast needed for view/pure functions.
-        ProjectRegistry.Project memory project = projectRegistry.getProject(projectId);
+        IProjectRegistry.Project memory project = projectRegistry.getProject(projectId);
 
         console.log("\n--- Project Data ---");
         console.log("ID:", vm.toString(project.id));
@@ -40,20 +40,20 @@ contract CheckProjectScript is Script {
 
         // Interpret the enum status for readability
         string memory statusString;
-        if (project.status == ProjectRegistry.ProjectStatus.Pending) {
+        if (project.status == IProjectRegistry.ProjectStatus.Pending) {
             statusString = "Pending (0)";
-        } else if (project.status == ProjectRegistry.ProjectStatus.Active) {
+        } else if (project.status == IProjectRegistry.ProjectStatus.Active) {
             statusString = "Active (1)";
-        } else if (project.status == ProjectRegistry.ProjectStatus.Paused) {
+        } else if (project.status == IProjectRegistry.ProjectStatus.Paused) {
             statusString = "Paused (2)";
-        } else if (project.status == ProjectRegistry.ProjectStatus.Archived) {
+        } else if (project.status == IProjectRegistry.ProjectStatus.Archived) {
             statusString = "Archived (3)";
         } else {
             statusString = "Unknown";
         }
         console.log("Status:", statusString);
 
-        if (project.status == ProjectRegistry.ProjectStatus.Pending) {
+        if (project.status == IProjectRegistry.ProjectStatus.Pending) {
             console.log("\nNext Step: Run the 'ApproveProject.s.sol' script to activate the project.");
         }
     }

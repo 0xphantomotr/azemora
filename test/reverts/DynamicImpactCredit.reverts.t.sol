@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import "../../src/core/ProjectRegistry.sol";
 import "../../src/core/DynamicImpactCredit.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 
 contract DynamicImpactCreditRevertsTest is Test {
     ProjectRegistry registry;
@@ -52,7 +53,7 @@ contract DynamicImpactCreditRevertsTest is Test {
         vm.prank(projectDeveloper);
         registry.registerProject(activeProjectId, "ipfs://active");
         vm.prank(admin);
-        registry.setProjectStatus(activeProjectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(activeProjectId, IProjectRegistry.ProjectStatus.Active);
     }
 
     // --- mintCredits ---

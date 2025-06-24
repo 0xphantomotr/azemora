@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {Marketplace} from "../../src/marketplace/Marketplace.sol";
 import {DynamicImpactCredit} from "../../src/core/DynamicImpactCredit.sol";
 import {ProjectRegistry} from "../../src/core/ProjectRegistry.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
@@ -62,7 +63,7 @@ contract MarketplaceEchidnaTest is Test {
         for (uint256 i = 0; i < NUM_TOKENS; i++) {
             bytes32 projectId = keccak256(abi.encodePacked(i));
             registry.registerProject(projectId, "uri"); // Step 1: Register
-            registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+            registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
             credit.mintCredits(address(this), projectId, INITIAL_MINT_AMOUNT, "token_uri");
         }
 

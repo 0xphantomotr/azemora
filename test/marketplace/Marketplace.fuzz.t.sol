@@ -8,6 +8,7 @@ import "../../src/core/dMRVManager.sol";
 import "../../src/core/DynamicImpactCredit.sol";
 import "../../src/marketplace/Marketplace.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 
 contract MarketplaceFuzzTest is Test {
     ProjectRegistry registry;
@@ -72,7 +73,7 @@ contract MarketplaceFuzzTest is Test {
         vm.prank(seller);
         registry.registerProject(projectId, "ipfs://fuzz.json");
         vm.prank(verifier);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
         vm.prank(dmrvManager);
         credit.mintCredits(seller, projectId, mintAmount, "ipfs://fuzz-c.json");
 

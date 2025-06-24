@@ -4,11 +4,12 @@ pragma solidity ^0.8.20;
 import "forge-std/Script.sol";
 import "forge-std/console.sol";
 import {ProjectRegistry} from "../../src/core/ProjectRegistry.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 
 /**
  * @title ApproveProjectScript
- * @dev A script to change a project's status from 'Pending' to 'Active'.
- * This is a privileged action that requires the VERIFIER_ROLE.
+ * @dev A script to approve a 'Pending' project, changing its status to 'Active'.
+ * This script must be run by an account holding the VERIFIER_ROLE.
  */
 contract ApproveProjectScript is Script {
     function run() external {
@@ -17,28 +18,31 @@ contract ApproveProjectScript is Script {
         if (projectRegistryAddress == address(0)) {
             revert("PROJECT_REGISTRY_ADDRESS not set in .env file");
         }
-        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+
+        uint256 verifierPrivateKey = vm.envUint("VERIFIER_PRIVATE_KEY");
+        if (verifierPrivateKey == 0) {
+            revert("VERIFIER_PRIVATE_KEY not set in .env file");
+        }
+        address verifierAddress = vm.addr(verifierPrivateKey);
 
         // --- Prepare Project Data ---
-        // Must be the same as in the registration script to get the correct ID.
         string memory projectName = "My Test Reforestation Project";
         bytes32 projectId = keccak256(abi.encodePacked(projectName));
 
         console.log("--- Approving Project ---");
         console.log("Registry Contract:", projectRegistryAddress);
         console.log("Project ID:", vm.toString(projectId));
-        console.log("New Status: Active");
+        console.log("Approver (Verifier):", verifierAddress);
 
+        // Get an instance of the deployed ProjectRegistry contract
         ProjectRegistry projectRegistry = ProjectRegistry(projectRegistryAddress);
 
         // --- Execute Transaction ---
-        vm.startBroadcast(deployerPrivateKey);
-
-        projectRegistry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
-
+        vm.startBroadcast(verifierPrivateKey);
+        projectRegistry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
         vm.stopBroadcast();
 
-        console.log("\nProject approval transaction sent successfully!");
-        console.log("You can run the 'CheckProject.s.sol' script again to see the updated status.");
+        console.log("\nTransaction broadcasted successfully!");
+        console.log("Project has been set to 'Active'.");
     }
 }

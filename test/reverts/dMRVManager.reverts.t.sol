@@ -7,6 +7,7 @@ import "../../src/core/dMRVManager.sol";
 import "../../src/core/DynamicImpactCredit.sol";
 import "../mocks/MockVerifierModule.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 
 contract DMRVManagerRevertsTest is Test {
     ProjectRegistry registry;
@@ -70,7 +71,7 @@ contract DMRVManagerRevertsTest is Test {
 
         // Activate one project
         vm.prank(verifier);
-        registry.setProjectStatus(activeProjectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(activeProjectId, IProjectRegistry.ProjectStatus.Active);
     }
 
     // --- requestVerification ---

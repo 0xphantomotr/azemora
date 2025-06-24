@@ -9,6 +9,7 @@ import "../../src/core/DynamicImpactCredit.sol";
 import "../../src/core/ProjectRegistry.sol";
 import "../../src/core/dMRVManager.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 
 contract StakingIntegrationTest is Test {
     // Contracts
@@ -87,7 +88,7 @@ contract StakingIntegrationTest is Test {
         // Mint credits properly through the dMRV flow
         bytes32 projectId = keccak256("Test Project For Staking");
         registry.registerProject(projectId, "ipfs://");
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
         // Admin (as oracle) fulfills, minting credits to Admin (as project owner)
         dmrvManager.adminSubmitVerification(projectId, 100, "", false);
 

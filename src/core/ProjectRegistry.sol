@@ -6,15 +6,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
-
-/**
- * @title IProjectRegistry
- * @dev Interface for the ProjectRegistry contract.
- * Allows other contracts to securely interact with the registry to verify project status.
- */
-interface IProjectRegistry {
-    function isProjectActive(bytes32 projectId) external view returns (bool);
-}
+import "./interfaces/IProjectRegistry.sol";
 
 // --- Custom Errors ---
 error ProjectRegistry__IdAlreadyExists();
@@ -51,22 +43,6 @@ contract ProjectRegistry is
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     bytes32[] private _roles;
-
-    enum ProjectStatus {
-        Pending, // Newly registered, awaiting verification
-        Active, // Verified and eligible for credit minting
-        Paused, // Temporarily suspended by admin
-        Archived // Permanently archived, not active
-
-    }
-
-    struct Project {
-        bytes32 id;
-        string metaURI; // URI to off-chain JSON metadata (IPFS)
-        // --- Packed for gas efficiency ---
-        address owner; // 20 bytes
-        ProjectStatus status; // 1 byte
-    }
 
     mapping(bytes32 => Project) private _projects;
 

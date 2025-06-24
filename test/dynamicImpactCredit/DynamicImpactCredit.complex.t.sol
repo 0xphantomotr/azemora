@@ -8,6 +8,7 @@ import "../../src/core/DynamicImpactCredit.sol";
 import "../../src/core/dMRVManager.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 
 // A V2 contract for testing that includes a new function and a new event
 contract DynamicImpactCreditExtendedV2 is DynamicImpactCredit {
@@ -43,8 +44,8 @@ contract DynamicImpactCreditExtendedV2 is DynamicImpactCredit {
 contract DynamicImpactCreditComplexTest is Test {
     DynamicImpactCredit credit;
     ProjectRegistry registry;
+    DMRVManager dmrvManager;
     address admin = address(0xA11CE);
-    address dmrvManager = address(0xB01D);
     address verifier = address(0xC1E4);
 
     // Create multiple user addresses
@@ -85,7 +86,14 @@ contract DynamicImpactCreditComplexTest is Test {
             )
         );
 
-        credit.grantRole(credit.DMRV_MANAGER_ROLE(), dmrvManager);
+        // Deploy dMRVManager
+        DMRVManager dmrvManagerImpl = new DMRVManager();
+        bytes memory dmrvInitData =
+            abi.encodeCall(DMRVManager.initializeDMRVManager, (address(registry), address(credit)));
+        ERC1967Proxy dmrvManagerProxy = new ERC1967Proxy(address(dmrvManagerImpl), dmrvInitData);
+        dmrvManager = DMRVManager(address(dmrvManagerProxy));
+
+        credit.grantRole(credit.DMRV_MANAGER_ROLE(), address(dmrvManager));
         credit.grantRole(credit.METADATA_UPDATER_ROLE(), admin);
         vm.stopPrank();
 
@@ -116,20 +124,15 @@ contract DynamicImpactCreditComplexTest is Test {
                 initialCredits: 7500
             })
         );
-    }
 
-    // Complex test: Full lifecycle simulation with dMRV updates
-    function testComplex_FullLifecycle() public {
-        // STEP 1: Initial project registrations and credit minting
-        // Register and activate projects
         for (uint256 i = 0; i < projects.length; i++) {
             vm.prank(user1); // Owner registers
             registry.registerProject(projects[i].id, "ipfs://project-meta");
             vm.prank(verifier); // Verifier activates
-            registry.setProjectStatus(projects[i].id, ProjectRegistry.ProjectStatus.Active);
+            registry.setProjectStatus(projects[i].id, IProjectRegistry.ProjectStatus.Active);
         }
 
-        vm.startPrank(dmrvManager);
+        vm.startPrank(address(dmrvManager));
 
         for (uint256 i = 0; i < projects.length; i++) {
             // Mint initial credits to user1
@@ -222,9 +225,9 @@ contract DynamicImpactCreditComplexTest is Test {
         vm.prank(user1);
         registry.registerProject(newProjectId, "new.json");
         vm.prank(verifier);
-        registry.setProjectStatus(newProjectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(newProjectId, IProjectRegistry.ProjectStatus.Active);
 
-        vm.prank(dmrvManager);
+        vm.prank(address(dmrvManager));
         creditV2.mintCredits(user1, newProjectId, 1000, "ipfs://new-project/metadata.json");
 
         assertEq(creditV2.balanceOf(user1, uint256(newProjectId)), 1000);
@@ -238,17 +241,20 @@ contract DynamicImpactCreditComplexTest is Test {
         string[] memory uris = new string[](3);
 
         for (uint256 i = 0; i < 3; i++) {
-            ids[i] = projects[i].id;
-            amounts[i] = projects[i].initialCredits;
-            uris[i] = string(abi.encodePacked(projects[i].baseURI, "v1.json"));
+            // Use unique project IDs for this test to avoid state pollution from setUp
+            ids[i] = keccak256(abi.encodePacked("batch-test-project", i));
+            amounts[i] = (i + 1) * 100; // e.g., 100, 200, 300
+            uris[i] = string(abi.encodePacked("ipfs://batch-uri-", i));
 
+            // Register and activate these new projects
             vm.prank(user1);
             registry.registerProject(ids[i], "meta.json");
             vm.prank(verifier);
-            registry.setProjectStatus(ids[i], ProjectRegistry.ProjectStatus.Active);
+            registry.setProjectStatus(ids[i], IProjectRegistry.ProjectStatus.Active);
         }
 
-        vm.prank(dmrvManager);
+        // Projects are now ready for a clean batch mint.
+        vm.prank(address(dmrvManager));
         credit.batchMintCredits(user1, ids, amounts, uris);
 
         // Verify all credits were minted
@@ -270,15 +276,16 @@ contract DynamicImpactCreditComplexTest is Test {
             credit.safeTransferFrom(user1, user3, uint256(ids[i]), transferAmount, "");
         }
 
-        // User2 also retires some credits on behalf of user1
-        credit.retire(user1, ids[0], 100);
+        // User2 also retires some credits on behalf of user1.
+        // This must be less than or equal to the remaining balance (50).
+        credit.retire(user1, ids[0], 50);
 
         vm.stopPrank();
 
         // Verify balances after transfers and retirement
         for (uint256 i = 0; i < 3; i++) {
             uint256 expectedUser1Balance = amounts[i] / 2;
-            if (i == 0) expectedUser1Balance -= 100; // Account for retirement
+            if (i == 0) expectedUser1Balance -= 50; // Account for retirement
 
             assertEq(credit.balanceOf(user1, uint256(ids[i])), expectedUser1Balance);
             assertEq(credit.balanceOf(user3, uint256(ids[i])), amounts[i] / 2);
@@ -292,5 +299,23 @@ contract DynamicImpactCreditComplexTest is Test {
         vm.prank(user2);
         vm.expectRevert(abi.encodeWithSignature("ERC1155MissingApprovalForAll(address,address)", user2, user1));
         credit.safeTransferFrom(user1, user3, uint256(ids[0]), 10, "");
+    }
+
+    function test_RevertIf_MintToPausedProject() public {
+        bytes32 projectId = keccak256("Paused-Project");
+        vm.prank(user1);
+        registry.registerProject(projectId, "zero.json");
+        vm.prank(verifier);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
+
+        // Admin pauses the project
+        vm.prank(admin);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Paused);
+
+        // Attempting to mint should now fail inside the dMRVManager before it even reaches the credit contract.
+        vm.startPrank(admin);
+        vm.expectRevert(DMRVManager__ProjectNotActive.selector);
+        dmrvManager.adminSubmitVerification(projectId, 1, "uri", false);
+        vm.stopPrank();
     }
 }

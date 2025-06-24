@@ -6,6 +6,7 @@ import "../../src/core/DynamicImpactCredit.sol";
 import "./DynamicImpactCreditV2.sol";
 import "../../src/core/ProjectRegistry.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 
 contract DynamicImpactCreditUpgradeTest is Test {
     // Contracts
@@ -43,7 +44,7 @@ contract DynamicImpactCreditUpgradeTest is Test {
         // Note: The project registration must be done by its owner. We will prank as the project owner.
         // But for this test, let's simplify and have the admin also be the project owner.
         registry.registerProject(projectId, "ipfs://project");
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
 
         vm.stopPrank();
 

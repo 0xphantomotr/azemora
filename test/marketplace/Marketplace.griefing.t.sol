@@ -6,6 +6,7 @@ import "../../src/marketplace/Marketplace.sol";
 import "../../src/core/DynamicImpactCredit.sol";
 import "../../src/core/ProjectRegistry.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 
 // Mock ERC20 for payment
 contract MockERC20ForGriefTest {
@@ -90,7 +91,7 @@ contract MarketplaceGriefingTest is Test {
         // We also need to register a project for these credits
         bytes32 projectId = bytes32(uint256(BATCH_TOKEN_ID));
         registry.registerProject(projectId, "griefing-project");
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
         credit.mintCredits(seller, projectId, 1000, "grief-uri");
 
         // Approve marketplace to spend seller's credits

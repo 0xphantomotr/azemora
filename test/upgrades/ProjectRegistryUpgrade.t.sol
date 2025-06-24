@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import "../../src/core/ProjectRegistry.sol";
 import "./ProjectRegistryV2.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 
 contract ProjectRegistryUpgradeTest is Test {
     // Contracts
@@ -32,14 +33,14 @@ contract ProjectRegistryUpgradeTest is Test {
         vm.stopPrank();
 
         vm.startPrank(admin);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
         vm.stopPrank();
     }
 
     function test_upgradeProjectRegistry_preservesStateAndFunctionality() public {
         // --- 1. Pre-Upgrade Assertions ---
         assertTrue(registry.isProjectActive(projectId), "Pre-upgrade: project should be active");
-        ProjectRegistry.Project memory projectV1 = registry.getProject(projectId);
+        IProjectRegistry.Project memory projectV1 = registry.getProject(projectId);
         assertEq(uint256(projectV1.status), 1, "Pre-upgrade: project status should be Active (1)");
         assertEq(projectV1.metaURI, "ipfs://v1", "Pre-upgrade: URI should be the V1 URI");
 
@@ -54,12 +55,12 @@ contract ProjectRegistryUpgradeTest is Test {
 
         // Check that state is preserved
         assertTrue(registryV2.isProjectActive(projectId), "Post-upgrade: project should still be active");
-        ProjectRegistry.Project memory projectV2 = registryV2.getProject(projectId);
+        IProjectRegistry.Project memory projectV2 = registryV2.getProject(projectId);
         assertEq(projectV2.owner, projectOwner, "Post-upgrade: project owner should be preserved");
 
         // Check that old functions still work on the new implementation
         vm.startPrank(admin);
-        registryV2.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Paused);
+        registryV2.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Paused);
         assertEq(uint256(registryV2.getProject(projectId).status), 2, "Post-upgrade: setProjectStatus should work");
         vm.stopPrank();
 

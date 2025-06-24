@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Test.sol";
 import "../../src/core/ProjectRegistry.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 
 contract ProjectRegistryRevertsTest is Test {
     ProjectRegistry registry;
@@ -43,32 +44,32 @@ contract ProjectRegistryRevertsTest is Test {
     function test_revert_setProjectStatus_nonExistentProject() public {
         vm.expectRevert(ProjectRegistry__ProjectNotFound.selector);
         vm.prank(verifier);
-        registry.setProjectStatus(keccak256("non-existent"), ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(keccak256("non-existent"), IProjectRegistry.ProjectStatus.Active);
     }
 
     function test_revert_setProjectStatus_toActive_notVerifier() public {
         vm.expectRevert(ProjectRegistry__CallerNotVerifier.selector);
         vm.prank(otherUser);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
     }
 
     function test_revert_setProjectStatus_toPaused_notAdmin() public {
         vm.expectRevert(ProjectRegistry__CallerNotAdmin.selector);
         vm.prank(otherUser);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Paused);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Paused);
     }
 
     function test_revert_setProjectStatus_toArchived_notAdmin() public {
         vm.expectRevert(ProjectRegistry__CallerNotAdmin.selector);
         vm.prank(otherUser);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Archived);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Archived);
     }
 
     function test_revert_setProjectStatus_invalidTransition() public {
         // e.g., trying to set to Pending again from Pending
         vm.expectRevert(ProjectRegistry__StatusIsSame.selector);
         vm.prank(verifier);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Pending);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Pending);
     }
 
     // --- setProjectMetaURI ---
@@ -96,12 +97,12 @@ contract ProjectRegistryRevertsTest is Test {
     function test_revert_setProjectStatus_toPending() public {
         // Activate the project first to have a valid starting state other than Pending.
         vm.startPrank(verifier);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
         vm.stopPrank();
 
         // Try to move it back to Pending, which is not a valid transition target.
         vm.prank(admin);
         vm.expectRevert(ProjectRegistry__InvalidStatusTransition.selector);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Pending);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Pending);
     }
 }

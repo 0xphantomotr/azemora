@@ -4,11 +4,12 @@ pragma solidity ^0.8.20;
 import "forge-std/Test.sol";
 import "../../src/core/ProjectRegistry.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 
 // Interface to break the circular dependency between the test and the handler.
 interface IProjectStateCallback {
     function trackProjectCreation(bytes32 projectId) external;
-    function trackStateChange(bytes32 projectId, ProjectRegistry.ProjectStatus newStatus) external;
+    function trackStateChange(bytes32 projectId, IProjectRegistry.ProjectStatus newStatus) external;
 }
 
 /**
@@ -53,7 +54,7 @@ contract ProjectStateHandler is Test {
     }
 
     /// @notice FUZZ ACTION: Attempt to change a project's status to a random new state.
-    function setStatus(ProjectRegistry.ProjectStatus newStatus) public {
+    function setStatus(IProjectRegistry.ProjectStatus newStatus) public {
         if (projectIds.length == 0) return;
 
         // Pick a random project to try and change.
@@ -88,7 +89,7 @@ contract ProjectInvariantTest is Test, IProjectStateCallback {
     address verifier = makeAddr("verifier");
 
     // The GHOST STATE: Tracks the current state of all projects created by the fuzzer.
-    mapping(bytes32 => ProjectRegistry.ProjectStatus) public projectStates;
+    mapping(bytes32 => IProjectRegistry.ProjectStatus) public projectStates;
 
     function setUp() public {
         vm.startPrank(admin);
@@ -110,7 +111,7 @@ contract ProjectInvariantTest is Test, IProjectStateCallback {
 
     function trackProjectCreation(bytes32 projectId) external override {
         // New projects are created in the Pending state.
-        projectStates[projectId] = ProjectRegistry.ProjectStatus.Pending;
+        projectStates[projectId] = IProjectRegistry.ProjectStatus.Pending;
     }
 
     /*
@@ -121,26 +122,26 @@ contract ProjectInvariantTest is Test, IProjectStateCallback {
      *      transition somehow succeeds on-chain, this assertion will fail, proving a
      *      vulnerability in the contract's state transition logic.
      */
-    function trackStateChange(bytes32 projectId, ProjectRegistry.ProjectStatus newStatus) external override {
-        ProjectRegistry.ProjectStatus oldStatus = projectStates[projectId];
+    function trackStateChange(bytes32 projectId, IProjectRegistry.ProjectStatus newStatus) external override {
+        IProjectRegistry.ProjectStatus oldStatus = projectStates[projectId];
 
         // State machine logic validation
-        if (oldStatus == ProjectRegistry.ProjectStatus.Pending) {
+        if (oldStatus == IProjectRegistry.ProjectStatus.Pending) {
             // From Pending, can only move to Active (verified) or Archived (rejected).
-            bool isValid =
-                newStatus == ProjectRegistry.ProjectStatus.Active || newStatus == ProjectRegistry.ProjectStatus.Archived;
+            bool isValid = newStatus == IProjectRegistry.ProjectStatus.Active
+                || newStatus == IProjectRegistry.ProjectStatus.Archived;
             assertTrue(isValid, "INVALID_TRANSITION_FROM_PENDING");
-        } else if (oldStatus == ProjectRegistry.ProjectStatus.Active) {
+        } else if (oldStatus == IProjectRegistry.ProjectStatus.Active) {
             // From Active, can only move to Paused or Archived.
-            bool isValid =
-                newStatus == ProjectRegistry.ProjectStatus.Paused || newStatus == ProjectRegistry.ProjectStatus.Archived;
+            bool isValid = newStatus == IProjectRegistry.ProjectStatus.Paused
+                || newStatus == IProjectRegistry.ProjectStatus.Archived;
             assertTrue(isValid, "INVALID_TRANSITION_FROM_ACTIVE");
-        } else if (oldStatus == ProjectRegistry.ProjectStatus.Paused) {
+        } else if (oldStatus == IProjectRegistry.ProjectStatus.Paused) {
             // From Paused, can move back to Active or be Archived.
-            bool isValid =
-                newStatus == ProjectRegistry.ProjectStatus.Active || newStatus == ProjectRegistry.ProjectStatus.Archived;
+            bool isValid = newStatus == IProjectRegistry.ProjectStatus.Active
+                || newStatus == IProjectRegistry.ProjectStatus.Archived;
             assertTrue(isValid, "INVALID_TRANSITION_FROM_PAUSED");
-        } else if (oldStatus == ProjectRegistry.ProjectStatus.Archived) {
+        } else if (oldStatus == IProjectRegistry.ProjectStatus.Archived) {
             // Archived is a terminal state. No transitions out should be possible.
             // If the handler successfully makes a state change from Archived and calls this
             // function, this test should fail immediately.

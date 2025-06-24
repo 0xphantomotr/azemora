@@ -9,6 +9,7 @@ import "../../src/core/ProjectRegistry.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
 import "../marketplace/Marketplace.t.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 
 // THE FIX: Define an interface to break the circular dependency.
 // The handler will call this interface, and the test contract will implement it.
@@ -161,7 +162,7 @@ contract FeeInvariantTest is Test, IFeeCallback {
         bytes32 projectId = keccak256("Test Project");
         uint256 tokenId = uint256(projectId);
         registry.registerProject(projectId, "ipfs://");
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), seller);
 
         vm.stopPrank();

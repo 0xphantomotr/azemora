@@ -3,6 +3,7 @@ pragma solidity ^0.8.25;
 
 import {Test} from "forge-std/Test.sol";
 import {ProjectRegistry} from "../../src/core/ProjectRegistry.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 /// @title Echidna test for the ProjectRegistry contract
@@ -58,8 +59,8 @@ contract ProjectRegistryEchidnaTest is Test {
         // explicit checks to prevent invalid transitions *into* this state,
         // and Echidna will try to violate those checks.
         for (uint256 i = 0; i < projectIds.length; i++) {
-            ProjectRegistry.Project memory project = registry.getProject(projectIds[i]);
-            if (project.status == ProjectRegistry.ProjectStatus.Archived) {
+            IProjectRegistry.Project memory project = registry.getProject(projectIds[i]);
+            if (project.status == IProjectRegistry.ProjectStatus.Archived) {
                 // If we could somehow change it, this invariant would likely fail on a subsequent call.
                 // The main protection is the revert inside `setProjectStatus`.
             }
@@ -70,8 +71,8 @@ contract ProjectRegistryEchidnaTest is Test {
     /// @dev Property: An active project must always have a non-zero owner.
     function echidna_active_project_has_owner() public view returns (bool) {
         for (uint256 i = 0; i < projectIds.length; i++) {
-            ProjectRegistry.Project memory project = registry.getProject(projectIds[i]);
-            if (project.status == ProjectRegistry.ProjectStatus.Active) {
+            IProjectRegistry.Project memory project = registry.getProject(projectIds[i]);
+            if (project.status == IProjectRegistry.ProjectStatus.Active) {
                 if (project.owner == address(0)) return false;
             }
         }
@@ -82,7 +83,7 @@ contract ProjectRegistryEchidnaTest is Test {
     /// This implicitly protects ownership integrity.
     function echidna_owner_is_never_zero_after_transfer() public view returns (bool) {
         for (uint256 i = 0; i < projectIds.length; i++) {
-            ProjectRegistry.Project memory project = registry.getProject(projectIds[i]);
+            IProjectRegistry.Project memory project = registry.getProject(projectIds[i]);
             if (project.owner == address(0)) {
                 return false; // Owner should never be zero after initial registration.
             }
@@ -96,7 +97,7 @@ contract ProjectRegistryEchidnaTest is Test {
 
     function setProjectStatus(bytes32 projectId, uint8 newStatus, address caller) public {
         projectId = projectIds[uint256(projectId) % NUM_PROJECTS];
-        ProjectRegistry.ProjectStatus status = ProjectRegistry.ProjectStatus(newStatus % 4);
+        IProjectRegistry.ProjectStatus status = IProjectRegistry.ProjectStatus(newStatus % 4);
 
         // Simulate calls from admin, verifier, or a random user
         if (uint256(uint160(caller)) % 3 == 0) {
@@ -114,7 +115,7 @@ contract ProjectRegistryEchidnaTest is Test {
 
     function transferProjectOwnership(bytes32 projectId, address newOwner, address caller) public {
         projectId = projectIds[uint256(projectId) % NUM_PROJECTS];
-        ProjectRegistry.Project memory project = registry.getProject(projectId);
+        IProjectRegistry.Project memory project = registry.getProject(projectId);
         address currentOwner = project.owner;
 
         // It only makes sense to try and transfer ownership from the actual owner.

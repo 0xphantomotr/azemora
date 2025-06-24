@@ -6,7 +6,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
-import "./ProjectRegistry.sol";
+import "./interfaces/IProjectRegistry.sol";
 import "./DynamicImpactCredit.sol";
 import "./interfaces/IVerifierModule.sol";
 
@@ -46,7 +46,7 @@ contract DMRVManager is
     bytes32[] private _roles;
 
     // --- State variables ---
-    ProjectRegistry public projectRegistry;
+    IProjectRegistry public projectRegistry;
     DynamicImpactCredit public creditContract;
 
     // Mapping from a module type identifier to its deployed contract address
@@ -102,7 +102,7 @@ contract DMRVManager is
         _roles.push(MODULE_ADMIN_ROLE());
         _roles.push(PAUSER_ROLE());
 
-        projectRegistry = ProjectRegistry(_registryAddress);
+        projectRegistry = IProjectRegistry(_registryAddress);
         creditContract = DynamicImpactCredit(_creditAddress);
     }
 
@@ -143,11 +143,7 @@ contract DMRVManager is
      * @param claimId The ID of the verification claim being fulfilled.
      * @param data The raw, encoded verification data from the module.
      */
-    function fulfillVerification(bytes32 projectId, bytes32 claimId, bytes calldata data)
-        external
-        nonReentrant
-        whenNotPaused
-    {
+    function fulfillVerification(bytes32 projectId, bytes32 claimId, bytes calldata data) external whenNotPaused {
         bytes32 moduleType = _claimToModuleType[claimId];
         if (moduleType == bytes32(0)) revert DMRVManager__ClaimNotFoundOrAlreadyFulfilled();
 
@@ -181,7 +177,7 @@ contract DMRVManager is
             emit MetadataUpdated(projectId, data.metadataURI);
         } else if (data.creditAmount > 0) {
             // Get project owner from registry to mint credits to them
-            try projectRegistry.getProject(projectId) returns (ProjectRegistry.Project memory project) {
+            try projectRegistry.getProject(projectId) returns (IProjectRegistry.Project memory project) {
                 // Mint new credits to the project owner
                 creditContract.mintCredits(project.owner, projectId, data.creditAmount, data.metadataURI);
                 emit CreditsMinted(projectId, project.owner, data.creditAmount);

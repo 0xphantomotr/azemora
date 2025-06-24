@@ -14,6 +14,7 @@ import "../../src/staking/StakingRewards.sol";
 import "../../src/core/Bonding.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "forge-std/console.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 
 // Mock is no longer needed
 // contract MockERC20ForFlowTest { ... }
@@ -196,10 +197,10 @@ contract FullFlowTest is Test {
         registry.registerProject(projectId, "ipfs://great-green-wall");
 
         vm.prank(verifier);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
         assertEq(
             uint256(registry.getProject(projectId).status),
-            uint256(ProjectRegistry.ProjectStatus.Active),
+            uint256(IProjectRegistry.ProjectStatus.Active),
             "Project should be active"
         );
 
@@ -314,7 +315,7 @@ contract FullFlowTest is Test {
         vm.prank(projectDeveloper);
         registry.registerProject(projectId, "ipfs://cancellable");
         vm.prank(verifier);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
 
         // Directly submit verification as admin instead of request/fulfill
         vm.prank(dmrvOracle);
@@ -412,7 +413,7 @@ contract FullFlowTest is Test {
         registry.registerProject(projectId, "ipfs://unique-bond-project");
         vm.stopPrank();
         vm.prank(verifier);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
 
         // Oracle (with admin role) directly submits verification data
         vm.prank(dmrvOracle);

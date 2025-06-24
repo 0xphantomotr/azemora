@@ -7,6 +7,8 @@ import "../../src/token/AzemoraToken.sol";
 import "../../src/core/DynamicImpactCredit.sol";
 import "../../src/core/ProjectRegistry.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import "../../src/governance/Treasury.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 
 contract BondingTest is Test {
     // --- Contracts ---
@@ -61,9 +63,9 @@ contract BondingTest is Test {
         registry.registerProject(projectId, "ipfs://project-meta");
         vm.stopPrank();
 
-        vm.startPrank(deployer); // The deployer has the VERIFIER_ROLE and DMRV_MANAGER_ROLE
+        vm.startPrank(deployer); // The deployer has the VERIFIER_ROLE
+        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), deployer);
-        registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
         credit.mintCredits(bonder, projectId, 100, "ipfs://some-verification-data");
         vm.stopPrank();
     }

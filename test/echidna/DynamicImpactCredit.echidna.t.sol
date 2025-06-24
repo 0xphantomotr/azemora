@@ -3,6 +3,7 @@ pragma solidity ^0.8.25;
 
 import {Test} from "forge-std/Test.sol";
 import {ProjectRegistry} from "../../src/core/ProjectRegistry.sol";
+import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 import {DynamicImpactCredit} from "../../src/core/DynamicImpactCredit.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
@@ -66,7 +67,7 @@ contract DynamicImpactCreditEchidnaTest is Test {
             // Activate about half the projects to give Echidna a mix to work with
             if (i % 2 == 0) {
                 vm.prank(verifier);
-                registry.setProjectStatus(projectId, ProjectRegistry.ProjectStatus.Active);
+                registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
             }
         }
     }
@@ -156,7 +157,7 @@ contract DynamicImpactCreditEchidnaTest is Test {
 
     function setProjectStatus(uint256 projectIdIndex, uint8 newStatus, address caller) public {
         bytes32 projectId = projectIds[projectIdIndex % NUM_PROJECTS];
-        ProjectRegistry.ProjectStatus status = ProjectRegistry.ProjectStatus(newStatus % 4);
+        IProjectRegistry.ProjectStatus status = IProjectRegistry.ProjectStatus(newStatus % 4);
 
         // Allow admin or verifier to change status to create varied scenarios for minting
         if (uint256(uint160(caller)) % 2 == 0) {
