@@ -15,7 +15,7 @@ import "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlEnume
 error ReputationWeightedVerifier__NotActiveVerifier();
 error ReputationWeightedVerifier__TaskNotFound();
 error ReputationWeightedVerifier__VotingPeriodOver();
-error ReputationWightedVerifier__TaskAlreadyResolved();
+error ReputationWeightedVerifier__TaskAlreadyResolved();
 error ReputationWeightedVerifier__VotingPeriodNotOver();
 error ReputationWeightedVerifier__ZeroAddress();
 error ReputationWeightedVerifier__VoteAlreadyCast();
@@ -161,7 +161,7 @@ contract ReputationWeightedVerifier is
 
         if (task.deadline == 0) revert ReputationWeightedVerifier__TaskNotFound();
         if (block.timestamp <= task.deadline) revert ReputationWeightedVerifier__VotingPeriodNotOver();
-        if (task.resolved) revert ReputationWightedVerifier__TaskAlreadyResolved();
+        if (task.resolved) revert ReputationWeightedVerifier__TaskAlreadyResolved();
 
         task.resolved = true;
         uint256 totalVotes = task.weightedApproveVotes + task.weightedRejectVotes;
@@ -174,10 +174,17 @@ contract ReputationWeightedVerifier is
             }
         }
 
-        // Fulfill the verification in the dMRVManager
-        // For now, we pass a simple "true" or "false" in the data bytes.
-        // This can be expanded to include more details.
-        bytes memory resultData = abi.encode(approved);
+        // Fulfill the verification in the dMRVManager.
+        // This module's responsibility is to signal approval/rejection. The actual credit amount
+        // is outside its scope. We send correctly formatted data that dMRVManager can parse.
+        bytes memory resultData;
+        if (approved) {
+            // For a successful verification, we can signal to mint 1 credit as a placeholder.
+            resultData = abi.encode(uint256(1), false, bytes32(0), "ipfs://verified");
+        } else {
+            // For a failed verification, we send 0 credits and can update metadata to show rejection.
+            resultData = abi.encode(uint256(0), true, bytes32(0), "ipfs://rejected");
+        }
         DMRVManager(dMRVManager).fulfillVerification(task.projectId, task.claimId, resultData);
 
         emit TaskResolved(taskId, approved, task.weightedApproveVotes, task.weightedRejectVotes);
