@@ -21,3 +21,4 @@ interface IDeviceRegistry {
      */
     function getTokenId(bytes32 deviceId) external view returns (uint256);
 }
+ 
