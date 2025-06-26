@@ -2,7 +2,8 @@
 pragma solidity ^0.8.20;
 
 import "../core/interfaces/IVerifierModule.sol";
-import "./interfaces/IDePINOracle.sol";
+import "./interfaces/IOracleManager.sol";
+import "./interfaces/IRewardCalculator.sol";
 import "../core/interfaces/IDMRVManager.sol";
 import "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlEnumerableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
@@ -13,15 +14,12 @@ error DePINVerifier__NotDMRVManager();
 error DePINVerifier__ZeroAddress();
 error DePINVerifier__AlreadySet();
 error DePINVerifier__InvalidEvidenceFormat();
-error DePINVerifier__ReadingBelowThreshold(bytes32 sensorId, uint256 actual, uint256 expected);
-error DePINVerifier__StaleData(bytes32 sensorId, uint256 lastUpdate, uint256 maxDelta);
+error DePINVerifier__ZeroRewardCalculator();
 
 /**
  * @title DePINVerifier
- * @dev A verifier module that checks data from a DePIN oracle.
- * This contract implements the IVerifierModule interface and is designed
- * to be registered with the dMRVManager. It acts as a trusted, automated
- * gateway for specific DePIN networks.
+ * @dev A verifier module that checks data by fetching aggregated data from a trusted OracleManager
+ * and delegates reward calculations to a specified calculator contract.
  */
 contract DePINVerifier is
     IVerifierModule,
@@ -29,13 +27,22 @@ contract DePINVerifier is
     UUPSUpgradeable,
     ReentrancyGuardUpgradeable
 {
-    IDePINOracle public oracle;
+    IOracleManager public oracleManager;
     IDMRVManager public dMRVManager;
 
     // --- Events ---
     event DMRVManagerSet(address indexed dmrvManager);
+    event OracleManagerSet(address indexed oracleManager);
 
-    uint256[48] private __gap;
+    uint256[49] private __gap;
+
+    // --- Structs ---
+    struct VerificationTerms {
+        bytes32 sensorId;
+        bytes32 sensorType;
+        address rewardCalculator;
+        bytes rewardTerms;
+    }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -44,28 +51,34 @@ contract DePINVerifier is
 
     /**
      * @notice Initializes the contract.
-     * @param _depinOracle The address of the DePIN oracle contract.
+     * @param _dMRVManager The address of the DMRVManager contract.
+     * @param _oracleManager The address of the OracleManager contract.
      * @param initialOwner The address to grant the DEFAULT_ADMIN_ROLE to.
      */
-    function initialize(address _depinOracle, address initialOwner) public initializer {
+    function initialize(address _dMRVManager, address _oracleManager, address initialOwner) public initializer {
         __AccessControl_init();
         __ReentrancyGuard_init();
+        __UUPSUpgradeable_init();
 
-        if (_depinOracle == address(0) || initialOwner == address(0)) {
+        if (_dMRVManager == address(0) || _oracleManager == address(0) || initialOwner == address(0)) {
             revert DePINVerifier__ZeroAddress();
         }
 
-        oracle = IDePINOracle(_depinOracle);
+        dMRVManager = IDMRVManager(_dMRVManager);
+        oracleManager = IOracleManager(_oracleManager);
         _grantRole(DEFAULT_ADMIN_ROLE, initialOwner);
+
+        emit DMRVManagerSet(_dMRVManager);
+        emit OracleManagerSet(_oracleManager);
     }
 
     /**
      * @notice Sets the DMRVManager address.
-     * @dev This can only be called once by an admin, creating a permanent,
-     * trusted link between this verifier and the manager.
-     * Any change would require deploying a new verifier.
+     * @dev Can only be called once by an admin.
      * @param _dmrvManager The address of the DMRVManager contract.
      */
+    // This function is now deprecated in favor of the single initializer.
+    // It can be removed or left as-is, but the new `initialize` is preferred.
     function setDMRVManager(address _dmrvManager) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (address(dMRVManager) != address(0)) {
             revert DePINVerifier__AlreadySet();
@@ -79,10 +92,9 @@ contract DePINVerifier is
 
     /**
      * @notice The entry point for the dMRVManager to delegate a verification task.
-     * @dev This function contains the core logic for querying the oracle and verifying the data.
      * @param projectId The ID of the project being verified.
      * @param claimId The unique ID for this specific claim.
-     * @param evidenceURI A string containing the ABI-encoded `(bytes32 sensorId, uint256 minThreshold, uint256 maxTimeDelta)`.
+     * @param evidenceURI A string containing the ABI-encoded `VerificationTerms` struct.
      */
     function startVerificationTask(bytes32 projectId, bytes32 claimId, string calldata evidenceURI)
         external
@@ -94,64 +106,32 @@ contract DePINVerifier is
             revert DePINVerifier__NotDMRVManager();
         }
 
-        // 1. Decode the evidence parameters
-        (bytes32 sensorId, uint256 minThreshold, uint256 maxTimeDelta) = _decodeEvidence(evidenceURI);
+        VerificationTerms memory terms = _decodeEvidence(evidenceURI);
 
-        // 2. Query the oracle
-        (uint256 oracleValue, uint256 oracleTimestamp) = oracle.getSensorReading(sensorId);
-
-        // 3. Perform verification checks
-        bool isVerified = _verifyReading(sensorId, oracleValue, oracleTimestamp, minThreshold, maxTimeDelta);
-
-        // 4. Format the result for the dMRVManager
-        bytes memory resultData;
-        if (isVerified) {
-            // Success: Signal to mint 1 credit and do not force a metadata update.
-            // The dMRVManager can be configured to mint more if needed.
-            resultData = abi.encode(uint256(1), false, bytes32(0), "ipfs://depin-verified-v1");
-        } else {
-            // Failure: Signal to mint 0 credits and force a metadata update to show rejection status.
-            resultData = abi.encode(uint256(0), true, bytes32(0), "ipfs://depin-failed-v1");
+        if (terms.rewardCalculator == address(0)) {
+            revert DePINVerifier__ZeroRewardCalculator();
         }
 
-        // 5. Report the final result back to the dMRVManager
+        IOracleManager.AggregatedReading memory reading =
+            oracleManager.getAggregatedReading(terms.sensorId, terms.sensorType);
+
+        uint256 rewardAmount =
+            IRewardCalculator(terms.rewardCalculator).calculateReward(terms.rewardTerms, reading.value);
+
+        string memory resultURI = rewardAmount > 0 ? "ipfs://depin-verified-v3" : "ipfs://depin-failed-v3";
+        bytes memory resultData = abi.encode(rewardAmount, false, bytes32(0), resultURI);
+
         dMRVManager.fulfillVerification(projectId, claimId, resultData);
 
-        // For this synchronous module, the taskId can simply be the claimId
         return claimId;
     }
 
     // --- Internal Logic ---
 
-    function _decodeEvidence(string calldata evidenceURI)
-        internal
-        pure
-        returns (bytes32 sensorId, uint256 minThreshold, uint256 maxTimeDelta)
-    {
+    function _decodeEvidence(string calldata evidenceURI) internal pure returns (VerificationTerms memory) {
         bytes memory evidenceBytes = bytes(evidenceURI);
-        // A tuple of (bytes32, uint256, uint256) is exactly 96 bytes long when ABI encoded.
-        if (evidenceBytes.length != 96) {
-            revert DePINVerifier__InvalidEvidenceFormat();
-        }
-        // The try/catch syntax is not valid for abi.decode.
-        // It will revert on its own if the data is malformed, which is the desired behavior.
-        (sensorId, minThreshold, maxTimeDelta) = abi.decode(evidenceBytes, (bytes32, uint256, uint256));
-    }
-
-    function _verifyReading(
-        bytes32, /* sensorId */
-        uint256 oracleValue,
-        uint256 oracleTimestamp,
-        uint256 minThreshold,
-        uint256 maxTimeDelta
-    ) internal view returns (bool) {
-        if (oracleValue < minThreshold) {
-            return false;
-        }
-        if (block.timestamp - oracleTimestamp > maxTimeDelta) {
-            return false;
-        }
-        return true;
+        (VerificationTerms memory terms) = abi.decode(evidenceBytes, (VerificationTerms));
+        return terms;
     }
 
     // Not supported in this verifier type.
@@ -165,22 +145,22 @@ contract DePINVerifier is
     }
 
     /**
-     * @notice Allows the DAO/admin to update the oracle address.
-     * @param _newOracle The address of the new DePIN oracle contract.
+     * @notice Allows the DAO/admin to update the oracle manager address.
+     * @param _newOracleManager The address of the new OracleManager contract.
      */
-    function setOracle(address _newOracle) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (_newOracle == address(0)) {
+    function setOracleManager(address _newOracleManager) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (_newOracleManager == address(0)) {
             revert DePINVerifier__ZeroAddress();
         }
-        oracle = IDePINOracle(_newOracle);
+        oracleManager = IOracleManager(_newOracleManager);
+        emit OracleManagerSet(_newOracleManager);
     }
 
     function getModuleName() external pure override returns (string memory) {
-        return "DePINVerifier_v1";
+        return "DePINVerifier_v3_ModularRewards";
     }
 
     function owner() external view override returns (address) {
-        // Assumes the first member of the admin role is the conceptual owner.
         return getRoleMember(DEFAULT_ADMIN_ROLE, 0);
     }
 
