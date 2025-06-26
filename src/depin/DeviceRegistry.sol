@@ -11,6 +11,16 @@ import "./interfaces/IDeviceRegistry.sol";
 error DeviceRegistry__ZeroAddress();
 error DeviceRegistry__DeviceAlreadyRegistered();
 error DeviceRegistry__DeviceNotRegistered();
+error DeviceRegistry__NotOwner();
+error DeviceRegistry__OracleAlreadyAuthorized();
+error DeviceRegistry__OracleNotAuthorized();
+
+// --- Events ---
+event DeviceRegistered(bytes32 indexed deviceId, uint256 indexed tokenId, address indexed initialOwner);
+
+event OracleAuthorized(uint256 indexed tokenId, address indexed oracle);
+
+event OracleDeauthorized(uint256 indexed tokenId, address indexed oracle);
 
 /**
  * @title DeviceRegistry
@@ -32,16 +42,15 @@ contract DeviceRegistry is
     // --- State ---
 
     // Mapping from the physical device's unique ID to its NFT token ID.
-    // We start minting from tokenId 1, so a return value of 0 unambiguously means "not found".
     mapping(bytes32 => uint256) private _deviceToTokenId;
+
+    // Mapping from a device's NFT token ID to its set of authorized oracle addresses.
+    mapping(uint256 => mapping(address => bool)) private _authorizedOracles;
 
     // Counter for minting new tokens. Starts at 1.
     uint256 private _nextTokenId;
 
-    uint256[48] private __gap;
-
-    // --- Events ---
-    event DeviceRegistered(bytes32 indexed deviceId, uint256 indexed tokenId, address indexed initialOwner);
+    uint256[47] private __gap;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -95,17 +104,48 @@ contract DeviceRegistry is
         return tokenId;
     }
 
+    // --- External - Device Owner Functions ---
+
+    /**
+     * @notice Authorizes an oracle to submit data on behalf of a device.
+     * @dev Only the owner of the device NFT can call this.
+     * @param tokenId The token ID of the device.
+     * @param oracle The address of the oracle to authorize.
+     */
+    function addAuthorizedOracle(uint256 tokenId, address oracle) external {
+        if (ownerOf(tokenId) != msg.sender) revert DeviceRegistry__NotOwner();
+        if (oracle == address(0)) revert DeviceRegistry__ZeroAddress();
+        if (_authorizedOracles[tokenId][oracle]) revert DeviceRegistry__OracleAlreadyAuthorized();
+
+        _authorizedOracles[tokenId][oracle] = true;
+        emit OracleAuthorized(tokenId, oracle);
+    }
+
+    /**
+     * @notice De-authorizes an oracle from submitting data.
+     * @dev Only the owner of the device NFT can call this.
+     * @param tokenId The token ID of the device.
+     * @param oracle The address of the oracle to de-authorize.
+     */
+    function removeAuthorizedOracle(uint256 tokenId, address oracle) external {
+        if (ownerOf(tokenId) != msg.sender) revert DeviceRegistry__NotOwner();
+        if (!_authorizedOracles[tokenId][oracle]) revert DeviceRegistry__OracleNotAuthorized();
+
+        _authorizedOracles[tokenId][oracle] = false;
+        emit OracleDeauthorized(tokenId, oracle);
+    }
+
     // --- External - View Functions (IDeviceRegistry) ---
 
     /**
      * @inheritdoc IDeviceRegistry
      */
-    function isAuthorizedSubmitter(bytes32 deviceId, address submitter) external view override returns (bool) {
+    function isOracleAuthorizedForDevice(bytes32 deviceId, address oracle) external view override returns (bool) {
         uint256 tokenId = _deviceToTokenId[deviceId];
         if (tokenId == 0) {
             return false;
         }
-        return ownerOf(tokenId) == submitter;
+        return _authorizedOracles[tokenId][oracle];
     }
 
     /**

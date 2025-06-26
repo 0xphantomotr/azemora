@@ -3,24 +3,21 @@ pragma solidity ^0.8.20;
 
 /**
  * @title IDeviceRegistry
- * @dev The standard interface for a contract that manages the on-chain
- * identity of physical hardware devices using NFTs.
+ * @dev Interface for the on-chain device identity and authorization registry.
  */
 interface IDeviceRegistry {
     /**
-     * @notice Checks if a given address is the authorized data submitter for a specific device.
-     * @dev The implementation should verify if the `submitter` is the owner of the NFT
-     *      corresponding to the `deviceId`.
+     * @notice Checks if a given address is an oracle authorized to submit data for a specific device.
      * @param deviceId The unique identifier of the physical device.
-     * @param submitter The address of the oracle or entity attempting to submit data.
-     * @return A boolean indicating if the submitter is authorized.
+     * @param oracle The address of the oracle contract to check.
+     * @return True if the address is the owner, false otherwise.
      */
-    function isAuthorizedSubmitter(bytes32 deviceId, address submitter) external view returns (bool);
+    function isOracleAuthorizedForDevice(bytes32 deviceId, address oracle) external view returns (bool);
 
     /**
-     * @notice Returns the ERC-721 token ID associated with a given device ID.
+     * @notice Retrieves the NFT token ID for a given physical device ID.
      * @param deviceId The unique identifier of the physical device.
-     * @return The token ID.
+     * @return The uint256 token ID. Will revert if the device is not registered.
      */
     function getTokenId(bytes32 deviceId) external view returns (uint256);
 }

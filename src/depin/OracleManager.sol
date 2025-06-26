@@ -49,10 +49,11 @@ contract OracleManager is IOracleManager, AccessControlEnumerableUpgradeable, UU
         _disableInitializers();
     }
 
-    function initialize() public initializer {
+    function initialize(address initialAdmin) public initializer {
         __AccessControl_init();
         __UUPSUpgradeable_init();
-        _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
+        if (initialAdmin == address(0)) revert OracleManager__ZeroAddress();
+        _grantRole(DEFAULT_ADMIN_ROLE, initialAdmin);
     }
 
     // --- Admin Functions ---
@@ -104,9 +105,9 @@ contract OracleManager is IOracleManager, AccessControlEnumerableUpgradeable, UU
             address oracleAddress = config.oracles[i];
 
             // --- THE FINAL VERIFICATION STEP ---
-            // Before trusting the data, verify the oracle is the authorized owner of the device's NFT.
+            // Before trusting the data, verify the oracle is authorized for the device.
             if (address(deviceRegistry) != address(0)) {
-                if (!deviceRegistry.isAuthorizedSubmitter(sensorId, oracleAddress)) {
+                if (!deviceRegistry.isOracleAuthorizedForDevice(sensorId, oracleAddress)) {
                     // This oracle is not authorized for this specific device. Skip.
                     continue;
                 }

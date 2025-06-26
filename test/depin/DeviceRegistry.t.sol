@@ -15,6 +15,7 @@ contract DeviceRegistryTest is Test {
     address internal manufacturer = makeAddr("manufacturer");
     address internal deviceOwner = makeAddr("deviceOwner");
     address internal randomUser = makeAddr("randomUser");
+    address internal oracleAddress = makeAddr("oracleAddress");
 
     // --- State ---
     bytes32 internal constant DEVICE_ID = keccak256("test_sensor_123");
@@ -111,22 +112,134 @@ contract DeviceRegistryTest is Test {
 
     // --- Authorization Tests ---
 
-    function test_Unit_IsAuthorizedSubmitter_Succeeds() public {
-        vm.startPrank(manufacturer);
-        registry.registerDevice(DEVICE_ID, deviceOwner);
+    function test_Unit_AddAuthorizedOracle_Succeeds() public {
+        // Arrange: Register a device
+        vm.prank(manufacturer);
+        uint256 tokenId = registry.registerDevice(DEVICE_ID, deviceOwner);
+
+        // Act: Owner authorizes an oracle
+        vm.startPrank(deviceOwner);
+        registry.addAuthorizedOracle(tokenId, oracleAddress);
         vm.stopPrank();
-        assertTrue(registry.isAuthorizedSubmitter(DEVICE_ID, deviceOwner));
+
+        // Assert
+        assertTrue(registry.isOracleAuthorizedForDevice(DEVICE_ID, oracleAddress));
     }
 
-    function test_Unit_IsAuthorizedSubmitter_Fails_For_NonOwner() public {
-        vm.startPrank(manufacturer);
-        registry.registerDevice(DEVICE_ID, deviceOwner);
+    function test_Unit_RemoveAuthorizedOracle_Succeeds() public {
+        // Arrange: Register a device and authorize an oracle
+        vm.prank(manufacturer);
+        uint256 tokenId = registry.registerDevice(DEVICE_ID, deviceOwner);
+        vm.startPrank(deviceOwner);
+        registry.addAuthorizedOracle(tokenId, oracleAddress);
         vm.stopPrank();
-        assertFalse(registry.isAuthorizedSubmitter(DEVICE_ID, randomUser));
+        assertTrue(registry.isOracleAuthorizedForDevice(DEVICE_ID, oracleAddress));
+
+        // Act: Owner removes the oracle
+        vm.startPrank(deviceOwner);
+        registry.removeAuthorizedOracle(tokenId, oracleAddress);
+        vm.stopPrank();
+
+        // Assert
+        assertFalse(registry.isOracleAuthorizedForDevice(DEVICE_ID, oracleAddress));
     }
 
-    function test_Unit_IsAuthorizedSubmitter_Fails_For_Unregistered_Device() public view {
-        assertFalse(registry.isAuthorizedSubmitter(DEVICE_ID, deviceOwner));
+    function test_Reverts_If_NonOwner_AddsOracle() public {
+        // Arrange: Register a device
+        vm.prank(manufacturer);
+        uint256 tokenId = registry.registerDevice(DEVICE_ID, deviceOwner);
+
+        // Act & Assert: Random user tries to add an oracle
+        vm.startPrank(randomUser);
+        vm.expectRevert(DeviceRegistry__NotOwner.selector);
+        registry.addAuthorizedOracle(tokenId, oracleAddress);
+        vm.stopPrank();
+    }
+
+    function test_Reverts_If_NonOwner_RemovesOracle() public {
+        // Arrange: Register and authorize
+        vm.prank(manufacturer);
+        uint256 tokenId = registry.registerDevice(DEVICE_ID, deviceOwner);
+        vm.startPrank(deviceOwner);
+        registry.addAuthorizedOracle(tokenId, oracleAddress);
+        vm.stopPrank();
+
+        // Act & Assert: Random user tries to remove it
+        vm.startPrank(randomUser);
+        vm.expectRevert(DeviceRegistry__NotOwner.selector);
+        registry.removeAuthorizedOracle(tokenId, oracleAddress);
+        vm.stopPrank();
+    }
+
+    function test_Reverts_If_Adding_AlreadyAuthorized_Oracle() public {
+        // Arrange: Register and authorize
+        vm.prank(manufacturer);
+        uint256 tokenId = registry.registerDevice(DEVICE_ID, deviceOwner);
+        vm.startPrank(deviceOwner);
+        registry.addAuthorizedOracle(tokenId, oracleAddress);
+
+        // Act & Assert: Try to add the same oracle again
+        vm.expectRevert(DeviceRegistry__OracleAlreadyAuthorized.selector);
+        registry.addAuthorizedOracle(tokenId, oracleAddress);
+        vm.stopPrank();
+    }
+
+    function test_Reverts_If_Removing_NotAuthorized_Oracle() public {
+        // Arrange: Register a device
+        vm.prank(manufacturer);
+        uint256 tokenId = registry.registerDevice(DEVICE_ID, deviceOwner);
+
+        // Act & Assert: Try to remove an oracle that was never authorized
+        vm.startPrank(deviceOwner);
+        vm.expectRevert(DeviceRegistry__OracleNotAuthorized.selector);
+        registry.removeAuthorizedOracle(tokenId, oracleAddress);
+        vm.stopPrank();
+    }
+
+    function test_Unit_IsOracleAuthorized_Fails_For_Unregistered_Device() public view {
+        assertFalse(registry.isOracleAuthorizedForDevice(DEVICE_ID, oracleAddress));
+    }
+
+    function test_Unit_Authorization_Is_Tied_To_Current_Owner() public {
+        // Arrange: Register a device and get its token ID
+        vm.prank(manufacturer);
+        uint256 tokenId = registry.registerDevice(DEVICE_ID, deviceOwner);
+
+        // Act 1: Transfer the NFT from the original owner to a new owner
+        vm.startPrank(deviceOwner);
+        registry.transferFrom(deviceOwner, randomUser, tokenId);
+        vm.stopPrank();
+        assertEq(registry.ownerOf(tokenId), randomUser);
+
+        // Assert 1: The OLD owner can no longer manage authorizations
+        vm.startPrank(deviceOwner);
+        vm.expectRevert(DeviceRegistry__NotOwner.selector);
+        registry.addAuthorizedOracle(tokenId, oracleAddress);
+        vm.stopPrank();
+
+        // Assert 2: The NEW owner CAN manage authorizations
+        vm.startPrank(randomUser);
+        registry.addAuthorizedOracle(tokenId, oracleAddress);
+        vm.stopPrank();
+        assertTrue(registry.isOracleAuthorizedForDevice(DEVICE_ID, oracleAddress));
+    }
+
+    function test_Unit_Emits_Correct_Events() public {
+        // Arrange
+        vm.prank(manufacturer);
+        uint256 tokenId = registry.registerDevice(DEVICE_ID, deviceOwner);
+
+        // Act & Assert: Add oracle
+        vm.startPrank(deviceOwner);
+        vm.expectEmit(true, true, true, true);
+        emit OracleAuthorized(tokenId, oracleAddress);
+        registry.addAuthorizedOracle(tokenId, oracleAddress);
+
+        // Act & Assert: Remove oracle
+        vm.expectEmit(true, true, true, true);
+        emit OracleDeauthorized(tokenId, oracleAddress);
+        registry.removeAuthorizedOracle(tokenId, oracleAddress);
+        vm.stopPrank();
     }
 
     // --- View Function Tests ---

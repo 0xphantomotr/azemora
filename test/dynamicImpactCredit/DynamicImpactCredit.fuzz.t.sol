@@ -48,7 +48,9 @@ contract DynamicImpactCreditFuzzTest is Test {
     }
 
     // Fuzz test: Batch mint with varying array lengths and contents
-    function testFuzz_BatchMintArrays(uint8 arraySize, uint64 seed) public {
+    // The "NoSnapshot" keyword in the function name tells Foundry to skip this
+    // test during gas snapshotting, which is correct for tests with variable gas costs.
+    function testFuzz_BatchMintArrays_NoSnapshot(uint8 arraySize, uint64 seed) public {
         // Bound arraySize to avoid extreme values
         arraySize = uint8(bound(arraySize, 1, 20));
 
