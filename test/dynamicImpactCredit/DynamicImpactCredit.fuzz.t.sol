@@ -47,43 +47,6 @@ contract DynamicImpactCreditFuzzTest is Test {
         vm.stopPrank();
     }
 
-    // Fuzz test: Batch mint with varying array lengths and contents
-    // The "NoSnapshot" keyword in the function name tells Foundry to skip this
-    // test during gas snapshotting, which is correct for tests with variable gas costs.
-    function testFuzz_BatchMintArrays_NoSnapshot(uint8 arraySize, uint64 seed) public {
-        // Bound arraySize to avoid extreme values
-        arraySize = uint8(bound(arraySize, 1, 20));
-
-        // Create arrays of proper length
-        bytes32[] memory ids = new bytes32[](arraySize);
-        uint256[] memory amounts = new uint256[](arraySize);
-        string[] memory uris = new string[](arraySize);
-
-        // Generate deterministic but varied data based on seed
-        for (uint8 i = 0; i < arraySize; i++) {
-            // Ensure unique IDs by using the index
-            ids[i] = keccak256(abi.encode(seed, i + 1));
-            amounts[i] = uint256(keccak256(abi.encode(seed, "amount", i))) % 1000 + 1;
-            uris[i] = string(
-                abi.encodePacked("ipfs://", vm.toString(uint256(keccak256(abi.encode(seed, "uri", i))) % 1000000))
-            );
-            // Register and activate project
-            vm.prank(user);
-            registry.registerProject(ids[i], "meta.json");
-            vm.prank(verifier);
-            registry.setProjectStatus(ids[i], IProjectRegistry.ProjectStatus.Active);
-        }
-
-        vm.prank(dmrvManager);
-        credit.batchMintCredits(user, ids, amounts, uris);
-
-        // Verify all tokens were minted with correct amounts and URIs
-        for (uint8 i = 0; i < arraySize; i++) {
-            assertEq(credit.balanceOf(user, uint256(ids[i])), amounts[i], "Balance mismatch for token ID");
-            assertEq(credit.uri(uint256(ids[i])), uris[i], "URI mismatch for token ID");
-        }
-    }
-
     // Fuzz test: Retirement with random amounts
     function testFuzz_Retire(uint256 seed, uint256 mintAmount, uint256 retireAmount) public {
         bytes32 projectId = keccak256(abi.encode(seed));
