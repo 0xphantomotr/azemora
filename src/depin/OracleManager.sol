@@ -188,4 +188,3 @@ contract OracleManager is IOracleManager, AccessControlEnumerableUpgradeable, UU
         return super.supportsInterface(interfaceId);
     }
 }
- 

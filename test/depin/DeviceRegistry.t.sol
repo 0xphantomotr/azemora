@@ -256,4 +256,3 @@ contract DeviceRegistryTest is Test {
         registry.getTokenId(DEVICE_ID);
     }
 }
- 
