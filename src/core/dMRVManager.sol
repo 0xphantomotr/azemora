@@ -9,6 +9,9 @@ import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "./interfaces/IProjectRegistry.sol";
 import "./DynamicImpactCredit.sol";
 import "./interfaces/IVerifierModule.sol";
+import "./interfaces/IMethodologyRegistry.sol";
+import {AccessControlEnumerableUpgradeable} from
+    "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlEnumerableUpgradeable.sol";
 
 // --- Custom Errors ---
 error DMRVManager__ProjectNotActive();
@@ -17,6 +20,8 @@ error DMRVManager__ModuleAlreadyRegistered(bytes32 moduleType);
 error DMRVManager__CallerNotRegisteredModule();
 error DMRVManager__ZeroAddress();
 error DMRVManager__ClaimNotFoundOrAlreadyFulfilled();
+error DMRVManager__MethodologyNotValid();
+error DMRVManager__RegistryNotSet();
 
 /**
  * @title DMRVManager
@@ -29,25 +34,18 @@ error DMRVManager__ClaimNotFoundOrAlreadyFulfilled();
  */
 contract DMRVManager is
     Initializable,
-    AccessControlUpgradeable,
+    AccessControlEnumerableUpgradeable,
     UUPSUpgradeable,
     ReentrancyGuardUpgradeable,
     PausableUpgradeable
 {
     // --- Roles ---
-    function MODULE_ADMIN_ROLE() public pure returns (bytes32) {
-        return keccak256("MODULE_ADMIN_ROLE");
-    }
-
-    function PAUSER_ROLE() public pure returns (bytes32) {
-        return keccak256("PAUSER_ROLE");
-    }
-
-    bytes32[] private _roles;
+    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     // --- State variables ---
     IProjectRegistry public projectRegistry;
     DynamicImpactCredit public creditContract;
+    IMethodologyRegistry public methodologyRegistry;
 
     // Mapping from a module type identifier to its deployed contract address
     mapping(bytes32 => address) public verifierModules;
@@ -55,7 +53,7 @@ contract DMRVManager is
     mapping(bytes32 => bytes32) private _claimToModuleType;
 
     // Adjusted gap to maintain storage layout for UUPS proxy compatibility
-    uint256[49] private __gap;
+    uint256[48] private __gap;
 
     // Structure for representing parsed verification data
     struct VerificationData {
@@ -95,12 +93,7 @@ contract DMRVManager is
         __ReentrancyGuard_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
-        _grantRole(MODULE_ADMIN_ROLE(), _msgSender());
-        _grantRole(PAUSER_ROLE(), _msgSender());
-
-        _roles.push(DEFAULT_ADMIN_ROLE);
-        _roles.push(MODULE_ADMIN_ROLE());
-        _roles.push(PAUSER_ROLE());
+        _grantRole(PAUSER_ROLE, _msgSender());
 
         projectRegistry = IProjectRegistry(_registryAddress);
         creditContract = DynamicImpactCredit(_creditAddress);
@@ -243,28 +236,40 @@ contract DMRVManager is
     }
 
     /**
-     * @notice Registers or updates a verifier module address.
-     * @dev Can only be called by an address with the `MODULE_ADMIN_ROLE`.
-     * @param moduleType The unique identifier for the module type (e.g., keccak256("REPUTATION_WEIGHTED_V1")).
-     * @param moduleAddress The deployed address of the verifier module contract.
+     * @notice Sets the address for the MethodologyRegistry.
+     * @dev Can only be called once by an address with the `DEFAULT_ADMIN_ROLE`.
+     * @param _registryAddress The address of the deployed MethodologyRegistry contract.
      */
-    function registerVerifierModule(bytes32 moduleType, address moduleAddress) external onlyRole(MODULE_ADMIN_ROLE()) {
-        if (moduleAddress == address(0)) revert DMRVManager__ZeroAddress();
-        if (verifierModules[moduleType] == moduleAddress) revert DMRVManager__ModuleAlreadyRegistered(moduleType);
-
-        verifierModules[moduleType] = moduleAddress;
-        emit VerifierModuleRegistered(moduleType, moduleAddress);
+    function setMethodologyRegistry(address _registryAddress) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (address(methodologyRegistry) != address(0)) revert DMRVManager__RegistryNotSet();
+        if (_registryAddress == address(0)) revert DMRVManager__ZeroAddress();
+        methodologyRegistry = IMethodologyRegistry(_registryAddress);
     }
 
     /**
-     * @notice Removes a verifier module from the registry.
-     * @dev Can only be called by an address with the `MODULE_ADMIN_ROLE`.
-     * @param moduleType The identifier of the module type to remove.
+     * @notice Registers a verifier module that has been approved in the MethodologyRegistry.
+     * @dev This can be called by anyone to sync an approved methodology. It replaces the old,
+     * privileged `registerVerifierModule` function.
+     * @param moduleType The identifier of the module type to register.
      */
-    function removeVerifierModule(bytes32 moduleType) external onlyRole(MODULE_ADMIN_ROLE()) {
-        if (verifierModules[moduleType] == address(0)) revert DMRVManager__ModuleNotRegistered();
-        delete verifierModules[moduleType];
-        emit VerifierModuleRemoved(moduleType);
+    function registerVerifierModule(bytes32 moduleType) external {
+        if (verifierModules[moduleType] != address(0)) revert DMRVManager__ModuleAlreadyRegistered(moduleType);
+        require(address(methodologyRegistry) != address(0), "DMRVManager__RegistryNotSet");
+
+        (
+            ,
+            address moduleAddress,
+            , // methodologySchemaURI
+            , // schemaHash
+            , // version
+            bool isApproved,
+            bool isDeprecated
+        ) = methodologyRegistry.methodologies(moduleType);
+
+        if (!isApproved || isDeprecated) revert DMRVManager__MethodologyNotValid();
+
+        verifierModules[moduleType] = moduleAddress;
+        emit VerifierModuleRegistered(moduleType, moduleAddress);
     }
 
     /**
@@ -273,7 +278,7 @@ contract DMRVManager is
      * This is a critical safety feature to halt activity in case of an emergency.
      * Emits a `Paused` event.
      */
-    function pause() external onlyRole(PAUSER_ROLE()) {
+    function pause() external onlyRole(PAUSER_ROLE) {
         _pause();
     }
 
@@ -282,7 +287,7 @@ contract DMRVManager is
      * @dev Can only be called by an address with the `PAUSER_ROLE`.
      * Emits an `Unpaused` event.
      */
-    function unpause() external onlyRole(PAUSER_ROLE()) {
+    function unpause() external onlyRole(PAUSER_ROLE) {
         _unpause();
     }
 
@@ -296,10 +301,14 @@ contract DMRVManager is
      * @return A list of role identifiers held by the account.
      */
     function getRoles(address account) external view returns (bytes32[] memory) {
-        uint256 rolesLength = _roles.length;
+        bytes32[] memory allRoles = new bytes32[](2);
+        allRoles[0] = DEFAULT_ADMIN_ROLE;
+        allRoles[1] = PAUSER_ROLE;
+
+        uint256 rolesLength = allRoles.length;
         uint256 count = 0;
         for (uint256 i = 0; i < rolesLength; i++) {
-            if (hasRole(_roles[i], account)) {
+            if (hasRole(allRoles[i], account)) {
                 count++;
             }
         }
@@ -311,8 +320,8 @@ contract DMRVManager is
         bytes32[] memory roles = new bytes32[](count);
         uint256 index = 0;
         for (uint256 i = 0; i < rolesLength; i++) {
-            if (hasRole(_roles[i], account)) {
-                roles[index++] = _roles[i];
+            if (hasRole(allRoles[i], account)) {
+                roles[index++] = allRoles[i];
                 // Optimization: stop looping once all roles have been found.
                 if (index == count) break;
             }

@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import "../../src/core/ProjectRegistry.sol";
 import "../../src/core/dMRVManager.sol";
 import "../../src/core/DynamicImpactCredit.sol";
+import "../../src/core/MethodologyRegistry.sol";
 import "../mocks/MockVerifierModule.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
@@ -14,6 +15,7 @@ contract DMRVManagerRevertsTest is Test {
     DMRVManager dMRVManager;
     DynamicImpactCredit credit;
     MockVerifierModule mockModule;
+    MethodologyRegistry methodologyRegistry;
 
     address admin = makeAddr("admin");
     address projectDeveloper = makeAddr("projectDeveloper");
@@ -25,43 +27,52 @@ contract DMRVManagerRevertsTest is Test {
     bytes32 public constant MOCK_MODULE_TYPE = keccak256("mock");
 
     function setUp() public {
-        vm.startPrank(admin);
+        // Test contract is the deployer and initial admin
         // Deploy Registry
-        ProjectRegistry registryImpl = new ProjectRegistry();
         registry = ProjectRegistry(
-            address(new ERC1967Proxy(address(registryImpl), abi.encodeCall(ProjectRegistry.initialize, ())))
+            address(new ERC1967Proxy(address(new ProjectRegistry()), abi.encodeCall(ProjectRegistry.initialize, ())))
         );
-        registry.grantRole(registry.VERIFIER_ROLE(), verifier);
 
         // Deploy Credits
-        DynamicImpactCredit creditImpl = new DynamicImpactCredit();
         credit = DynamicImpactCredit(
             address(
                 new ERC1967Proxy(
-                    address(creditImpl),
+                    address(new DynamicImpactCredit()),
                     abi.encodeCall(DynamicImpactCredit.initializeDynamicImpactCredit, (address(registry), "ipfs://"))
                 )
             )
         );
 
-        // Deploy dMRV Manager
-        DMRVManager dMRVManagerImpl = new DMRVManager();
-        dMRVManager = DMRVManager(
+        // Deploy MethodologyRegistry
+        methodologyRegistry = MethodologyRegistry(
             address(
                 new ERC1967Proxy(
-                    address(dMRVManagerImpl),
-                    abi.encodeCall(DMRVManager.initializeDMRVManager, (address(registry), address(credit)))
+                    address(new MethodologyRegistry()), abi.encodeCall(MethodologyRegistry.initialize, (address(this)))
                 )
             )
         );
 
+        // Deploy dMRV Manager
+        dMRVManager = DMRVManager(
+            address(
+                new ERC1967Proxy(
+                    address(new DMRVManager()),
+                    abi.encodeCall(DMRVManager.initializeDMRVManager, (address(registry), address(credit)))
+                )
+            )
+        );
+        dMRVManager.setMethodologyRegistry(address(methodologyRegistry));
+
         mockModule = new MockVerifierModule();
 
-        // Grant roles
+        // Grant roles from the test contract (the admin)
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), address(dMRVManager));
         credit.grantRole(credit.METADATA_UPDATER_ROLE(), address(dMRVManager));
-        dMRVManager.grantRole(dMRVManager.MODULE_ADMIN_ROLE(), admin);
-        vm.stopPrank();
+        registry.grantRole(registry.VERIFIER_ROLE(), verifier);
+        dMRVManager.grantRole(dMRVManager.DEFAULT_ADMIN_ROLE(), admin);
+        dMRVManager.grantRole(dMRVManager.PAUSER_ROLE(), admin);
+        methodologyRegistry.grantRole(methodologyRegistry.DEFAULT_ADMIN_ROLE(), admin);
+        methodologyRegistry.grantRole(methodologyRegistry.METHODOLOGY_ADMIN_ROLE(), admin);
 
         // Setup projects
         vm.prank(projectDeveloper);
@@ -77,8 +88,12 @@ contract DMRVManagerRevertsTest is Test {
     // --- requestVerification ---
 
     function test_revert_requestVerification_projectNotActive() public {
+        // Setup: Register module via new flow
         vm.prank(admin);
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+        methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
+        methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
+        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE);
+
         vm.expectRevert(DMRVManager__ProjectNotActive.selector);
         vm.prank(projectDeveloper);
         dMRVManager.requestVerification(pendingProjectId, keccak256("claim"), "uri", MOCK_MODULE_TYPE);
@@ -87,11 +102,19 @@ contract DMRVManagerRevertsTest is Test {
     // --- fulfillVerification ---
 
     function test_revert_fulfillVerification_notRegisteredModule() public {
-        // Step 1: Register two different modules
+        // Step 1: Register two different modules via new flow
         MockVerifierModule otherModule = new MockVerifierModule();
+        bytes32 otherModuleType = keccak256("OTHER_MODULE");
         vm.startPrank(admin);
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
-        dMRVManager.registerVerifierModule(keccak256("OTHER_MODULE"), address(otherModule));
+
+        methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
+        methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
+        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE);
+
+        methodologyRegistry.addMethodology(otherModuleType, address(otherModule), "ipfs://other", bytes32(0));
+        methodologyRegistry.approveMethodology(otherModuleType);
+        dMRVManager.registerVerifierModule(otherModuleType);
+
         vm.stopPrank();
 
         // Step 2: Create a valid request with the main module
@@ -107,8 +130,12 @@ contract DMRVManagerRevertsTest is Test {
     }
 
     function test_revert_fulfillVerification_claimNotFound() public {
+        // Setup: Register module via new flow
         vm.prank(admin);
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+        methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
+        methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
+        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE);
+
         bytes memory data = abi.encode(100, false, bytes32(0), "ipfs://data");
         vm.expectRevert(DMRVManager__ClaimNotFoundOrAlreadyFulfilled.selector);
         vm.prank(address(mockModule));
@@ -116,9 +143,12 @@ contract DMRVManagerRevertsTest is Test {
     }
 
     function test_revert_fulfillVerification_alreadyFulfilled() public {
-        // Step 1: Create a valid request
+        // Step 1: Register module and create a valid request
         vm.prank(admin);
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+        methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
+        methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
+        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE);
+
         vm.prank(projectDeveloper);
         bytes32 claimId = keccak256("my-claim");
         dMRVManager.requestVerification(activeProjectId, claimId, "uri", MOCK_MODULE_TYPE);

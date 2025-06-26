@@ -10,15 +10,29 @@ import "../achievements/interfaces/IReputationManager.sol";
 import "./VerifierManager.sol";
 import "../core/dMRVManager.sol";
 import "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlEnumerableUpgradeable.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+enum TaskStatus {
+    Idle,
+    Voting,
+    Provisional,
+    Challenged,
+    Resolved
+}
 
 // --- Custom Errors ---
 error ReputationWeightedVerifier__NotActiveVerifier();
 error ReputationWeightedVerifier__TaskNotFound();
 error ReputationWeightedVerifier__VotingPeriodOver();
-error ReputationWeightedVerifier__TaskAlreadyResolved();
+error ReputationweightedVerifier__InvalidTaskStatus(bytes32 taskId, TaskStatus currentStatus);
 error ReputationWeightedVerifier__VotingPeriodNotOver();
 error ReputationWeightedVerifier__ZeroAddress();
 error ReputationWeightedVerifier__VoteAlreadyCast();
+error ReputationWeightedVerifier__ChallengePeriodNotOver();
+error ReputationWeightedVerifier__ChallengePeriodOver();
+error ReputationWeightedVerifier__InsufficientStakeAllowance();
+error ReputationWeightedVerifier__NotOnCouncil();
+error ReputationWeightedVerifier__ArbitrationVoteAlreadyCast();
 
 /**
  * @title ReputationWeightedVerifier
@@ -35,6 +49,28 @@ contract ReputationWeightedVerifier is
     ReentrancyGuardUpgradeable,
     IVerifierModule
 {
+    // --- Structs for Initialization ---
+    struct AddressesConfig {
+        address verifierManager;
+        address reputationManager;
+        address dMRVManager;
+        address treasury;
+        address challengeToken;
+    }
+
+    struct TimingsConfig {
+        uint256 votingPeriod;
+        uint256 challengePeriod;
+    }
+
+    struct ParametersConfig {
+        uint256 approvalThresholdBps;
+        uint256 challengeStakeAmount;
+        uint8 councilSize;
+        uint256 incorrectVoteStakePenalty;
+        uint256 incorrectVoteReputationPenalty;
+    }
+
     // --- State ---
     enum Vote {
         None, // 0
@@ -48,28 +84,54 @@ contract ReputationWeightedVerifier is
         bytes32 claimId;
         string evidenceURI;
         uint64 deadline;
-        bool resolved;
+        TaskStatus status;
+        bool provisionalOutcome; // true for approve, false for reject
+        uint64 challengeDeadline;
         uint256 weightedApproveVotes;
         uint256 weightedRejectVotes;
         mapping(address => Vote) votes;
+        address[] voters;
+    }
+
+    struct Challenge {
+        address challenger;
+        string evidenceURI;
+        uint256 stake;
+        bool active;
+        address[] councilMembers;
+        mapping(address => bool) hasVotedOnChallenge;
+        uint256 upholdVotes; // Votes to uphold the original provisionalOutcome
+        uint256 overturnVotes; // Votes to overturn the original provisionalOutcome
     }
 
     IVerifierManager public verifierManager;
     IReputationManager public reputationManager;
     address public dMRVManager;
+    address public treasury;
+    IERC20 public challengeToken; // The token used for staking challenges (AZE)
 
     uint256 public votingPeriod; // Duration for voting on a task
     uint256 public approvalThresholdBps; // Basis points required for approval (e.g., 5001 for >50%)
+    uint256 public challengePeriod; // Duration of the challenge window
+    uint256 public challengeStakeAmount; // Amount of AZE required to stake a challenge
+    uint8 public councilSize; // The number of members in an arbitration council
+    uint256 public incorrectVoteStakePenalty; // Amount of stake slashed from an incorrect voter
+    uint256 public incorrectVoteReputationPenalty; // Amount of reputation slashed from an incorrect voter
 
     mapping(bytes32 => VerificationTask) public tasks;
+    mapping(bytes32 => Challenge) public challenges;
     uint256 public taskCounter;
 
-    uint256[50] private __gap;
+    uint256[42] private __gap;
 
     // --- Events ---
     event TaskCreated(bytes32 indexed taskId, bytes32 indexed projectId, string evidenceURI, uint256 deadline);
     event Voted(bytes32 indexed taskId, address indexed voter, Vote vote, uint256 weight);
     event TaskResolved(bytes32 indexed taskId, bool approved, uint256 approveVotes, uint256 rejectVotes);
+    event TaskResolutionProposed(bytes32 indexed taskId, bool provisionalOutcome, uint256 challengeDeadline);
+    event TaskChallenged(bytes32 indexed taskId, address indexed challenger, string evidenceURI);
+    event ArbitrationVoteCast(bytes32 indexed taskId, address indexed councilMember, bool didUphold);
+    event ChallengeResolved(bytes32 indexed taskId, bool wasUpheld);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -78,26 +140,36 @@ contract ReputationWeightedVerifier is
 
     function initialize(
         address admin_,
-        address verifierManager_,
-        address reputationManager_,
-        address dMRVManager_,
-        uint256 votingPeriod_,
-        uint256 approvalThresholdBps_
+        AddressesConfig calldata addrs,
+        TimingsConfig calldata timings,
+        ParametersConfig calldata params
     ) public initializer {
         __AccessControlEnumerable_init();
         __UUPSUpgradeable_init();
         __ReentrancyGuard_init();
 
-        if (verifierManager_ == address(0) || reputationManager_ == address(0) || dMRVManager_ == address(0)) {
-            revert ReputationWeightedVerifier__ZeroAddress();
-        }
+        if (addrs.verifierManager == address(0)) revert ReputationWeightedVerifier__ZeroAddress();
+        if (addrs.reputationManager == address(0)) revert ReputationWeightedVerifier__ZeroAddress();
+        if (addrs.dMRVManager == address(0)) revert ReputationWeightedVerifier__ZeroAddress();
+        if (addrs.challengeToken == address(0)) revert ReputationWeightedVerifier__ZeroAddress();
+        if (addrs.treasury == address(0)) revert ReputationWeightedVerifier__ZeroAddress();
+
         _grantRole(DEFAULT_ADMIN_ROLE, admin_);
 
-        verifierManager = IVerifierManager(verifierManager_);
-        reputationManager = IReputationManager(reputationManager_);
-        dMRVManager = dMRVManager_;
-        votingPeriod = votingPeriod_;
-        approvalThresholdBps = approvalThresholdBps_;
+        verifierManager = IVerifierManager(addrs.verifierManager);
+        reputationManager = IReputationManager(addrs.reputationManager);
+        dMRVManager = addrs.dMRVManager;
+        treasury = addrs.treasury;
+        challengeToken = IERC20(addrs.challengeToken);
+
+        votingPeriod = timings.votingPeriod;
+        challengePeriod = timings.challengePeriod;
+
+        approvalThresholdBps = params.approvalThresholdBps;
+        challengeStakeAmount = params.challengeStakeAmount;
+        councilSize = params.councilSize;
+        incorrectVoteStakePenalty = params.incorrectVoteStakePenalty;
+        incorrectVoteReputationPenalty = params.incorrectVoteReputationPenalty;
     }
 
     // --- IVerifierModule Implementation ---
@@ -118,6 +190,7 @@ contract ReputationWeightedVerifier is
         task.claimId = claimId;
         task.evidenceURI = evidenceURI;
         task.deadline = uint64(block.timestamp + votingPeriod);
+        task.status = TaskStatus.Voting;
 
         emit TaskCreated(taskId, projectId, evidenceURI, task.deadline);
         return taskId;
@@ -139,9 +212,13 @@ contract ReputationWeightedVerifier is
 
         if (task.deadline == 0) revert ReputationWeightedVerifier__TaskNotFound();
         if (block.timestamp > task.deadline) revert ReputationWeightedVerifier__VotingPeriodOver();
+        if (task.status != TaskStatus.Voting) {
+            revert ReputationweightedVerifier__InvalidTaskStatus(taskId, task.status);
+        }
         if (!verifierManager.isVerifier(msg.sender)) revert ReputationWeightedVerifier__NotActiveVerifier();
         if (task.votes[msg.sender] != Vote.None) revert ReputationWeightedVerifier__VoteAlreadyCast();
 
+        task.voters.push(msg.sender);
         uint256 weight = reputationManager.getReputation(msg.sender);
         task.votes[msg.sender] = vote;
 
@@ -156,38 +233,234 @@ contract ReputationWeightedVerifier is
 
     // --- Task Resolution ---
 
-    function resolveTask(bytes32 taskId) external nonReentrant {
+    /**
+     * @notice Resolves the voting period, calculating a provisional outcome and starting the challenge period.
+     * @dev Can be called by anyone after the voting period is over.
+     * @param taskId The ID of the task to resolve.
+     */
+    function proposeResolution(bytes32 taskId) external nonReentrant {
         VerificationTask storage task = tasks[taskId];
 
         if (task.deadline == 0) revert ReputationWeightedVerifier__TaskNotFound();
         if (block.timestamp <= task.deadline) revert ReputationWeightedVerifier__VotingPeriodNotOver();
-        if (task.resolved) revert ReputationWeightedVerifier__TaskAlreadyResolved();
+        if (task.status != TaskStatus.Voting) {
+            revert ReputationweightedVerifier__InvalidTaskStatus(taskId, task.status);
+        }
 
-        task.resolved = true;
+        task.status = TaskStatus.Provisional;
+        task.challengeDeadline = uint64(block.timestamp + challengePeriod);
+
         uint256 totalVotes = task.weightedApproveVotes + task.weightedRejectVotes;
         bool approved = false;
 
         if (totalVotes > 0) {
-            // Check if approval votes meet the threshold
             if ((task.weightedApproveVotes * 10000) / totalVotes >= approvalThresholdBps) {
                 approved = true;
             }
         }
+        task.provisionalOutcome = approved;
 
-        // Fulfill the verification in the dMRVManager.
-        // This module's responsibility is to signal approval/rejection. The actual credit amount
-        // is outside its scope. We send correctly formatted data that dMRVManager can parse.
+        emit TaskResolutionProposed(taskId, approved, task.challengeDeadline);
+    }
+
+    /**
+     * @notice Allows a user to challenge a provisional outcome by staking tokens.
+     * @dev This moves the task into a 'Challenged' state, preventing finalization until
+     * the challenge is resolved by an arbitration council.
+     * @param taskId The ID of the task to challenge.
+     * @param evidenceURI A URI pointing to evidence supporting the challenge.
+     */
+    function challengeResolution(bytes32 taskId, string calldata evidenceURI) external nonReentrant {
+        VerificationTask storage task = tasks[taskId];
+
+        if (task.status != TaskStatus.Provisional) {
+            revert ReputationweightedVerifier__InvalidTaskStatus(taskId, task.status);
+        }
+        if (block.timestamp >= task.challengeDeadline) {
+            revert ReputationWeightedVerifier__ChallengePeriodOver();
+        }
+
+        uint256 stakeAmount = challengeStakeAmount;
+        if (challengeToken.allowance(msg.sender, address(this)) < stakeAmount) {
+            revert ReputationWeightedVerifier__InsufficientStakeAllowance();
+        }
+
+        challengeToken.transferFrom(msg.sender, address(this), stakeAmount);
+
+        task.status = TaskStatus.Challenged;
+        Challenge storage challenge = challenges[taskId];
+        challenge.challenger = msg.sender;
+        challenge.evidenceURI = evidenceURI;
+        challenge.stake = stakeAmount;
+        challenge.active = true;
+
+        _selectArbitrationCouncil(taskId);
+
+        emit TaskChallenged(taskId, msg.sender, evidenceURI);
+    }
+
+    /**
+     * @notice Allows a member of the arbitration council to vote on a challenge.
+     * @param taskId The ID of the task being challenged.
+     * @param upholdOriginalDecision True to vote to uphold the original provisional outcome, false to overturn it.
+     */
+    function castArbitrationVote(bytes32 taskId, bool upholdOriginalDecision) external nonReentrant {
+        VerificationTask storage task = tasks[taskId];
+        Challenge storage challenge = challenges[taskId];
+
+        if (task.status != TaskStatus.Challenged) {
+            revert ReputationweightedVerifier__InvalidTaskStatus(taskId, task.status);
+        }
+
+        bool isCouncilMember = false;
+        for (uint256 i = 0; i < challenge.councilMembers.length; i++) {
+            if (challenge.councilMembers[i] == msg.sender) {
+                isCouncilMember = true;
+                break;
+            }
+        }
+        if (!isCouncilMember) revert ReputationWeightedVerifier__NotOnCouncil();
+        if (challenge.hasVotedOnChallenge[msg.sender]) revert ReputationWeightedVerifier__ArbitrationVoteAlreadyCast();
+
+        challenge.hasVotedOnChallenge[msg.sender] = true;
+        if (upholdOriginalDecision) {
+            challenge.upholdVotes++;
+        } else {
+            challenge.overturnVotes++;
+        }
+
+        emit ArbitrationVoteCast(taskId, msg.sender, upholdOriginalDecision);
+    }
+
+    /**
+     * @notice Resolves a challenge after the arbitration council has voted.
+     * @dev This function executes the final consequences of the challenge. It can be called by anyone
+     * once enough council members have voted.
+     * @param taskId The ID of the task whose challenge is to be resolved.
+     */
+    function resolveChallenge(bytes32 taskId) external nonReentrant {
+        VerificationTask storage task = tasks[taskId];
+        Challenge storage challenge = challenges[taskId];
+        if (task.status != TaskStatus.Challenged) {
+            revert ReputationweightedVerifier__InvalidTaskStatus(taskId, task.status);
+        }
+
+        // For simplicity, resolution is triggered when a majority is reached.
+        // A production system might also have a deadline.
+        require(
+            challenge.upholdVotes + challenge.overturnVotes > challenge.councilMembers.length / 2,
+            "Arbitration quorum not met"
+        );
+
+        bool challengeFailed = challenge.upholdVotes >= challenge.overturnVotes;
+
+        if (challengeFailed) {
+            // Challenge fails: slash challenger's stake and finalize original outcome.
+            // The challenger's stake is sent to the DAO treasury.
+            challengeToken.transfer(treasury, challenge.stake);
+            _finalize(task, task.provisionalOutcome);
+        } else {
+            // Challenge succeeds: return stake to challenger and slash original incorrect voters.
+            challengeToken.transfer(challenge.challenger, challenge.stake);
+            bool correctOutcome = !task.provisionalOutcome; // The outcome is inverted.
+
+            for (uint256 i = 0; i < task.voters.length; i++) {
+                address voter = task.voters[i];
+                Vote voterVote = task.votes[voter];
+                bool voterWasCorrect =
+                    (voterVote == Vote.Approve && correctOutcome) || (voterVote == Vote.Reject && !correctOutcome);
+
+                if (!voterWasCorrect) {
+                    // This contract must be granted the SLASHER_ROLE on VerifierManager.
+                    verifierManager.slash(voter, incorrectVoteStakePenalty, incorrectVoteReputationPenalty);
+                }
+            }
+            _finalize(task, correctOutcome);
+        }
+
+        challenge.active = false;
+        emit ChallengeResolved(taskId, challengeFailed);
+    }
+
+    /**
+     * @notice Finalizes a task's resolution if the challenge period has passed without a challenge.
+     * @dev Can be called by anyone. It reports the final outcome to the dMRVManager.
+     * @param taskId The ID of the task to finalize.
+     */
+    function finalizeResolution(bytes32 taskId) external nonReentrant {
+        VerificationTask storage task = tasks[taskId];
+        if (task.status != TaskStatus.Provisional) {
+            revert ReputationweightedVerifier__InvalidTaskStatus(taskId, task.status);
+        }
+        if (block.timestamp < task.challengeDeadline) {
+            revert ReputationWeightedVerifier__ChallengePeriodNotOver();
+        }
+
+        _finalize(task, task.provisionalOutcome);
+    }
+
+    /**
+     * @dev Internal function to set a task to Resolved and fulfill it in the dMRVManager.
+     */
+    function _finalize(VerificationTask storage task, bool approved) internal {
+        task.status = TaskStatus.Resolved;
+
         bytes memory resultData;
         if (approved) {
-            // For a successful verification, we can signal to mint 1 credit as a placeholder.
             resultData = abi.encode(uint256(1), false, bytes32(0), "ipfs://verified");
         } else {
-            // For a failed verification, we send 0 credits and can update metadata to show rejection.
             resultData = abi.encode(uint256(0), true, bytes32(0), "ipfs://rejected");
         }
         DMRVManager(dMRVManager).fulfillVerification(task.projectId, task.claimId, resultData);
 
-        emit TaskResolved(taskId, approved, task.weightedApproveVotes, task.weightedRejectVotes);
+        emit TaskResolved(task.claimId, approved, task.weightedApproveVotes, task.weightedRejectVotes);
+    }
+
+    // --- Internal Logic ---
+
+    /**
+     * @notice Selects a random council of verifiers to arbitrate a challenge.
+     * @dev WARNING: This is a pseudo-random implementation for demonstration purposes and is
+     * vulnerable to manipulation in a production environment. A secure implementation should
+     * use a commit-reveal scheme or an oracle like Chainlink VRF.
+     * @param taskId The ID of the task to select a council for.
+     */
+    function _selectArbitrationCouncil(bytes32 taskId) internal {
+        VerificationTask storage task = tasks[taskId];
+        Challenge storage challenge = challenges[taskId];
+
+        address[] memory allVerifiers = verifierManager.getAllVerifiers();
+        address[] memory eligibleCouncilMembers = new address[](allVerifiers.length);
+        uint256 eligibleCount = 0;
+
+        // Filter out verifiers who participated in the original vote
+        for (uint256 i = 0; i < allVerifiers.length; i++) {
+            if (task.votes[allVerifiers[i]] == Vote.None) {
+                eligibleCouncilMembers[eligibleCount] = allVerifiers[i];
+                eligibleCount++;
+            }
+        }
+
+        // Ensure we have enough eligible members for the council
+        uint8 effectiveCouncilSize = councilSize;
+        if (eligibleCount < councilSize) {
+            effectiveCouncilSize = uint8(eligibleCount);
+        }
+
+        // Pseudo-randomly select the council members from the eligible list
+        for (uint256 i = 0; i < effectiveCouncilSize; i++) {
+            // WARNING: This is a pseudo-random selection method and is NOT secure for production.
+            // It is vulnerable to manipulation by miners/validators.
+            // A production system MUST use a secure source of randomness (e.g., Chainlink VRF).
+            uint256 randomIndex = uint256(keccak256(abi.encodePacked(block.prevrandao, taskId, i))) % eligibleCount;
+
+            address selected = eligibleCouncilMembers[randomIndex];
+            challenge.councilMembers.push(selected);
+
+            // Prevent re-selection by swapping the selected member with the last one
+            eligibleCouncilMembers[randomIndex] = eligibleCouncilMembers[eligibleCount - 1];
+            eligibleCount--;
+        }
     }
 
     // --- View Functions & Admin ---

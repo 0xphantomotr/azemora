@@ -6,7 +6,7 @@ import "../../src/core/ProjectRegistry.sol";
 import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 import "../../src/core/dMRVManager.sol";
 import "../../src/core/DynamicImpactCredit.sol";
-import "../../src/core/interfaces/IVerifierModule.sol";
+import "../../src/core/MethodologyRegistry.sol";
 import "../mocks/MockVerifierModule.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
@@ -23,11 +23,13 @@ contract DynamicImpactCreditTest is Test {
     ProjectRegistry registry;
     DMRVManager dmrvManager;
     MockVerifierModule mockModule;
+    MethodologyRegistry methodologyRegistry;
 
     address admin = address(0xA11CE);
     address user = address(0xCAFE);
     address other = address(0xD00D);
     address verifier = address(0xC1E4);
+    bytes32 public constant MOCK_MODULE_TYPE = keccak256("mock");
 
     bytes32 setupProjectId;
 
@@ -38,10 +40,9 @@ contract DynamicImpactCreditTest is Test {
         vm.startPrank(admin);
 
         // Deploy Registry
-        ProjectRegistry registryImpl = new ProjectRegistry();
-        bytes memory registryInitData = abi.encodeCall(ProjectRegistry.initialize, ());
-        ERC1967Proxy registryProxy = new ERC1967Proxy(address(registryImpl), registryInitData);
-        registry = ProjectRegistry(address(registryProxy));
+        registry = ProjectRegistry(
+            address(new ERC1967Proxy(address(new ProjectRegistry()), abi.encodeCall(ProjectRegistry.initialize, ())))
+        );
         registry.grantRole(registry.VERIFIER_ROLE(), verifier);
 
         // Deploy Credit Contract
@@ -54,18 +55,31 @@ contract DynamicImpactCreditTest is Test {
         ERC1967Proxy creditProxy = new ERC1967Proxy(address(creditImpl), creditInitData);
         credit = DynamicImpactCredit(address(creditProxy));
 
+        // Deploy MethodologyRegistry
+        methodologyRegistry = MethodologyRegistry(
+            address(
+                new ERC1967Proxy(
+                    address(new MethodologyRegistry()), abi.encodeCall(MethodologyRegistry.initialize, (admin))
+                )
+            )
+        );
+
         // Deploy dMRVManager
         DMRVManager dmrvManagerImpl = new DMRVManager();
         bytes memory dmrvInitData =
             abi.encodeCall(DMRVManager.initializeDMRVManager, (address(registry), address(credit)));
         ERC1967Proxy dmrvManagerProxy = new ERC1967Proxy(address(dmrvManagerImpl), dmrvInitData);
         dmrvManager = DMRVManager(address(dmrvManagerProxy));
+        dmrvManager.setMethodologyRegistry(address(methodologyRegistry));
 
-        // Deploy Mock Verifier Module and add it to the manager
+        // Deploy Mock Verifier Module and add it to the manager using the new flow
         mockModule = new MockVerifierModule();
-        dmrvManager.registerVerifierModule("mock", address(mockModule));
+        methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
+        methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
+        dmrvManager.registerVerifierModule(MOCK_MODULE_TYPE);
 
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), address(dmrvManager));
+        credit.grantRole(credit.METADATA_UPDATER_ROLE(), address(dmrvManager));
         credit.grantRole(credit.METADATA_UPDATER_ROLE(), admin);
         credit.grantRole(credit.PAUSER_ROLE(), admin);
 

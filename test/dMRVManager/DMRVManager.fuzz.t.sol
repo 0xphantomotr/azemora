@@ -6,6 +6,7 @@ import "../../src/core/dMRVManager.sol";
 import "../../src/core/ProjectRegistry.sol";
 import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 import "../../src/core/DynamicImpactCredit.sol";
+import "../../src/core/MethodologyRegistry.sol";
 import "../mocks/MockVerifierModule.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
@@ -14,6 +15,7 @@ contract DMRVManagerFuzzTest is Test {
     ProjectRegistry registry;
     DynamicImpactCredit credit;
     MockVerifierModule mockModule;
+    MethodologyRegistry methodologyRegistry;
 
     address admin = address(0xA11CE);
     address projectOwner = address(0x044E);
@@ -42,27 +44,37 @@ contract DMRVManagerFuzzTest is Test {
             )
         );
 
-        // 3. Deploy DMRVManager
-        dMRVManager = DMRVManager(
-            address(
-                new ERC1967Proxy(
-                    address(new DMRVManager()),
-                    abi.encodeCall(DMRVManager.initializeDMRVManager, (address(registry), address(credit)))
-                )
-            )
-        );
+        // 3. Deploy MethodologyRegistry
+        MethodologyRegistry methodologyRegistryImpl = new MethodologyRegistry();
+        bytes memory methodologyInitData = abi.encodeCall(MethodologyRegistry.initialize, (admin));
+        methodologyRegistry =
+            MethodologyRegistry(address(new ERC1967Proxy(address(methodologyRegistryImpl), methodologyInitData)));
 
-        // 4. Deploy and register mock module
+        // 4. Deploy DMRVManager
+        DMRVManager dMRVManagerImpl = new DMRVManager();
+        bytes memory dMRVManagerInitData =
+            abi.encodeCall(DMRVManager.initializeDMRVManager, (address(registry), address(credit)));
+        dMRVManager = DMRVManager(address(new ERC1967Proxy(address(dMRVManagerImpl), dMRVManagerInitData)));
+        dMRVManager.setMethodologyRegistry(address(methodologyRegistry));
+
+        // 5. Deploy and register mock module via the new flow
         mockModule = new MockVerifierModule();
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+        methodologyRegistry.addMethodology(
+            MOCK_MODULE_TYPE,
+            address(mockModule),
+            "ipfs://mock-methodology",
+            bytes32(0) // schemaHash - providing a null value for the test
+        );
+        methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
+        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE);
 
-        // 5. Set up roles
+        // 6. Set up roles
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), address(dMRVManager));
         credit.grantRole(credit.METADATA_UPDATER_ROLE(), address(dMRVManager));
 
         vm.stopPrank();
 
-        // 6. Register and activate a test project for fuzzing
+        // 7. Register and activate a test project for fuzzing
         vm.prank(projectOwner);
         registry.registerProject(projectId, "ipfs://initial.json");
 

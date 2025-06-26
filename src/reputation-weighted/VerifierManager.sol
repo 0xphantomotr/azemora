@@ -29,6 +29,7 @@ interface IVerifierManager {
     function isVerifier(address account) external view returns (bool);
     function getVerifierStake(address account) external view returns (uint256);
     function slash(address verifier, uint256 stakeAmount, uint256 reputationAmount) external;
+    function getAllVerifiers() external view returns (address[] memory);
 }
 
 /**
@@ -67,8 +68,10 @@ contract VerifierManager is
     uint256 public unstakeLockPeriod; // Duration a verifier must wait to unstake
 
     mapping(address => Verifier) public verifiers;
+    address[] private _verifierList;
+    mapping(address => uint256) private _verifierIndex;
 
-    uint256[49] private __gap;
+    uint256[47] private __gap;
 
     // --- Events ---
     event Registered(address indexed verifier, uint256 stake, uint256 reputation);
@@ -135,6 +138,8 @@ contract VerifierManager is
             active: true
         });
 
+        _addVerifierToList(user);
+
         emit Registered(user, minStakeAmount, currentReputation);
     }
 
@@ -144,6 +149,8 @@ contract VerifierManager is
 
         verifiers[user].active = false;
         verifiers[user].unstakeAvailableAt = block.timestamp + unstakeLockPeriod;
+
+        _removeVerifierFromList(user);
 
         emit UnstakeInitiated(user, verifiers[user].unstakeAvailableAt);
     }
@@ -204,6 +211,35 @@ contract VerifierManager is
 
     function getVerifierStake(address account) external view override returns (uint256) {
         return verifiers[account].stake;
+    }
+
+    function getVerifierCount() external view returns (uint256) {
+        return _verifierList.length;
+    }
+
+    function getAllVerifiers() external view override returns (address[] memory) {
+        return _verifierList;
+    }
+
+    // --- Internal Functions ---
+
+    function _addVerifierToList(address verifier) private {
+        _verifierIndex[verifier] = _verifierList.length;
+        _verifierList.push(verifier);
+    }
+
+    function _removeVerifierFromList(address verifier) private {
+        uint256 index = _verifierIndex[verifier];
+        uint256 lastIndex = _verifierList.length - 1;
+
+        if (index != lastIndex) {
+            address lastVerifier = _verifierList[lastIndex];
+            _verifierList[index] = lastVerifier;
+            _verifierIndex[lastVerifier] = index;
+        }
+
+        _verifierList.pop();
+        delete _verifierIndex[verifier];
     }
 
     /* ---------- upgrade auth ---------- */

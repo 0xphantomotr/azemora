@@ -6,6 +6,7 @@ import "../../src/core/dMRVManager.sol";
 import "../../src/core/ProjectRegistry.sol";
 import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 import "../../src/core/DynamicImpactCredit.sol";
+import "../../src/core/MethodologyRegistry.sol";
 import "../mocks/MockVerifierModule.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
@@ -14,6 +15,7 @@ contract DMRVManagerUncovered is Test {
     ProjectRegistry registry;
     DynamicImpactCredit credit;
     MockVerifierModule mockModule;
+    MethodologyRegistry methodologyRegistry;
 
     address admin = address(0xA11CE);
     address user = address(0xDEADBEEF);
@@ -23,37 +25,54 @@ contract DMRVManagerUncovered is Test {
     bytes32 projectId = keccak256("Test Project");
 
     function setUp() public {
-        vm.startPrank(admin);
+        // The test contract (address(this)) is now the deployer and initial admin.
+
         // --- Registry Setup ---
-        ProjectRegistry registryImpl = new ProjectRegistry();
-        bytes memory registryInitData = abi.encodeCall(ProjectRegistry.initialize, ());
-        ERC1967Proxy registryProxy = new ERC1967Proxy(address(registryImpl), registryInitData);
-        registry = ProjectRegistry(address(registryProxy));
+        registry = ProjectRegistry(
+            address(new ERC1967Proxy(address(new ProjectRegistry()), abi.encodeCall(ProjectRegistry.initialize, ())))
+        );
 
         // --- Credit Setup ---
-        DynamicImpactCredit creditImpl = new DynamicImpactCredit();
-        bytes memory creditInitData =
-            abi.encodeCall(DynamicImpactCredit.initializeDynamicImpactCredit, (address(registry), "ipfs://collection"));
-        ERC1967Proxy creditProxy = new ERC1967Proxy(address(creditImpl), creditInitData);
-        credit = DynamicImpactCredit(address(creditProxy));
-        credit.grantRole(credit.DMRV_MANAGER_ROLE(), address(dMRVManager));
+        credit = DynamicImpactCredit(
+            address(
+                new ERC1967Proxy(
+                    address(new DynamicImpactCredit()),
+                    abi.encodeCall(DynamicImpactCredit.initializeDynamicImpactCredit, (address(registry), "ipfs://..."))
+                )
+            )
+        );
+
+        // --- MethodologyRegistry Setup ---
+        methodologyRegistry = MethodologyRegistry(
+            address(
+                new ERC1967Proxy(
+                    address(new MethodologyRegistry()), abi.encodeCall(MethodologyRegistry.initialize, (address(this)))
+                )
+            )
+        );
 
         // --- dMRVManager Setup ---
-        DMRVManager dMRVManagerImpl = new DMRVManager();
-        bytes memory dMRVManagerInitData =
-            abi.encodeCall(DMRVManager.initializeDMRVManager, (address(registry), address(credit)));
-        ERC1967Proxy dMRVManagerProxy = new ERC1967Proxy(address(dMRVManagerImpl), dMRVManagerInitData);
-        dMRVManager = DMRVManager(address(dMRVManagerProxy));
+        dMRVManager = DMRVManager(
+            address(
+                new ERC1967Proxy(
+                    address(new DMRVManager()),
+                    abi.encodeCall(DMRVManager.initializeDMRVManager, (address(registry), address(credit)))
+                )
+            )
+        );
+        dMRVManager.setMethodologyRegistry(address(methodologyRegistry));
 
-        // Grant role back to the proxy address
+        // --- Role Setup ---
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), address(dMRVManager));
         credit.grantRole(credit.METADATA_UPDATER_ROLE(), address(dMRVManager));
+        registry.grantRole(registry.VERIFIER_ROLE(), admin);
+        methodologyRegistry.grantRole(methodologyRegistry.DEFAULT_ADMIN_ROLE(), admin);
+        methodologyRegistry.grantRole(methodologyRegistry.METHODOLOGY_ADMIN_ROLE(), admin);
+        dMRVManager.grantRole(dMRVManager.DEFAULT_ADMIN_ROLE(), admin);
         dMRVManager.grantRole(dMRVManager.PAUSER_ROLE(), admin);
 
         // --- Mock Module Setup ---
         mockModule = new MockVerifierModule();
-
-        vm.stopPrank();
 
         // --- Initial State ---
         vm.prank(projectOwner);
@@ -65,9 +84,12 @@ contract DMRVManagerUncovered is Test {
     /* ---------- Uncovered Edge Cases ---------- */
 
     function test_FulfillVerification_CannotFulfillTwice() public {
-        // Setup: Register module and request verification
+        // Setup: Register module and request verification using the new flow
         vm.prank(admin);
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+        methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
+        methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
+        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE);
+
         bytes32 claimId = keccak256("claim-double-fulfill");
         vm.prank(user);
         dMRVManager.requestVerification(projectId, claimId, "ipfs://evidence.json", MOCK_MODULE_TYPE);
@@ -84,9 +106,12 @@ contract DMRVManagerUncovered is Test {
     }
 
     function test_GetModuleForClaim() public {
-        // Setup
+        // Setup using the new flow
         vm.prank(admin);
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+        methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
+        methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
+        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE);
+
         bytes32 claimId = keccak256("claim-get-module");
 
         // Action
@@ -139,13 +164,12 @@ contract DMRVManagerUncovered is Test {
         dMRVManager.adminSubmitVerification(projectId, 1, "uri", false);
     }
 
-    function test_GetRoles() public {
+    function test_GetRoles() public view {
         bytes32[] memory roles = dMRVManager.getRoles(admin);
-        // Admin gets DEFAULT_ADMIN_ROLE, MODULE_ADMIN_ROLE, PAUSER_ROLE
-        assertEq(roles.length, 3);
+        // Admin gets DEFAULT_ADMIN_ROLE, PAUSER_ROLE since MODULE_ADMIN_ROLE was removed
+        assertEq(roles.length, 2);
         assertEq(roles[0], dMRVManager.DEFAULT_ADMIN_ROLE());
-        assertEq(roles[1], dMRVManager.MODULE_ADMIN_ROLE());
-        assertEq(roles[2], dMRVManager.PAUSER_ROLE());
+        assertEq(roles[1], dMRVManager.PAUSER_ROLE());
 
         bytes32[] memory emptyRoles = dMRVManager.getRoles(user);
         assertEq(emptyRoles.length, 0);
