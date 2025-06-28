@@ -9,7 +9,7 @@ import "./ProjectRegistry.sol";
 
 // --- Custom Errors ---
 error DynamicImpactCredit__ProjectNotActive();
-error DynamicImpactCredit__URINotSet();
+error DynamicImpactCredit__CredentialNotSet();
 error DynamicImpactCredit__NotAuthorized();
 error DynamicImpactCredit__LengthMismatch();
 
@@ -18,7 +18,7 @@ error DynamicImpactCredit__LengthMismatch();
  * @author Genci Mehmeti
  * @dev An ERC1155 token contract for creating dynamic environmental assets.
  * Each `tokenId`, derived from a `projectId`, represents a unique class of impact credit.
- * The contract stores a history of metadata URIs for each token, allowing its
+ * The contract stores a history of credential CIDs for each token, allowing its
  * attributes to evolve as new dMRV data is verified. Minting is restricted to
  * the `DMRVManager` contract, ensuring credits are only created based on validated impact.
  * It is upgradeable using the UUPS pattern.
@@ -38,7 +38,7 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
 
     bytes32[] private _roles;
 
-    mapping(uint256 => string[]) private _tokenURIs;
+    mapping(uint256 => string[]) private _credentialCIDs;
     string private _contractURI;
     IProjectRegistry public projectRegistry;
 
@@ -75,14 +75,14 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
     /**
      * @notice Mints a new batch of impact credits for a verified project.
      * @dev Can only be called by an address with `DMRV_MANAGER_ROLE`. The `tokenId` is the `uint256`
-     * cast of the `projectId`. This function adds the new metadata URI to the token's history.
+     * cast of the `projectId`. This function adds the new credential CID to the token's history.
      * The project must be `Active` in the `ProjectRegistry`.
      * @param to The address to receive the new credits.
      * @param projectId The project ID, used to derive the `tokenId`.
      * @param amount The quantity of credits to mint.
-     * @param newUri The new metadata URI for this batch, pointing to dMRV data.
+     * @param credentialCID The new credential CID for this batch, pointing to a signed Verifiable Credential.
      */
-    function mintCredits(address to, bytes32 projectId, uint256 amount, string calldata newUri)
+    function mintCredits(address to, bytes32 projectId, uint256 amount, string calldata credentialCID)
         external
         onlyRole(DMRV_MANAGER_ROLE())
         whenNotPaused
@@ -93,46 +93,50 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
         _mint(to, tokenId, amount, "");
 
         // Always update the URI by pushing to the history array
-        _tokenURIs[tokenId].push(newUri);
+        _credentialCIDs[tokenId].push(credentialCID);
 
-        emit URI(newUri, tokenId);
+        emit URI(credentialCID, tokenId);
     }
 
     /**
-     * @notice Updates a token's metadata by adding a new URI to its history.
+     * @notice Updates a token's metadata by adding a new credential CID to its history.
      * @dev Can only be called by an address with `METADATA_UPDATER_ROLE`. This allows for
      * impact data to be updated without minting new tokens. Emits a `URI` event.
      * @param id The project ID (`bytes32`) of the token to update.
-     * @param newUri The new metadata URI to add to the token's history.
+     * @param newCredentialCID The new credential CID to add to the token's history.
      */
-    function setTokenURI(bytes32 id, string calldata newUri) external onlyRole(METADATA_UPDATER_ROLE()) whenNotPaused {
+    function updateCredentialCID(bytes32 id, string calldata newCredentialCID)
+        external
+        onlyRole(METADATA_UPDATER_ROLE())
+        whenNotPaused
+    {
         uint256 tokenId = uint256(id);
-        _tokenURIs[tokenId].push(newUri);
-        emit URI(newUri, tokenId);
+        _credentialCIDs[tokenId].push(newCredentialCID);
+        emit URI(newCredentialCID, tokenId);
     }
 
     /**
      * @notice Returns the latest metadata URI for a given token ID.
-     * @dev This points to the most up-to-date off-chain metadata JSON. The token must exist.
+     * @dev This points to the most up-to-date off-chain metadata (the Verifiable Credential). The token must exist.
      * @param id The token ID to query.
-     * @return The latest metadata URI string.
+     * @return The latest credential CID string.
      */
     function uri(uint256 id) public view override returns (string memory) {
-        string[] storage uris = _tokenURIs[id];
-        uint256 urisLength = uris.length;
-        if (urisLength == 0) revert DynamicImpactCredit__URINotSet();
-        return uris[urisLength - 1];
+        string[] storage cids = _credentialCIDs[id];
+        uint256 cidsLength = cids.length;
+        if (cidsLength == 0) revert DynamicImpactCredit__CredentialNotSet();
+        return cids[cidsLength - 1];
     }
 
     /**
-     * @notice Retrieves the entire history of metadata URIs for a token.
+     * @notice Retrieves the entire history of credential CIDs for a token.
      * @dev Provides a transparent, on-chain audit trail of all changes to a token's
      * verified data.
      * @param id The token ID to query.
-     * @return An array of all historical metadata URI strings.
+     * @return An array of all historical credential CID strings.
      */
-    function getTokenURIHistory(uint256 id) public view returns (string[] memory) {
-        return _tokenURIs[id];
+    function getCredentialCIDHistory(uint256 id) public view returns (string[] memory) {
+        return _credentialCIDs[id];
     }
 
     /**
@@ -239,31 +243,28 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
      * @param to The address to receive all the new credits.
      * @param ids An array of project IDs.
      * @param amounts An array of amounts to mint for each corresponding project ID.
-     * @param uris An array of initial metadata URIs for each corresponding project ID.
+     * @param cids An array of initial credential CIDs for each corresponding project ID.
      */
     function batchMintCredits(
         address to,
         bytes32[] calldata ids,
         uint256[] calldata amounts,
-        string[] calldata uris // 1-to-1 with ids
+        string[] calldata cids // 1-to-1 with ids
     ) external onlyRole(DMRV_MANAGER_ROLE()) whenNotPaused {
         uint256 idsLength = ids.length;
-        if (idsLength != amounts.length || idsLength != uris.length) revert DynamicImpactCredit__LengthMismatch();
-
-        for (uint256 i = 0; i < idsLength; i++) {
-            if (!projectRegistry.isProjectActive(ids[i])) {
-                revert DynamicImpactCredit__ProjectNotActive();
-            }
-        }
+        if (idsLength != amounts.length || idsLength != cids.length) revert DynamicImpactCredit__LengthMismatch();
 
         uint256[] memory tokenIds = new uint256[](idsLength);
         for (uint256 i = 0; i < idsLength; i++) {
-            tokenIds[i] = uint256(ids[i]);
-            _tokenURIs[tokenIds[i]].push(uris[i]);
+            bytes32 projectId = ids[i];
+            if (!projectRegistry.isProjectActive(projectId)) revert DynamicImpactCredit__ProjectNotActive();
+            uint256 tokenId = uint256(projectId);
+            tokenIds[i] = tokenId;
+
+            _credentialCIDs[tokenId].push(cids[i]);
+            emit URI(cids[i], tokenId);
         }
 
         _mintBatch(to, tokenIds, amounts, "");
-
-        // No individual URI events for batch minting to save gas
     }
 }

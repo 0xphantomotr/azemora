@@ -86,25 +86,25 @@ contract DMRVManagerFuzzTest is Test {
         uint96 creditAmount, // Bounded to prevent overflow in some calculations
         bool updateMetadataOnly,
         bytes32 signature, // Unused in this test but kept for signature consistency
-        string calldata metadataURI
+        string calldata credentialCID
     ) public {
-        // Skip empty strings or strings that are too long to be practical for URIs
-        vm.assume(bytes(metadataURI).length > 0 && bytes(metadataURI).length < 200);
+        // Skip empty strings or strings that are too long to be practical for CIDs
+        vm.assume(bytes(credentialCID).length > 0 && bytes(credentialCID).length < 200);
 
         // --- Setup State ---
         // 1. Create a fresh verification request for each fuzz run
         vm.prank(projectOwner);
-        bytes32 claimId = keccak256(abi.encodePacked(creditAmount, updateMetadataOnly, metadataURI, block.timestamp));
+        bytes32 claimId = keccak256(abi.encodePacked(creditAmount, updateMetadataOnly, credentialCID, block.timestamp));
         dMRVManager.requestVerification(projectId, claimId, "ipfs://fuzz-evidence", MOCK_MODULE_TYPE);
 
         // 2. Capture initial state
         uint256 tokenId = uint256(projectId);
         uint256 initialBalance = credit.balanceOf(projectOwner, tokenId);
-        uint256 initialHistoryLength = credit.getTokenURIHistory(tokenId).length;
+        uint256 initialHistoryLength = credit.getCredentialCIDHistory(tokenId).length;
 
         // --- Execute Action ---
         // 3. Prepare module data and fulfill the request
-        bytes memory data = abi.encode(creditAmount, updateMetadataOnly, signature, metadataURI);
+        bytes memory data = abi.encode(creditAmount, updateMetadataOnly, signature, credentialCID);
 
         vm.prank(address(mockModule));
         dMRVManager.fulfillVerification(projectId, claimId, data);
@@ -118,9 +118,9 @@ contract DMRVManagerFuzzTest is Test {
             );
 
             // Metadata should be updated and history grown by 1
-            string[] memory finalHistory = credit.getTokenURIHistory(tokenId);
-            assertEq(finalHistory.length, initialHistoryLength + 1, "URI history should grow by 1");
-            assertEq(finalHistory[finalHistory.length - 1], metadataURI, "New URI should be last in history");
+            string[] memory finalHistory = credit.getCredentialCIDHistory(tokenId);
+            assertEq(finalHistory.length, initialHistoryLength + 1, "CID history should grow by 1");
+            assertEq(finalHistory[finalHistory.length - 1], credentialCID, "New CID should be last in history");
         } else {
             // Balance should increase by the credit amount
             assertEq(
@@ -131,13 +131,13 @@ contract DMRVManagerFuzzTest is Test {
 
             // Metadata should be updated if credits were minted
             if (creditAmount > 0) {
-                string[] memory finalHistory = credit.getTokenURIHistory(tokenId);
-                assertEq(finalHistory.length, initialHistoryLength + 1, "URI history should grow by 1 on mint");
-                assertEq(finalHistory[finalHistory.length - 1], metadataURI, "URI should be updated on mint");
+                string[] memory finalHistory = credit.getCredentialCIDHistory(tokenId);
+                assertEq(finalHistory.length, initialHistoryLength + 1, "CID history should grow by 1 on mint");
+                assertEq(finalHistory[finalHistory.length - 1], credentialCID, "CID should be updated on mint");
             } else {
                 // If amount is 0 and not update-only, nothing should change, history length is the same.
-                string[] memory finalHistory = credit.getTokenURIHistory(tokenId);
-                assertEq(finalHistory.length, initialHistoryLength, "URI history should not change if amount is 0");
+                string[] memory finalHistory = credit.getCredentialCIDHistory(tokenId);
+                assertEq(finalHistory.length, initialHistoryLength, "CID history should not change if amount is 0");
             }
         }
     }

@@ -34,6 +34,7 @@ error ReputationWeightedVerifier__ChallengePeriodOver();
 error ReputationWeightedVerifier__InsufficientStakeAllowance();
 error ReputationWeightedVerifier__NotOnCouncil();
 error ReputationWeightedVerifier__ArbitrationVoteAlreadyCast();
+error ReputationWeightedVerifier__ArbitrationPeriodNotOver();
 error ReputationWeightedVerifier__RandomnessRequestFailed();
 error ReputationWeightedVerifier__RequestIdNotFound();
 error ReputationWeightedVerifier__NotEnoughVerifiers();
@@ -107,6 +108,7 @@ contract ReputationWeightedVerifier is
         bool active;
         address[] councilMembers;
         mapping(address => bool) hasVotedOnChallenge;
+        mapping(address => bool) councilVotes; // true for uphold, false for overturn
         uint256 upholdVotes; // Votes to uphold the original provisionalOutcome
         uint256 overturnVotes; // Votes to overturn the original provisionalOutcome
         uint64 challengeVoteDeadline;
@@ -362,6 +364,7 @@ contract ReputationWeightedVerifier is
         if (challenge.hasVotedOnChallenge[msg.sender]) revert ReputationWeightedVerifier__ArbitrationVoteAlreadyCast();
 
         challenge.hasVotedOnChallenge[msg.sender] = true;
+        challenge.councilVotes[msg.sender] = upholdOriginalDecision;
         if (upholdOriginalDecision) {
             challenge.upholdVotes++;
         } else {
@@ -372,93 +375,121 @@ contract ReputationWeightedVerifier is
     }
 
     /**
-     * @notice Resolves a challenge after the arbitration council has voted.
-     * @dev This function executes the final consequences of the challenge. It can be called by anyone
-     * once enough council members have voted.
-     * @param taskId The ID of the task whose challenge is to be resolved.
+     * @notice Resolves a challenge after the arbitration vote is complete.
+     * @dev This function calculates the final outcome, slashes incorrect voters, rewards the
+     * challenger if they were correct, and calls the dMRVManager if the final outcome is 'Approve'.
+     * @param taskId The ID of the task to resolve the challenge for.
+     * @param credentialCID The IPFS CID of the Verifiable Credential, provided if the final outcome is approval.
      */
-    function resolveChallenge(bytes32 taskId) external nonReentrant {
+    function resolveChallenge(bytes32 taskId, string calldata credentialCID) external nonReentrant {
         VerificationTask storage task = tasks[taskId];
         Challenge storage challenge = challenges[taskId];
+
         if (task.status != TaskStatus.Challenged) {
             revert ReputationweightedVerifier__InvalidTaskStatus(taskId, task.status);
         }
 
-        // --- MODIFIED: Added timeout logic ---
-        // Check for timeout OR for arbitration quorum being met.
-        bool isTimeout = block.timestamp > challenge.challengeVoteDeadline;
-        bool isQuorumMet = challenge.upholdVotes + challenge.overturnVotes > challenge.councilMembers.length / 2;
-
-        require(isTimeout || isQuorumMet, "Arbitration vote not complete and timeout not reached");
-
-        bool challengeFailed;
-        if (isTimeout) {
-            // Lazy Consensus: If council fails to act, challenge fails.
-            challengeFailed = true;
-        } else {
-            challengeFailed = challenge.upholdVotes >= challenge.overturnVotes;
+        if (
+            block.timestamp < challenge.challengeVoteDeadline
+                && (challenge.upholdVotes + challenge.overturnVotes < challenge.councilMembers.length)
+        ) {
+            revert ReputationWeightedVerifier__ArbitrationPeriodNotOver();
         }
 
-        if (challengeFailed) {
-            // Challenge fails: slash challenger's stake and finalize original outcome.
-            // The challenger's stake is sent to the DAO treasury.
-            challengeToken.transfer(treasury, challenge.stake);
-            _finalize(task, task.provisionalOutcome);
+        bool challengeUpheld = challenge.upholdVotes > challenge.overturnVotes;
+
+        // --- Apply Penalties ---
+
+        // 1. Penalize incorrect council members.
+        address[] memory incorrectCouncilVoters;
+        if (challengeUpheld) {
+            // Council members who voted to OVERTURN were wrong.
+            incorrectCouncilVoters = _getCouncilVotersByVote(challenge, false);
         } else {
-            // Challenge succeeds: return stake to challenger and slash original incorrect voters.
-            challengeToken.transfer(challenge.challenger, challenge.stake);
-            bool correctOutcome = !task.provisionalOutcome; // The outcome is inverted.
+            // Council members who voted to UPHOLD were wrong.
+            incorrectCouncilVoters = _getCouncilVotersByVote(challenge, true);
+        }
+        if (incorrectCouncilVoters.length > 0) {
+            _slashVerifiers(incorrectCouncilVoters, incorrectVoteStakePenalty, incorrectVoteReputationPenalty);
+        }
 
-            for (uint256 i = 0; i < task.voters.length; i++) {
-                address voter = task.voters[i];
-                Vote voterVote = task.votes[voter];
-                bool voterWasCorrect =
-                    (voterVote == Vote.Approve && correctOutcome) || (voterVote == Vote.Reject && !correctOutcome);
+        // 2. Penalize incorrect original voters ONLY IF the challenge was successful (outcome overturned).
+        if (!challengeUpheld) {
+            // Collect original voters who voted for the now-overturned provisional outcome.
+            address[] memory allVoters = task.voters;
+            address[] memory incorrectOriginalVoters = new address[](allVoters.length);
+            uint256 incorrectCount = 0;
 
-                if (!voterWasCorrect) {
-                    // This contract must be granted the SLASHER_ROLE on VerifierManager.
-                    verifierManager.slash(voter, incorrectVoteStakePenalty, incorrectVoteReputationPenalty);
+            for (uint256 i = 0; i < allVoters.length; i++) {
+                address voter = allVoters[i];
+                Vote voterVote = task.votes[voter]; // Approve (1) or Reject (2)
+                bool voterApproved = voterVote == Vote.Approve;
+
+                // If voter's decision matched the (wrong) provisional outcome, they were incorrect.
+                if (voterApproved == task.provisionalOutcome) {
+                    incorrectOriginalVoters[incorrectCount++] = voter;
                 }
             }
-            _finalize(task, correctOutcome);
+
+            // Perform slashing
+            if (incorrectCount > 0) {
+                address[] memory finalIncorrectVoters = new address[](incorrectCount);
+                for (uint256 i = 0; i < incorrectCount; i++) {
+                    finalIncorrectVoters[i] = incorrectOriginalVoters[i];
+                }
+                _slashVerifiers(finalIncorrectVoters, incorrectVoteStakePenalty, incorrectVoteReputationPenalty);
+            }
         }
 
+        // --- Distribute Challenger Stake ---
+        if (challengeUpheld) {
+            // Challenger was wrong. Transfer their stake to the treasury.
+            challengeToken.transfer(treasury, challenge.stake);
+        } else {
+            // Challenger was right. Refund their stake.
+            challengeToken.transfer(challenge.challenger, challenge.stake);
+        }
+
+        task.status = TaskStatus.Resolved;
         challenge.active = false;
-        emit ChallengeResolved(taskId, !challengeFailed);
+
+        // Now, determine final outcome and interact with dMRVManager
+        bool finalOutcomeIsApprove =
+            (task.provisionalOutcome && challengeUpheld) || (!task.provisionalOutcome && !challengeUpheld);
+
+        if (finalOutcomeIsApprove) {
+            bytes memory data = abi.encode(1, false, bytes32(0), credentialCID);
+            DMRVManager(dMRVManager).fulfillVerification(task.projectId, task.claimId, data);
+        }
+
+        emit ChallengeResolved(taskId, challengeUpheld);
     }
 
     /**
-     * @notice Finalizes a task's resolution if the challenge period has passed without a challenge.
-     * @dev Can be called by anyone. It reports the final outcome to the dMRVManager.
+     * @notice Finalizes a task's resolution after the challenge period has passed without a challenge.
+     * @dev If the provisional outcome was 'Approve', this function calls the dMRVManager to
+     * fulfill the verification and mint credits.
      * @param taskId The ID of the task to finalize.
+     * @param credentialCID The IPFS CID of the Verifiable Credential for this verification.
      */
-    function finalizeResolution(bytes32 taskId) external nonReentrant {
+    function finalizeResolution(bytes32 taskId, string calldata credentialCID) external nonReentrant {
         VerificationTask storage task = tasks[taskId];
         if (task.status != TaskStatus.Provisional) {
             revert ReputationweightedVerifier__InvalidTaskStatus(taskId, task.status);
         }
-        if (block.timestamp < task.challengeDeadline) {
-            revert ReputationWeightedVerifier__ChallengePeriodNotOver();
-        }
+        if (block.timestamp < task.challengeDeadline) revert ReputationWeightedVerifier__ChallengePeriodNotOver();
 
-        _finalize(task, task.provisionalOutcome);
-    }
-
-    /**
-     * @dev Internal function to set a task to Resolved and fulfill it in the dMRVManager.
-     */
-    function _finalize(VerificationTask storage task, bool approved) internal {
         task.status = TaskStatus.Resolved;
 
-        bytes memory resultData;
-        if (approved) {
-            resultData = abi.encode(uint256(1), false, bytes32(0), "ipfs://verified");
-        } else {
-            resultData = abi.encode(uint256(0), true, bytes32(0), "ipfs://rejected");
+        if (task.provisionalOutcome) {
+            // Encode the data for the dMRVManager.
+            // (creditAmount, updateMetadataOnly, signature, credentialCID)
+            // For now, creditAmount is hardcoded to 1.
+            bytes memory data = abi.encode(1, false, bytes32(0), credentialCID);
+            DMRVManager(dMRVManager).fulfillVerification(task.projectId, task.claimId, data);
         }
-        DMRVManager(dMRVManager).fulfillVerification(task.projectId, task.claimId, resultData);
 
-        emit TaskResolved(task.claimId, approved, task.weightedApproveVotes, task.weightedRejectVotes);
+        emit TaskResolved(taskId, task.provisionalOutcome, task.weightedApproveVotes, task.weightedRejectVotes);
     }
 
     /**
@@ -519,6 +550,44 @@ contract ReputationWeightedVerifier is
 
         // --- SET THE COUNCIL VOTING DEADLINE ---
         challenge.challengeVoteDeadline = uint64(block.timestamp + votingPeriod);
+    }
+
+    function _slashVerifiers(address[] memory incorrectVoters, uint256 stakePenalty, uint256 reputationPenalty)
+        internal
+    {
+        for (uint256 i = 0; i < incorrectVoters.length; i++) {
+            address verifier = incorrectVoters[i];
+            // The verifierManager contract is responsible for slashing both stake and reputation.
+            // This contract (ReputationWeightedVerifier) has been granted the SLASHER_ROLE on verifierManager.
+            if (verifier != address(0)) {
+                verifierManager.slash(verifier, stakePenalty, reputationPenalty);
+            }
+        }
+    }
+
+    function _getCouncilVotersByVote(Challenge storage challenge, bool voteToFind)
+        internal
+        view
+        returns (address[] memory)
+    {
+        address[] memory voters = new address[](challenge.councilMembers.length);
+        uint256 count = 0;
+
+        for (uint256 i = 0; i < challenge.councilMembers.length; i++) {
+            address member = challenge.councilMembers[i];
+            // Check if the member has voted and if their vote matches the one we're looking for
+            if (challenge.hasVotedOnChallenge[member] && challenge.councilVotes[member] == voteToFind) {
+                voters[count] = member;
+                count++;
+            }
+        }
+
+        // Resize the array to the actual number of voters found
+        assembly {
+            mstore(voters, count)
+        }
+
+        return voters;
     }
 
     // --- View Functions & Admin ---

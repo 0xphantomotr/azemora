@@ -143,7 +143,7 @@ contract Deploy is Script {
         address deploymentAddresses;
     }
 
-    function _logAddresses(AllAddresses memory addrs) internal {
+    function _logAddresses(AllAddresses memory addrs) internal pure {
         console.log("--- Deployment Complete ---");
         console.log("ProjectRegistry (Proxy): ", addrs.projectRegistry);
         console.log("DMRVManager (Proxy): ", addrs.dMRVManager);

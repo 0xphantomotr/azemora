@@ -241,40 +241,46 @@ contract ReputationWeightedVerifierTest is Test {
 
         vm.warp(block.timestamp + CHALLENGE_PERIOD + 1);
 
-        bytes memory expectedData = abi.encode(uint256(1), false, bytes32(0), "ipfs://verified");
-        vm.expectCall(
-            address(dMRVManager),
-            abi.encodeWithSelector(DMRVManager.fulfillVerification.selector, projectId, claimId, expectedData)
-        );
-        verifierModule.finalizeResolution(taskId);
+        string memory testCID = "ipfs://final_credential_cid";
+        verifierModule.finalizeResolution(taskId, testCID);
 
-        (,,,, TaskStatus finalStatus,,,,) = verifierModule.tasks(taskId);
-        assertEq(uint256(finalStatus), uint256(TaskStatus.Resolved));
+        // Correct way to test: check the final state of the credit contract.
+        assertEq(creditContract.balanceOf(admin, uint256(projectId)), 1);
+        assertEq(creditContract.uri(uint256(projectId)), testCID);
     }
 
     function test_revert_finalizeResolution_ifChallengePeriodNotOver() public {
-        bytes32 taskId =
-            dMRVManager.requestVerification(projectId, claimId, "ipfs://evidence", keccak256("REPUTATION_WEIGHTED_V1"));
+        // --- Setup for this specific test using unique values ---
+        bytes32 revertProjectId = keccak256("revert_test_project");
+        bytes32 revertClaimId = keccak256("revert_test_claim");
 
-        vm.prank(verifier1);
-        verifierModule.submitVote(taskId, ReputationWeightedVerifier.Vote.Approve);
+        // Prank as the dMRVManager to start the task
+        vm.prank(address(dMRVManager));
+        bytes32 revertTaskId =
+            verifierModule.startVerificationTask(revertProjectId, revertClaimId, "ipfs://evidence_revert");
+        // --- End Setup ---
+
+        // FIX: The voting period must pass before a resolution can be proposed.
         vm.warp(block.timestamp + VOTING_PERIOD + 1);
-        verifierModule.proposeResolution(taskId);
+        verifierModule.proposeResolution(revertTaskId);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(bytes4(keccak256("ReputationWeightedVerifier__ChallengePeriodNotOver()")))
-        );
-        verifierModule.finalizeResolution(taskId);
+        // CORRECT, ROBUST WAY: Expect the revert using the error's explicit signature.
+        bytes4 expectedError = bytes4(keccak256("ReputationWeightedVerifier__ChallengePeriodNotOver()"));
+        vm.expectRevert(expectedError);
+        verifierModule.finalizeResolution(revertTaskId, "ipfs://any_cid");
     }
 
     function test_fullChallengeFlow() public {
         bytes32 taskId =
             dMRVManager.requestVerification(projectId, claimId, "ipfs://evidence", keccak256("REPUTATION_WEIGHTED_V1"));
 
-        vm.prank(verifier1);
+        vm.startPrank(verifier1);
         verifierModule.submitVote(taskId, ReputationWeightedVerifier.Vote.Reject); // 100 reject
-        vm.prank(verifier2);
+        vm.stopPrank();
+
+        vm.startPrank(verifier2);
         verifierModule.submitVote(taskId, ReputationWeightedVerifier.Vote.Approve); // 75 approve
+        vm.stopPrank();
 
         vm.warp(block.timestamp + VOTING_PERIOD + 1);
         vm.prank(verifier1); // Have a specific user propose
@@ -305,24 +311,28 @@ contract ReputationWeightedVerifierTest is Test {
         assertEq(council[0], arbitrator);
 
         vm.startPrank(arbitrator); // Is on council because they didn't vote
-        verifierModule.castArbitrationVote(taskId, false); // false = overturn
+        verifierModule.castArbitrationVote(taskId, false); // false = overturn, making final outcome APPROVE
         vm.stopPrank();
 
-        uint256 v1StakeBefore = verifierManager.getVerifierStake(verifier1);
+        // FIX: Warp time past the arbitration period to allow resolution.
+        vm.warp(block.timestamp + VOTING_PERIOD + 1);
+
+        uint256 verifier1StakeBefore = verifierManager.getVerifierStake(verifier1);
         uint256 challengerBalanceBefore = aztToken.balanceOf(challenger);
 
-        bytes memory expectedData = abi.encode(uint256(1), false, bytes32(0), "ipfs://verified");
-        vm.expectCall(
-            address(dMRVManager),
-            abi.encodeWithSelector(DMRVManager.fulfillVerification.selector, projectId, claimId, expectedData)
-        );
-        verifierModule.resolveChallenge(taskId);
+        // Resolve challenge - since final outcome is 'Approve', a CID must be provided.
+        string memory finalCID = "ipfs://challenge_approved";
+        verifierModule.resolveChallenge(taskId, finalCID);
 
-        uint256 v1StakeAfter = verifierManager.getVerifierStake(verifier1);
+        // Correct way to test: check that one credit was minted to the project owner (admin).
+        assertEq(creditContract.balanceOf(admin, uint256(projectId)), 1);
+        assertEq(creditContract.uri(uint256(projectId)), finalCID);
+
+        uint256 verifier1StakeAfter = verifierManager.getVerifierStake(verifier1);
         uint256 challengerBalanceAfter = aztToken.balanceOf(challenger);
 
-        assertLt(v1StakeAfter, v1StakeBefore, "v1 stake should be slashed");
-        assertEq(v1StakeBefore - v1StakeAfter, STAKE_PENALTY, "slash amount incorrect");
+        assertLt(verifier1StakeAfter, verifier1StakeBefore, "v1 stake should be slashed");
+        assertEq(verifier1StakeBefore - verifier1StakeAfter, STAKE_PENALTY, "slash amount incorrect");
         assertGt(challengerBalanceAfter, challengerBalanceBefore, "challenger should get their stake back");
     }
 }

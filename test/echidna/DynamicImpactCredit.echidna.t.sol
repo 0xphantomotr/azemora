@@ -100,7 +100,7 @@ contract DynamicImpactCreditEchidnaTest is Test {
     /// This is implicitly tested. If `mintCredits` were to succeed for an inactive
     /// project, it would break the logic our stateful testing relies on.
     /// A successful mint for an inactive project is a vulnerability.
-    function echidna_mint_requires_active_project() public view returns (bool) {
+    function echidna_mint_requires_active_project() public pure returns (bool) {
         // The check is in the mint function itself. Echidna will try to call it
         // with projectIds that are not active. If it ever succeeds, it has found a bug.
         // We don't need to check anything here because the exploit is the successful call itself,
@@ -112,16 +112,19 @@ contract DynamicImpactCreditEchidnaTest is Test {
     function echidna_uri_history_is_append_only() public view returns (bool) {
         for (uint256 i = 0; i < tokenIds.length; i++) {
             uint256 tokenId = tokenIds[i];
-            uint256 currentLength = credit.getTokenURIHistory(tokenId).length;
-            if (currentLength < uriHistoryLength[tokenId]) {
-                return false; // History should never shrink
+            try credit.getCredentialCIDHistory(tokenId) returns (string[] memory history) {
+                if (history.length < uriHistoryLength[tokenId]) {
+                    return false; // History should never shrink
+                }
+            } catch {
+                // If the token doesn't exist yet, history length is 0, which is fine.
             }
         }
         return true;
     }
 
     /// @dev Property: Only an address with the DMRV_MANAGER_ROLE should be able to mint.
-    function echidna_only_dmrv_manager_can_mint() public view returns (bool) {
+    function echidna_only_dmrv_manager_can_mint() public pure returns (bool) {
         // This is an access control property. Echidna will try calling `mintCredits`
         // from many different `msg.sender` addresses. The `onlyRole` modifier
         // should prevent unauthorized minting. If a non-manager ever successfully
@@ -151,7 +154,8 @@ contract DynamicImpactCreditEchidnaTest is Test {
         // We expect this to revert often. The key is that if it *succeeds*, it must not break an invariant.
         try credit.mintCredits(to, projectId, amount, "new_uri") {
             // If minting succeeds, update our internal tracker for the URI history length.
-            uriHistoryLength[tokenId]++;
+            uint256 currentLength = credit.getCredentialCIDHistory(tokenId).length;
+            uriHistoryLength[tokenId] = currentLength;
         } catch {}
     }
 

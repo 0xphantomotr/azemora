@@ -58,7 +58,7 @@ contract DMRVManager is
     // Structure for representing parsed verification data
     struct VerificationData {
         uint256 creditAmount;
-        string metadataURI;
+        string credentialCID;
         bool updateMetadataOnly;
         bytes32 signature; // For validating that data came from an authorized source
     }
@@ -69,9 +69,9 @@ contract DMRVManager is
     );
     event VerificationFulfilled(bytes32 indexed claimId, bytes32 indexed projectId, bytes data);
     event AdminVerificationSubmitted(
-        bytes32 indexed projectId, uint256 creditAmount, string metadataURI, bool updateMetadataOnly
+        bytes32 indexed projectId, uint256 creditAmount, string credentialCID, bool updateMetadataOnly
     );
-    event MetadataUpdated(bytes32 indexed projectId, string newURI);
+    event CredentialCIDUpdated(bytes32 indexed projectId, string newCID);
     event CreditsMinted(bytes32 indexed projectId, address indexed owner, uint256 amount);
     event MissingProjectError(bytes32 indexed projectId);
     event VerifierModuleRegistered(bytes32 indexed moduleType, address indexed moduleAddress);
@@ -131,7 +131,7 @@ contract DMRVManager is
      * @notice Callback function for registered verifier modules to deliver a final, trusted result.
      * @dev This is a privileged function that can only be called by the specific verifier module that
      * was assigned to handle the claim. It processes the incoming data to mint new impact credit tokens
-     * or update the metadata of existing ones.
+     * or update the credential CID of existing ones.
      * @param projectId The ID of the project associated with the claim.
      * @param claimId The ID of the verification claim being fulfilled.
      * @param data The raw, encoded verification data from the module.
@@ -159,20 +159,20 @@ contract DMRVManager is
 
     /**
      * @dev Internal function to process verified dMRV data. It either mints new
-     * credits to the project owner or updates the metadata URI of the associated token.
+     * credits to the project owner or updates the credential CID of the associated token.
      * @param projectId The project identifier.
      * @param data The parsed verification data.
      */
     function processVerification(bytes32 projectId, VerificationData memory data) internal {
         if (data.updateMetadataOnly) {
             // Update metadata only
-            creditContract.setTokenURI(projectId, data.metadataURI);
-            emit MetadataUpdated(projectId, data.metadataURI);
+            creditContract.updateCredentialCID(projectId, data.credentialCID);
+            emit CredentialCIDUpdated(projectId, data.credentialCID);
         } else if (data.creditAmount > 0) {
             // Get project owner from registry to mint credits to them
             try projectRegistry.getProject(projectId) returns (IProjectRegistry.Project memory project) {
                 // Mint new credits to the project owner
-                creditContract.mintCredits(project.owner, projectId, data.creditAmount, data.metadataURI);
+                creditContract.mintCredits(project.owner, projectId, data.creditAmount, data.credentialCID);
                 emit CreditsMinted(projectId, project.owner, data.creditAmount);
             } catch {
                 emit MissingProjectError(projectId);
@@ -195,12 +195,12 @@ contract DMRVManager is
      */
     function parseVerificationData(bytes calldata data) internal pure returns (VerificationData memory) {
         // A more robust decoding scheme.
-        (uint256 creditAmount, bool updateMetadataOnly, bytes32 signature, string memory metadataURI) =
+        (uint256 creditAmount, bool updateMetadataOnly, bytes32 signature, string memory credentialCID) =
             abi.decode(data, (uint256, bool, bytes32, string));
 
         return VerificationData({
             creditAmount: creditAmount,
-            metadataURI: metadataURI,
+            credentialCID: credentialCID,
             updateMetadataOnly: updateMetadataOnly,
             signature: signature
         });
@@ -213,26 +213,26 @@ contract DMRVManager is
      * processing logic. Emits an `AdminVerificationSubmitted` event.
      * @param projectId The project identifier.
      * @param creditAmount Amount of credits to mint (can be 0).
-     * @param metadataURI The new metadata URI to set.
+     * @param credentialCID The new credential CID to set.
      * @param updateMetadataOnly If true, only updates metadata without minting.
      */
     function adminSubmitVerification(
         bytes32 projectId,
         uint256 creditAmount,
-        string calldata metadataURI,
+        string calldata credentialCID,
         bool updateMetadataOnly
     ) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant whenNotPaused {
         if (!projectRegistry.isProjectActive(projectId)) revert DMRVManager__ProjectNotActive();
 
         VerificationData memory vData = VerificationData({
             creditAmount: creditAmount,
-            metadataURI: metadataURI,
+            credentialCID: credentialCID,
             updateMetadataOnly: updateMetadataOnly,
             signature: bytes32(0) // Not needed for admin functions
         });
 
         processVerification(projectId, vData);
-        emit AdminVerificationSubmitted(projectId, creditAmount, metadataURI, updateMetadataOnly);
+        emit AdminVerificationSubmitted(projectId, creditAmount, credentialCID, updateMetadataOnly);
     }
 
     /**

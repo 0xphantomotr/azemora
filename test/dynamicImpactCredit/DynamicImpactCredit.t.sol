@@ -112,14 +112,14 @@ contract DynamicImpactCreditTest is Test {
     function testBatchMint() public {
         bytes32[] memory ids = new bytes32[](2);
         uint256[] memory amounts = new uint256[](2);
-        string[] memory uris = new string[](2);
+        string[] memory cids = new string[](2);
 
         ids[0] = keccak256("Project-10");
         ids[1] = keccak256("Project-11");
         amounts[0] = 5;
         amounts[1] = 7;
-        uris[0] = "ipfs://a.json";
-        uris[1] = "ipfs://b.json";
+        cids[0] = "ipfs://a.json";
+        cids[1] = "ipfs://b.json";
 
         // Register and activate projects
         vm.prank(user);
@@ -133,9 +133,8 @@ contract DynamicImpactCreditTest is Test {
         registry.setProjectStatus(ids[1], IProjectRegistry.ProjectStatus.Active);
         vm.stopPrank();
 
-        vm.startPrank(admin);
-        dmrvManager.adminSubmitVerification(ids[0], amounts[0], uris[0], false);
-        dmrvManager.adminSubmitVerification(ids[1], amounts[1], uris[1], false);
+        vm.prank(admin);
+        credit.batchMintCredits(user, ids, amounts, cids);
         vm.stopPrank();
 
         assertEq(credit.balanceOf(user, uint256(ids[0])), 5);
@@ -145,76 +144,52 @@ contract DynamicImpactCreditTest is Test {
 
     /* ---------- unauthorized mint revert ---------- */
     function testMintNotMinterReverts() public {
-        bytes32 projectId = keccak256("Project-2");
-        vm.prank(user);
-        registry.registerProject(projectId, "p2.json");
-        vm.prank(verifier);
-        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
-
         vm.expectRevert(
             abi.encodeWithSignature(
                 "AccessControlUnauthorizedAccount(address,bytes32)", other, credit.DMRV_MANAGER_ROLE()
             )
         );
         vm.prank(other);
-        credit.mintCredits(user, projectId, 1, "ipfs://fail.json");
+        credit.mintCredits(user, setupProjectId, 1, "ipfs://fail.json");
     }
 
     /* ---------- metadata update ---------- */
-    function testSetTokenURI() public {
-        bytes32 projectId = keccak256("Project-3");
-        vm.prank(user);
-        registry.registerProject(projectId, "p3.json");
-        vm.prank(verifier);
-        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
-
-        string memory oldURI = "ipfs://old.json";
+    function testUpdateCredentialCID() public {
+        string memory oldCID = "ipfs://old.json";
         vm.prank(admin);
-        dmrvManager.adminSubmitVerification(projectId, 1, oldURI, false);
+        dmrvManager.adminSubmitVerification(setupProjectId, 1, oldCID, false);
         vm.stopPrank();
 
         vm.prank(admin);
-        string memory newURI = "ipfs://new.json";
-        credit.setTokenURI(projectId, newURI);
-        assertEq(credit.uri(uint256(projectId)), newURI);
+        string memory newCID = "ipfs://new.json";
+        credit.updateCredentialCID(setupProjectId, newCID);
+        assertEq(credit.uri(uint256(setupProjectId)), newCID);
 
-        string[] memory history = credit.getTokenURIHistory(uint256(projectId));
+        string[] memory history = credit.getCredentialCIDHistory(uint256(setupProjectId));
         assertEq(history.length, 2);
-        assertEq(history[0], oldURI);
-        assertEq(history[1], newURI);
+        assertEq(history[0], oldCID);
+        assertEq(history[1], newCID);
     }
 
     /* ---------- retire flow ---------- */
     function testRetire() public {
-        bytes32 projectId = keccak256("Project-4");
-        vm.prank(user);
-        registry.registerProject(projectId, "p4.json");
-        vm.prank(verifier);
-        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
-
         vm.prank(admin);
-        dmrvManager.adminSubmitVerification(projectId, 10, "ipfs://t.json", false);
+        dmrvManager.adminSubmitVerification(setupProjectId, 10, "ipfs://t.json", false);
 
         vm.prank(user);
-        credit.retire(user, projectId, 6);
+        credit.retire(user, setupProjectId, 6);
 
-        assertEq(credit.balanceOf(user, uint256(projectId)), 4);
+        assertEq(credit.balanceOf(user, uint256(setupProjectId)), 4);
     }
 
     /* ---------- retire too much reverts ---------- */
     function testRetireTooMuch() public {
-        bytes32 projectId = keccak256("Project-5");
-        vm.prank(user);
-        registry.registerProject(projectId, "p5.json");
-        vm.prank(verifier);
-        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
-
         vm.prank(admin);
-        dmrvManager.adminSubmitVerification(projectId, 1, "ipfs://t.json", false);
+        dmrvManager.adminSubmitVerification(setupProjectId, 1, "ipfs://t.json", false);
 
         vm.prank(user);
         vm.expectRevert();
-        credit.retire(user, projectId, 2);
+        credit.retire(user, setupProjectId, 2);
     }
 
     /* ---------- re-initialization blocked ---------- */
@@ -225,14 +200,8 @@ contract DynamicImpactCreditTest is Test {
 
     /* ---------- upgrade keeps state ---------- */
     function testUpgradeKeepsBalance() public {
-        bytes32 projectId = keccak256("Project-7");
-        vm.prank(user);
-        registry.registerProject(projectId, "p7.json");
-        vm.prank(verifier);
-        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
-
         vm.prank(admin);
-        dmrvManager.adminSubmitVerification(projectId, 42, "ipfs://state.json", false);
+        dmrvManager.adminSubmitVerification(setupProjectId, 42, "ipfs://state.json", false);
 
         // deploy V2 with new variable
         DynamicImpactCreditV2 v2 = new DynamicImpactCreditV2();
@@ -245,7 +214,7 @@ contract DynamicImpactCreditTest is Test {
         // cast back
         DynamicImpactCreditV2 upgraded = DynamicImpactCreditV2(address(credit));
 
-        assertEq(upgraded.balanceOf(user, uint256(projectId)), 42);
+        assertEq(upgraded.balanceOf(user, uint256(setupProjectId)), 42);
         assertEq(upgraded.VERSION(), 2);
     }
 
@@ -279,18 +248,16 @@ contract DynamicImpactCreditTest is Test {
     }
 
     function test_RevertsWhenPaused() public {
-        bytes32 projectId = keccak256("Project-Pausable");
-        vm.prank(user);
-        registry.registerProject(projectId, "p-pausable.json");
-        vm.prank(verifier);
-        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
-
         vm.prank(admin);
         credit.pause();
 
-        vm.expectRevert("EnforcedPause()");
-        vm.prank(admin);
-        dmrvManager.adminSubmitVerification(projectId, 1, "ipfs://fail-paused.json", false);
+        bytes4 expectedError = bytes4(keccak256("EnforcedPause()"));
+        vm.expectRevert(expectedError);
+
+        // FIX: Have the authorized dMRVManager contract call the paused function directly
+        // This correctly isolates the 'whenNotPaused' modifier for the test.
+        vm.prank(address(dmrvManager));
+        credit.mintCredits(user, setupProjectId, 1, "ipfs://fail-paused.json");
     }
 
     function test_MintCredits_RevertsForNonActiveProject() public {
@@ -304,56 +271,48 @@ contract DynamicImpactCreditTest is Test {
     }
 
     function test_Retire_RevertsWhenNotAuthorized() public {
-        bytes32 projectId = keccak256("Project-To-Retire");
-        uint256 tokenId = uint256(projectId);
-
-        vm.prank(user);
-        registry.registerProject(projectId, "ipfs://retire.json");
-
-        vm.prank(verifier);
-        registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
-
         vm.prank(admin);
-        dmrvManager.adminSubmitVerification(projectId, 10, "ipfs://t.json", false);
+        dmrvManager.adminSubmitVerification(setupProjectId, 10, "ipfs://t.json", false);
 
         // 'other' user, who is not the owner and not approved, tries to retire
         vm.prank(other);
         vm.expectRevert(DynamicImpactCredit__NotAuthorized.selector);
-        credit.retire(user, projectId, 5);
+        credit.retire(user, setupProjectId, 5);
     }
 
     function test_URI_RevertsForNonExistentToken() public {
-        vm.expectRevert(DynamicImpactCredit__URINotSet.selector);
+        bytes4 expectedError = bytes4(keccak256("DynamicImpactCredit__CredentialNotSet()"));
+        vm.expectRevert(expectedError);
         credit.uri(99999); // A token that has not been minted
     }
 
     function test_BatchMint_RevertsOnMismatchedArrays() public {
         bytes32[] memory ids = new bytes32[](2);
         uint256[] memory amounts = new uint256[](1); // Mismatched length
-        string[] memory uris = new string[](2);
+        string[] memory cids = new string[](2);
 
         ids[0] = keccak256("p1");
         ids[1] = keccak256("p2");
         amounts[0] = 1;
-        uris[0] = "u1";
-        uris[1] = "u2";
+        cids[0] = "u1";
+        cids[1] = "u2";
 
         vm.prank(admin);
         vm.expectRevert(DynamicImpactCredit__LengthMismatch.selector);
-        credit.batchMintCredits(user, ids, amounts, uris);
+        credit.batchMintCredits(user, ids, amounts, cids);
     }
 
     function test_BatchMint_RevertsForNonActiveProject() public {
         bytes32[] memory ids = new bytes32[](2);
         uint256[] memory amounts = new uint256[](2);
-        string[] memory uris = new string[](2);
+        string[] memory cids = new string[](2);
 
         ids[0] = keccak256("inactive-project"); // This project is not active
         ids[1] = keccak256("another-active-one");
         amounts[0] = 5;
         amounts[1] = 7;
-        uris[0] = "ipfs://a.json";
-        uris[1] = "ipfs://b.json";
+        cids[0] = "ipfs://a.json";
+        cids[1] = "ipfs://b.json";
 
         // Register the inactive project
         vm.prank(user);
@@ -366,8 +325,8 @@ contract DynamicImpactCreditTest is Test {
         registry.setProjectStatus(ids[1], IProjectRegistry.ProjectStatus.Active);
 
         vm.prank(admin);
-        vm.expectRevert(DMRVManager__ProjectNotActive.selector);
-        dmrvManager.adminSubmitVerification(ids[0], amounts[0], uris[0], false);
+        vm.expectRevert(DynamicImpactCredit__ProjectNotActive.selector);
+        credit.batchMintCredits(user, ids, amounts, cids);
     }
 }
 

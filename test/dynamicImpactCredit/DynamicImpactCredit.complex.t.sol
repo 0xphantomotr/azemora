@@ -169,17 +169,17 @@ contract DynamicImpactCreditComplexTest is Test {
         vm.startPrank(admin);
 
         // Update metadata for project 0 to reflect new verification data
-        string memory newURI = string(abi.encodePacked(projects[0].baseURI, "v2-verified.json"));
-        credit.setTokenURI(projects[0].id, newURI);
+        string memory newCID = string(abi.encodePacked(projects[0].baseURI, "v2-verified.json"));
+        credit.updateCredentialCID(projects[0].id, newCID);
 
         vm.stopPrank();
 
         // Verify metadata was updated
-        assertEq(credit.uri(uint256(projects[0].id)), newURI);
-        string[] memory history = credit.getTokenURIHistory(uint256(projects[0].id));
+        assertEq(credit.uri(uint256(projects[0].id)), newCID);
+        string[] memory history = credit.getCredentialCIDHistory(uint256(projects[0].id));
         assertEq(history.length, 2);
         assertEq(history[0], string(abi.encodePacked(projects[0].baseURI, "v1.json")));
-        assertEq(history[1], newURI);
+        assertEq(history[1], newCID);
 
         // STEP 4: Users retire some credits
         vm.prank(user2);
@@ -238,13 +238,13 @@ contract DynamicImpactCreditComplexTest is Test {
         // STEP 1: Mint multiple token types in a batch
         bytes32[] memory ids = new bytes32[](3);
         uint256[] memory amounts = new uint256[](3);
-        string[] memory uris = new string[](3);
+        string[] memory cids = new string[](3);
 
         for (uint256 i = 0; i < 3; i++) {
             // Use unique project IDs for this test to avoid state pollution from setUp
             ids[i] = keccak256(abi.encodePacked("batch-test-project", i));
             amounts[i] = (i + 1) * 100; // e.g., 100, 200, 300
-            uris[i] = string(abi.encodePacked("ipfs://batch-uri-", i));
+            cids[i] = string(abi.encodePacked("ipfs://batch-cid-", i));
 
             // Register and activate these new projects
             vm.prank(user1);
@@ -255,12 +255,12 @@ contract DynamicImpactCreditComplexTest is Test {
 
         // Projects are now ready for a clean batch mint.
         vm.prank(address(dmrvManager));
-        credit.batchMintCredits(user1, ids, amounts, uris);
+        credit.batchMintCredits(user1, ids, amounts, cids);
 
         // Verify all credits were minted
         for (uint256 i = 0; i < 3; i++) {
             assertEq(credit.balanceOf(user1, uint256(ids[i])), amounts[i]);
-            assertEq(credit.uri(uint256(ids[i])), uris[i]);
+            assertEq(credit.uri(uint256(ids[i])), cids[i]);
         }
 
         // STEP 2: User1 approves user2 to manage all tokens

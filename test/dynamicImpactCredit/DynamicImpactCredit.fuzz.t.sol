@@ -73,8 +73,11 @@ contract DynamicImpactCreditFuzzTest is Test {
     }
 
     // Fuzz test: URI updates with random strings
-    function testFuzz_URIUpdates(uint256 seed, string calldata initialURI, string calldata updatedURI) public {
+    function testFuzz_CIDUpdates(uint256 seed, string calldata initialCID, string calldata updatedCID) public {
         bytes32 projectId = keccak256(abi.encode(seed));
+        // Constrain CIDs to be non-empty
+        vm.assume(bytes(initialCID).length > 0 && bytes(updatedCID).length > 0);
+        vm.assume(bytes(initialCID).length < 200 && bytes(updatedCID).length < 200);
 
         // Register and activate project
         vm.prank(user);
@@ -82,21 +85,21 @@ contract DynamicImpactCreditFuzzTest is Test {
         vm.prank(verifier);
         registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
 
-        // Mint with initial URI
+        // Mint with initial CID
         vm.prank(dmrvManager);
-        credit.mintCredits(user, projectId, 100, initialURI);
+        credit.mintCredits(user, projectId, 100, initialCID);
 
-        // Update URI
+        // Update CID
         vm.prank(admin);
-        credit.setTokenURI(projectId, updatedURI);
+        credit.updateCredentialCID(projectId, updatedCID);
 
-        // Verify the URI was updated
-        assertEq(credit.uri(uint256(projectId)), updatedURI);
+        // Verify the CID was updated
+        assertEq(credit.uri(uint256(projectId)), updatedCID);
 
         // Verify history
-        string[] memory history = credit.getTokenURIHistory(uint256(projectId));
+        string[] memory history = credit.getCredentialCIDHistory(uint256(projectId));
         assertEq(history.length, 2, "History length should be 2");
-        assertEq(history[0], initialURI, "Initial URI mismatch in history");
-        assertEq(history[1], updatedURI, "Updated URI mismatch in history");
+        assertEq(history[0], initialCID, "Initial CID mismatch in history");
+        assertEq(history[1], updatedCID, "Updated CID mismatch in history");
     }
 }

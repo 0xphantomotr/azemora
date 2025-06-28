@@ -200,17 +200,7 @@ contract FullSystemIntegrationTest is Test {
 
         vm.stopPrank();
 
-        // 5. Create and activate a project
-        bytes32 projectId = keccak256(abi.encodePacked(projectOwner, "My Test Project"));
-
-        vm.prank(projectOwner);
-        projectRegistry.registerProject(projectId, "ipfs://project_metadata");
-
-        vm.prank(admin);
-        projectRegistry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
-    }
-
-    function test_fullFlow_successfulVerification() public {
+        // 5. Register all verifiers needed for the tests
         vm.startPrank(verifier1);
         aztToken.approve(address(verifierManager), MIN_STAKE_AMOUNT);
         verifierManager.register();
@@ -221,6 +211,22 @@ contract FullSystemIntegrationTest is Test {
         verifierManager.register();
         vm.stopPrank();
 
+        vm.startPrank(verifier3_arbitrator);
+        aztToken.approve(address(verifierManager), MIN_STAKE_AMOUNT);
+        verifierManager.register();
+        vm.stopPrank();
+
+        // 6. Create and activate a project
+        bytes32 projectId = keccak256(abi.encodePacked(projectOwner, "My Test Project"));
+
+        vm.prank(projectOwner);
+        projectRegistry.registerProject(projectId, "ipfs://project_metadata");
+
+        vm.prank(admin);
+        projectRegistry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
+    }
+
+    function test_fullFlow_successfulVerification() public {
         bytes32 projectId = keccak256(abi.encodePacked(projectOwner, "My Test Project"));
         bytes32 claimId = keccak256("Test Claim");
 
@@ -242,27 +248,14 @@ contract FullSystemIntegrationTest is Test {
 
         vm.warp(block.timestamp + CHALLENGE_PERIOD + 1);
 
-        repWeightedVerifier.finalizeResolution(taskId);
+        string memory credentialCID = "ipfs://final_credential_cid_for_success";
+        repWeightedVerifier.finalizeResolution(taskId, credentialCID);
 
         assertEq(creditContract.balanceOf(projectOwner, uint256(projectId)), 1);
+        assertEq(creditContract.uri(uint256(projectId)), credentialCID);
     }
 
     function test_fullFlow_successfulChallenge() public {
-        vm.startPrank(verifier1);
-        aztToken.approve(address(verifierManager), MIN_STAKE_AMOUNT);
-        verifierManager.register();
-        vm.stopPrank();
-
-        vm.startPrank(verifier2);
-        aztToken.approve(address(verifierManager), MIN_STAKE_AMOUNT);
-        verifierManager.register();
-        vm.stopPrank();
-
-        vm.startPrank(verifier3_arbitrator);
-        aztToken.approve(address(verifierManager), MIN_STAKE_AMOUNT);
-        verifierManager.register();
-        vm.stopPrank();
-
         bytes32 projectId = keccak256(abi.encodePacked(projectOwner, "My Test Project"));
         bytes32 claimId = keccak256("Test Claim For Challenge");
 
@@ -271,11 +264,11 @@ contract FullSystemIntegrationTest is Test {
             dMRVManager.requestVerification(projectId, claimId, "ipfs://evidence", REP_WEIGHTED_MODULE_TYPE);
 
         vm.prank(verifier1);
-        repWeightedVerifier.submitVote(taskId, ReputationWeightedVerifier.Vote.Approve);
+        repWeightedVerifier.submitVote(taskId, ReputationWeightedVerifier.Vote.Reject);
         vm.stopPrank();
 
         vm.prank(verifier2);
-        repWeightedVerifier.submitVote(taskId, ReputationWeightedVerifier.Vote.Reject);
+        repWeightedVerifier.submitVote(taskId, ReputationWeightedVerifier.Vote.Approve);
         vm.stopPrank();
 
         vm.warp(block.timestamp + VOTING_PERIOD + 1);
@@ -298,17 +291,27 @@ contract FullSystemIntegrationTest is Test {
         repWeightedVerifier.castArbitrationVote(taskId, false); // false = overturn
         vm.stopPrank();
 
+        // FIX: Add a warp to ensure the arbitration voting period has passed.
+        vm.warp(block.timestamp + VOTING_PERIOD + 1);
+
         uint256 verifier1StakeBefore = verifierManager.getVerifierStake(verifier1);
         uint256 challengerBalanceBefore = aztToken.balanceOf(challenger);
 
-        repWeightedVerifier.resolveChallenge(taskId);
+        // CHANGE: Since the challenge is successful and the original outcome is overturned (to APPROVE),
+        // credits will be minted. We must provide a CID.
+        string memory finalCID = "ipfs://final_credential_after_challenge";
+        repWeightedVerifier.resolveChallenge(taskId, finalCID);
 
-        assertEq(creditContract.balanceOf(projectOwner, uint256(projectId)), 0);
+        // CHANGE: Assert that a credit was minted.
+        assertEq(creditContract.balanceOf(projectOwner, uint256(projectId)), 1);
+        assertEq(creditContract.uri(uint256(projectId)), finalCID);
 
         uint256 verifier1StakeAfter = verifierManager.getVerifierStake(verifier1);
+        // Verifier1 voted incorrectly (Reject), so they should be penalized.
         assertLt(verifier1StakeAfter, verifier1StakeBefore);
 
         uint256 challengerBalanceAfter = aztToken.balanceOf(challenger);
+        // The challenger was correct and should get their stake back plus a reward.
         assertGt(challengerBalanceAfter, challengerBalanceBefore);
     }
 }

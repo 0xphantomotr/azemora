@@ -81,13 +81,14 @@ contract DynamicImpactCreditRevertsTest is Test {
         bytes4 expectedError = bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)"));
         vm.expectRevert(abi.encodeWithSelector(expectedError, otherUser, credit.METADATA_UPDATER_ROLE()));
         vm.prank(otherUser);
-        credit.setTokenURI(activeProjectId, "ipfs://new");
+        credit.updateCredentialCID(activeProjectId, "ipfs://new");
     }
 
     // --- uri ---
 
     function test_revert_uri_nonExistentToken() public {
-        vm.expectRevert(DynamicImpactCredit__URINotSet.selector);
+        bytes4 expectedError = bytes4(keccak256("DynamicImpactCredit__CredentialNotSet()"));
+        vm.expectRevert(expectedError);
         credit.uri(uint256(keccak256("non-existent")));
     }
 

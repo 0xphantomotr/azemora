@@ -56,7 +56,7 @@ contract DynamicImpactCreditUpgradeTest is Test {
     function test_upgradeCreditContract_preservesStateAndFunctionality() public {
         // --- 1. Pre-Upgrade Assertions ---
         assertEq(credit.balanceOf(user, tokenId), 100, "Pre-upgrade: user should have 100 tokens");
-        string[] memory uriHistory = credit.getTokenURIHistory(tokenId);
+        string[] memory uriHistory = credit.getCredentialCIDHistory(tokenId);
         assertEq(uriHistory.length, 1, "Pre-upgrade: should have 1 URI in history");
         assertEq(uriHistory[0], "ipfs://batch1", "Pre-upgrade: URI should be correct");
 
@@ -73,14 +73,14 @@ contract DynamicImpactCreditUpgradeTest is Test {
 
         // Check that state is preserved
         assertEq(creditV2.balanceOf(user, tokenId), 100, "Post-upgrade: user balance should be preserved");
-        string[] memory uriHistoryV2 = creditV2.getTokenURIHistory(tokenId);
+        string[] memory uriHistoryV2 = creditV2.getCredentialCIDHistory(tokenId);
         assertEq(uriHistoryV2.length, 1, "Post-upgrade: URI history length should be preserved");
 
         // Check that old functions still work
         vm.prank(minter);
         creditV2.mintCredits(user, projectId, 50, "ipfs://batch2");
         assertEq(creditV2.balanceOf(user, tokenId), 150, "Post-upgrade: minting should still work");
-        uriHistoryV2 = creditV2.getTokenURIHistory(tokenId);
+        uriHistoryV2 = creditV2.getCredentialCIDHistory(tokenId);
         assertEq(uriHistoryV2.length, 2, "Post-upgrade: URI history should be updated");
         assertEq(uriHistoryV2[1], "ipfs://batch2", "Post-upgrade: new URI should be correct");
 

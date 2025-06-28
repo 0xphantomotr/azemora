@@ -148,7 +148,7 @@ contract CreditHandler is Test {
         bytes32 projectId = mintedTokenIds[tokenIndex];
 
         vm.prank(admin);
-        credit.setTokenURI(projectId, newURI);
+        credit.updateCredentialCID(projectId, newURI);
     }
 
     // Helper function to get total minted credits across all users
