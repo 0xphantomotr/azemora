@@ -11,6 +11,7 @@ import "./VerifierManager.sol";
 import "../core/dMRVManager.sol";
 import "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlEnumerableUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {VRFCoordinatorV2Interface} from "@chainlink/contracts/src/v0.8/vrf/interfaces/VRFCoordinatorV2Interface.sol";
 
 enum TaskStatus {
     Idle,
@@ -33,6 +34,9 @@ error ReputationWeightedVerifier__ChallengePeriodOver();
 error ReputationWeightedVerifier__InsufficientStakeAllowance();
 error ReputationWeightedVerifier__NotOnCouncil();
 error ReputationWeightedVerifier__ArbitrationVoteAlreadyCast();
+error ReputationWeightedVerifier__RandomnessRequestFailed();
+error ReputationWeightedVerifier__RequestIdNotFound();
+error ReputationWeightedVerifier__NotEnoughVerifiers();
 
 /**
  * @title ReputationWeightedVerifier
@@ -56,6 +60,7 @@ contract ReputationWeightedVerifier is
         address dMRVManager;
         address treasury;
         address challengeToken;
+        address vrfCoordinator;
     }
 
     struct TimingsConfig {
@@ -69,6 +74,8 @@ contract ReputationWeightedVerifier is
         uint8 councilSize;
         uint256 incorrectVoteStakePenalty;
         uint256 incorrectVoteReputationPenalty;
+        uint64 vrfSubscriptionId;
+        bytes32 vrfKeyHash;
     }
 
     // --- State ---
@@ -102,6 +109,8 @@ contract ReputationWeightedVerifier is
         mapping(address => bool) hasVotedOnChallenge;
         uint256 upholdVotes; // Votes to uphold the original provisionalOutcome
         uint256 overturnVotes; // Votes to overturn the original provisionalOutcome
+        uint64 challengeVoteDeadline;
+        uint256 vrfRequestId;
     }
 
     IVerifierManager public verifierManager;
@@ -118,8 +127,15 @@ contract ReputationWeightedVerifier is
     uint256 public incorrectVoteStakePenalty; // Amount of stake slashed from an incorrect voter
     uint256 public incorrectVoteReputationPenalty; // Amount of reputation slashed from an incorrect voter
 
+    VRFCoordinatorV2Interface public vrfCoordinator;
+    uint64 public s_subscriptionId;
+    bytes32 public s_keyHash; // The gas lane key hash
+    uint32 public callbackGasLimit = 500000; // Gas limit for the callback function
+    uint16 public requestConfirmations = 3; // Number of confirmations for VRF request
+
     mapping(bytes32 => VerificationTask) public tasks;
     mapping(bytes32 => Challenge) public challenges;
+    mapping(uint256 => bytes32) public vrfRequestToTaskId;
     uint256 public taskCounter;
 
     uint256[42] private __gap;
@@ -138,6 +154,11 @@ contract ReputationWeightedVerifier is
         _disableInitializers();
     }
 
+    modifier onlyVRFCoordinator() {
+        require(msg.sender == address(vrfCoordinator), "Only VRF coordinator can call this function");
+        _;
+    }
+
     function initialize(
         address admin_,
         AddressesConfig calldata addrs,
@@ -153,6 +174,7 @@ contract ReputationWeightedVerifier is
         if (addrs.dMRVManager == address(0)) revert ReputationWeightedVerifier__ZeroAddress();
         if (addrs.challengeToken == address(0)) revert ReputationWeightedVerifier__ZeroAddress();
         if (addrs.treasury == address(0)) revert ReputationWeightedVerifier__ZeroAddress();
+        if (addrs.vrfCoordinator == address(0)) revert ReputationWeightedVerifier__ZeroAddress();
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin_);
 
@@ -161,6 +183,7 @@ contract ReputationWeightedVerifier is
         dMRVManager = addrs.dMRVManager;
         treasury = addrs.treasury;
         challengeToken = IERC20(addrs.challengeToken);
+        vrfCoordinator = VRFCoordinatorV2Interface(addrs.vrfCoordinator);
 
         votingPeriod = timings.votingPeriod;
         challengePeriod = timings.challengePeriod;
@@ -170,6 +193,8 @@ contract ReputationWeightedVerifier is
         councilSize = params.councilSize;
         incorrectVoteStakePenalty = params.incorrectVoteStakePenalty;
         incorrectVoteReputationPenalty = params.incorrectVoteReputationPenalty;
+        s_subscriptionId = params.vrfSubscriptionId;
+        s_keyHash = params.vrfKeyHash;
     }
 
     // --- IVerifierModule Implementation ---
@@ -269,8 +294,13 @@ contract ReputationWeightedVerifier is
      * the challenge is resolved by an arbitration council.
      * @param taskId The ID of the task to challenge.
      * @param evidenceURI A URI pointing to evidence supporting the challenge.
+     * @return requestId The ID of the VRF request.
      */
-    function challengeResolution(bytes32 taskId, string calldata evidenceURI) external nonReentrant {
+    function challengeResolution(bytes32 taskId, string calldata evidenceURI)
+        external
+        nonReentrant
+        returns (uint256 requestId)
+    {
         VerificationTask storage task = tasks[taskId];
 
         if (task.status != TaskStatus.Provisional) {
@@ -294,7 +324,16 @@ contract ReputationWeightedVerifier is
         challenge.stake = stakeAmount;
         challenge.active = true;
 
-        _selectArbitrationCouncil(taskId);
+        // --- Request Randomness from Chainlink VRF ---
+        requestId = vrfCoordinator.requestRandomWords(
+            s_keyHash, s_subscriptionId, requestConfirmations, callbackGasLimit, councilSize
+        );
+
+        if (requestId == 0) revert ReputationWeightedVerifier__RandomnessRequestFailed();
+
+        // --- Store the request ID ---
+        vrfRequestToTaskId[requestId] = taskId;
+        challenge.vrfRequestId = requestId; // Link challenge to VRF request
 
         emit TaskChallenged(taskId, msg.sender, evidenceURI);
     }
@@ -345,14 +384,20 @@ contract ReputationWeightedVerifier is
             revert ReputationweightedVerifier__InvalidTaskStatus(taskId, task.status);
         }
 
-        // For simplicity, resolution is triggered when a majority is reached.
-        // A production system might also have a deadline.
-        require(
-            challenge.upholdVotes + challenge.overturnVotes > challenge.councilMembers.length / 2,
-            "Arbitration quorum not met"
-        );
+        // --- MODIFIED: Added timeout logic ---
+        // Check for timeout OR for arbitration quorum being met.
+        bool isTimeout = block.timestamp > challenge.challengeVoteDeadline;
+        bool isQuorumMet = challenge.upholdVotes + challenge.overturnVotes > challenge.councilMembers.length / 2;
 
-        bool challengeFailed = challenge.upholdVotes >= challenge.overturnVotes;
+        require(isTimeout || isQuorumMet, "Arbitration vote not complete and timeout not reached");
+
+        bool challengeFailed;
+        if (isTimeout) {
+            // Lazy Consensus: If council fails to act, challenge fails.
+            challengeFailed = true;
+        } else {
+            challengeFailed = challenge.upholdVotes >= challenge.overturnVotes;
+        }
 
         if (challengeFailed) {
             // Challenge fails: slash challenger's stake and finalize original outcome.
@@ -379,7 +424,7 @@ contract ReputationWeightedVerifier is
         }
 
         challenge.active = false;
-        emit ChallengeResolved(taskId, challengeFailed);
+        emit ChallengeResolved(taskId, !challengeFailed);
     }
 
     /**
@@ -416,18 +461,31 @@ contract ReputationWeightedVerifier is
         emit TaskResolved(task.claimId, approved, task.weightedApproveVotes, task.weightedRejectVotes);
     }
 
+    /**
+     * @notice The callback function called by the VRF Coordinator with the random words.
+     * @dev This function is the designated receiver of the random values.
+     *      It is protected by the onlyVRFCoordinator modifier.
+     */
+    function fulfillRandomWords(uint256 requestId, uint256[] memory randomWords) external onlyVRFCoordinator {
+        bytes32 taskId = vrfRequestToTaskId[requestId];
+        if (taskId == bytes32(0)) revert ReputationWeightedVerifier__RequestIdNotFound();
+
+        delete vrfRequestToTaskId[requestId]; // Prevent re-use of request ID
+
+        _selectArbitrationCouncil(taskId, randomWords);
+    }
+
     // --- Internal Logic ---
 
     /**
      * @notice Selects a random council of verifiers to arbitrate a challenge.
-     * @dev WARNING: This is a pseudo-random implementation for demonstration purposes and is
-     * vulnerable to manipulation in a production environment. A secure implementation should
-     * use a commit-reveal scheme or an oracle like Chainlink VRF.
+     * @dev Uses cryptographically secure randomness from Chainlink VRF.
      * @param taskId The ID of the task to select a council for.
+     * @param randomWords The array of random numbers provided by the VRF.
      */
-    function _selectArbitrationCouncil(bytes32 taskId) internal {
-        VerificationTask storage task = tasks[taskId];
+    function _selectArbitrationCouncil(bytes32 taskId, uint256[] memory randomWords) internal {
         Challenge storage challenge = challenges[taskId];
+        VerificationTask storage task = tasks[taskId];
 
         address[] memory allVerifiers = verifierManager.getAllVerifiers();
         address[] memory eligibleCouncilMembers = new address[](allVerifiers.length);
@@ -442,17 +500,14 @@ contract ReputationWeightedVerifier is
         }
 
         // Ensure we have enough eligible members for the council
-        uint8 effectiveCouncilSize = councilSize;
         if (eligibleCount < councilSize) {
-            effectiveCouncilSize = uint8(eligibleCount);
+            revert ReputationWeightedVerifier__NotEnoughVerifiers();
         }
 
         // Pseudo-randomly select the council members from the eligible list
-        for (uint256 i = 0; i < effectiveCouncilSize; i++) {
-            // WARNING: This is a pseudo-random selection method and is NOT secure for production.
-            // It is vulnerable to manipulation by miners/validators.
-            // A production system MUST use a secure source of randomness (e.g., Chainlink VRF).
-            uint256 randomIndex = uint256(keccak256(abi.encodePacked(block.prevrandao, taskId, i))) % eligibleCount;
+        for (uint256 i = 0; i < councilSize; i++) {
+            // Use the verified random word for this selection
+            uint256 randomIndex = randomWords[i] % eligibleCount;
 
             address selected = eligibleCouncilMembers[randomIndex];
             challenge.councilMembers.push(selected);
@@ -461,12 +516,19 @@ contract ReputationWeightedVerifier is
             eligibleCouncilMembers[randomIndex] = eligibleCouncilMembers[eligibleCount - 1];
             eligibleCount--;
         }
+
+        // --- SET THE COUNCIL VOTING DEADLINE ---
+        challenge.challengeVoteDeadline = uint64(block.timestamp + votingPeriod);
     }
 
     // --- View Functions & Admin ---
 
     function getTaskVotes(bytes32 taskId) external view returns (uint256, uint256) {
         return (tasks[taskId].weightedApproveVotes, tasks[taskId].weightedRejectVotes);
+    }
+
+    function getChallengeCouncil(bytes32 taskId) external view returns (address[] memory) {
+        return challenges[taskId].councilMembers;
     }
 
     function getModuleName() external pure override returns (string memory) {

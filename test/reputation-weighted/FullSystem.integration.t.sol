@@ -16,6 +16,7 @@ import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 
 // Mocks & Tokens
 import {MockERC20} from "../mocks/MockERC20.sol";
+import {VRFCoordinatorV2Mock} from "@chainlink/contracts/src/v0.8/vrf/mocks/VRFCoordinatorV2Mock.sol";
 
 contract FullSystemIntegrationTest is Test {
     // --- Constants ---
@@ -31,6 +32,8 @@ contract FullSystemIntegrationTest is Test {
     uint256 internal constant STAKE_PENALTY = 10 * 1e18; // 10 tokens
     uint256 internal constant REP_PENALTY = 10; // 10 points
     bytes32 internal constant REP_WEIGHTED_MODULE_TYPE = keccak256("REPUTATION_WEIGHTED_V1");
+    uint64 internal constant VRF_SUB_ID = 1;
+    bytes32 internal constant VRF_KEY_HASH = keccak256("test key hash");
 
     // --- Contracts ---
     ProjectRegistry internal projectRegistry;
@@ -41,6 +44,7 @@ contract FullSystemIntegrationTest is Test {
     ReputationWeightedVerifier internal repWeightedVerifier;
     MethodologyRegistry internal methodologyRegistry;
     MockERC20 internal aztToken;
+    VRFCoordinatorV2Mock internal vrfCoordinator;
 
     // --- Users ---
     address internal admin;
@@ -65,6 +69,9 @@ contract FullSystemIntegrationTest is Test {
 
         // 2. Deploy all contracts with CORRECT initializers
         aztToken = new MockERC20("Azemora Token", "AZT", 18);
+        vrfCoordinator = new VRFCoordinatorV2Mock(0, 0);
+        vrfCoordinator.createSubscription();
+        vrfCoordinator.fundSubscription(VRF_SUB_ID, 1000 ether);
 
         // CORRECT: ReputationManager.initialize(address, address)
         reputationManager = ReputationManager(
@@ -139,7 +146,8 @@ contract FullSystemIntegrationTest is Test {
             reputationManager: address(reputationManager),
             dMRVManager: address(dMRVManager),
             treasury: treasury,
-            challengeToken: address(aztToken)
+            challengeToken: address(aztToken),
+            vrfCoordinator: address(vrfCoordinator)
         });
 
         ReputationWeightedVerifier.TimingsConfig memory timings =
@@ -150,7 +158,9 @@ contract FullSystemIntegrationTest is Test {
             challengeStakeAmount: CHALLENGE_STAKE,
             councilSize: ARBITRATION_COUNCIL_SIZE,
             incorrectVoteStakePenalty: STAKE_PENALTY,
-            incorrectVoteReputationPenalty: REP_PENALTY
+            incorrectVoteReputationPenalty: REP_PENALTY,
+            vrfSubscriptionId: VRF_SUB_ID,
+            vrfKeyHash: VRF_KEY_HASH
         });
 
         repWeightedVerifier = ReputationWeightedVerifier(
@@ -163,6 +173,7 @@ contract FullSystemIntegrationTest is Test {
         );
 
         // 3. Connect the system
+        vrfCoordinator.addConsumer(VRF_SUB_ID, address(repWeightedVerifier));
         creditContract.grantRole(creditContract.DMRV_MANAGER_ROLE(), address(dMRVManager));
         creditContract.grantRole(creditContract.METADATA_UPDATER_ROLE(), address(dMRVManager));
         dMRVManager.setMethodologyRegistry(address(methodologyRegistry));
@@ -272,8 +283,16 @@ contract FullSystemIntegrationTest is Test {
 
         vm.startPrank(challenger);
         aztToken.approve(address(repWeightedVerifier), CHALLENGE_STAKE);
-        repWeightedVerifier.challengeResolution(taskId, "ipfs://challenge_evidence");
+        uint256 requestId = repWeightedVerifier.challengeResolution(taskId, "ipfs://challenge_evidence");
         vm.stopPrank();
+
+        // --- VRF Mock Fulfillment ---
+        uint256[] memory randomWords = new uint256[](1);
+        randomWords[0] = 0; // This will select the first eligible verifier (verifier3_arbitrator)
+
+        // NEW, CORRECT WAY: Use prank to directly simulate the callback
+        vm.prank(address(vrfCoordinator));
+        repWeightedVerifier.fulfillRandomWords(requestId, randomWords);
 
         vm.prank(verifier3_arbitrator);
         repWeightedVerifier.castArbitrationVote(taskId, false); // false = overturn
