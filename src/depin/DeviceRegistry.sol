@@ -24,7 +24,7 @@ event OracleDeauthorized(uint256 indexed tokenId, address indexed oracle);
 
 /**
  * @title DeviceRegistry
- * @author Azemora DAO
+ * @author Genci Mehmeti
  * @dev Manages the on-chain identity of physical hardware devices using NFTs.
  * Each NFT represents a unique device, creating a verifiable link between the
  * hardware and its authorized data submitter. This contract acts as the

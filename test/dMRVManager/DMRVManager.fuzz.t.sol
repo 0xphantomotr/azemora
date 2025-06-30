@@ -66,7 +66,7 @@ contract DMRVManagerFuzzTest is Test {
             bytes32(0) // schemaHash - providing a null value for the test
         );
         methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE);
+        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
 
         // 6. Set up roles
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), address(dMRVManager));

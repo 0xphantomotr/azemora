@@ -9,6 +9,7 @@ import "../achievements/interfaces/IReputationManager.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ERC20Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "./interfaces/IVerifierManager.sol";
 
 // --- Custom Errors ---
 error VerifierManager__NotEnoughReputation();
@@ -17,20 +18,9 @@ error VerifierManager__AlreadyRegistered();
 error VerifierManager__NotRegistered();
 error VerifierManager__UnstakePeriodNotOver();
 error VerifierManager__StillStaked();
-error VerifierManager__CallerNotSlasher();
+error VerifierManager__CallerNotArbitrationCouncil();
 error VerifierManager__NothingToSlash();
 error VerifierManager__ZeroAddress();
-
-/**
- * @title IVerifierManager
- * @dev Interface for interacting with the VerifierManager.
- */
-interface IVerifierManager {
-    function isVerifier(address account) external view returns (bool);
-    function getVerifierStake(address account) external view returns (uint256);
-    function slash(address verifier, uint256 stakeAmount, uint256 reputationAmount) external;
-    function getAllVerifiers() external view returns (address[] memory);
-}
 
 /**
  * @title VerifierManager
@@ -49,7 +39,9 @@ contract VerifierManager is
     using SafeERC20 for ERC20Upgradeable;
 
     // --- Roles ---
+    bytes32 public constant ARBITRATION_COUNCIL_ROLE = keccak256("ARBITRATION_COUNCIL_ROLE");
     bytes32 public constant SLASHER_ROLE = keccak256("SLASHER_ROLE");
+    bytes32 public constant CONFIG_ADMIN_ROLE = keccak256("CONFIG_ADMIN_ROLE");
 
     // --- State ---
     struct Verifier {
@@ -88,7 +80,7 @@ contract VerifierManager is
 
     function initialize(
         address admin_,
-        address slasher_,
+        address arbitrationCouncil_,
         address treasury_,
         address stakingToken_,
         address reputationManager_,
@@ -102,13 +94,13 @@ contract VerifierManager is
 
         if (
             stakingToken_ == address(0) || reputationManager_ == address(0) || admin_ == address(0)
-                || slasher_ == address(0) || treasury_ == address(0)
+                || arbitrationCouncil_ == address(0) || treasury_ == address(0)
         ) {
             revert VerifierManager__ZeroAddress();
         }
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin_);
-        _grantRole(SLASHER_ROLE, slasher_);
+        _grantRole(ARBITRATION_COUNCIL_ROLE, arbitrationCouncil_);
 
         treasury = treasury_;
         stakingToken = ERC20Upgradeable(stakingToken_);
@@ -171,26 +163,29 @@ contract VerifierManager is
 
     // --- Privileged Functions ---
 
-    function slash(address verifier, uint256 stakeAmount, uint256 reputationAmount)
-        external
-        override
-        onlyRole(SLASHER_ROLE)
-        nonReentrant
-    {
+    /**
+     * @notice Slashes a verifier's entire stake.
+     * @dev Can only be called by a contract with the SLASHER_ROLE after a successful dispute resolution.
+     * The slashed stake is sent to the DAO Treasury.
+     * @param verifier The address of the verifier to be slashed.
+     */
+    function slash(address verifier) external onlyRole(SLASHER_ROLE) nonReentrant {
         Verifier storage v = verifiers[verifier];
         if (!v.active && v.stake == 0) revert VerifierManager__NotRegistered();
-        if (stakeAmount > v.stake) revert VerifierManager__NothingToSlash();
+        uint256 stakeToSlash = v.stake;
+        if (stakeToSlash == 0) revert VerifierManager__NothingToSlash();
 
-        v.stake -= stakeAmount;
+        v.stake = 0; // Slashed to zero
+        v.active = false; // Deactivate the verifier
+        _removeVerifierFromList(verifier); // Remove them from the active list
 
         // The slashed stake is sent to the DAO Treasury
-        stakingToken.safeTransfer(treasury, stakeAmount);
+        stakingToken.safeTransfer(treasury, stakeToSlash);
 
-        if (reputationAmount > 0) {
-            reputationManager.slashReputation(verifier, reputationAmount);
-        }
+        // For now, we assume a full reputation slash. This could be made more granular.
+        reputationManager.slashReputation(verifier, v.reputationSnapshot);
 
-        emit Slashed(verifier, stakeAmount, reputationAmount);
+        emit Slashed(verifier, stakeToSlash, v.reputationSnapshot);
     }
 
     function setMinStake(uint256 newAmount) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -205,20 +200,20 @@ contract VerifierManager is
 
     // --- View Functions ---
 
-    function isVerifier(address account) external view override returns (bool) {
-        return verifiers[account].active;
-    }
-
-    function getVerifierStake(address account) external view override returns (uint256) {
-        return verifiers[account].stake;
-    }
-
     function getVerifierCount() external view returns (uint256) {
         return _verifierList.length;
     }
 
-    function getAllVerifiers() external view override returns (address[] memory) {
+    function getAllVerifiers() external view returns (address[] memory) {
         return _verifierList;
+    }
+
+    function getVerifierStake(address _verifier) external view returns (uint256) {
+        return verifiers[_verifier].stake;
+    }
+
+    function isVerifier(address _verifier) external view returns (bool) {
+        return verifiers[_verifier].active;
     }
 
     // --- Internal Functions ---

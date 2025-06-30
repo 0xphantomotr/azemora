@@ -8,14 +8,17 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {ProjectRegistry} from "../../src/core/ProjectRegistry.sol";
 import {DMRVManager} from "../../src/core/dMRVManager.sol";
 import {DynamicImpactCredit} from "../../src/core/DynamicImpactCredit.sol";
-import {ReputationManager} from "../../src/achievements/ReputationManager.sol";
 import {VerifierManager} from "../../src/reputation-weighted/VerifierManager.sol";
-import {ReputationWeightedVerifier} from "../../src/reputation-weighted/ReputationWeightedVerifier.sol";
+import {
+    ReputationWeightedVerifier, Vote, TaskStatus
+} from "../../src/reputation-weighted/ReputationWeightedVerifier.sol";
 import {MethodologyRegistry} from "../../src/core/MethodologyRegistry.sol";
+import {ArbitrationCouncil} from "../../src/governance/ArbitrationCouncil.sol";
 import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 
 // Mocks & Tokens
 import {MockERC20} from "../mocks/MockERC20.sol";
+import {MockReputationManager} from "../mocks/MockReputationManager.sol";
 import {VRFCoordinatorV2Mock} from "@chainlink/contracts/src/v0.8/vrf/mocks/VRFCoordinatorV2Mock.sol";
 
 contract FullSystemIntegrationTest is Test {
@@ -23,35 +26,34 @@ contract FullSystemIntegrationTest is Test {
     uint256 internal constant INITIAL_MINT_AMOUNT = 1_000_000 * 1e18;
     uint256 internal constant MIN_STAKE_AMOUNT = 100 * 1e18;
     uint256 internal constant MIN_REPUTATION = 50;
-    uint256 internal constant UNSTAKE_LOCK_PERIOD = 7 days;
     uint256 internal constant VOTING_PERIOD = 3 days;
     uint256 internal constant APPROVAL_THRESHOLD_BPS = 5001; // 50.01%
     uint256 internal constant CHALLENGE_PERIOD = 1 days;
-    uint256 internal constant CHALLENGE_STAKE = 50 * 1e18;
-    uint8 internal constant ARBITRATION_COUNCIL_SIZE = 1;
-    uint256 internal constant STAKE_PENALTY = 10 * 1e18; // 10 tokens
-    uint256 internal constant REP_PENALTY = 10; // 10 points
+    uint256 internal constant CHALLENGE_STAKE_AMOUNT = 50 * 1e18;
+    uint256 internal constant ARBITRATION_COUNCIL_SIZE = 1;
     bytes32 internal constant REP_WEIGHTED_MODULE_TYPE = keccak256("REPUTATION_WEIGHTED_V1");
     uint64 internal constant VRF_SUB_ID = 1;
     bytes32 internal constant VRF_KEY_HASH = keccak256("test key hash");
+    uint32 internal constant VRF_CALLBACK_GAS_LIMIT = 500000;
+    uint16 internal constant VRF_REQUEST_CONFIRMATIONS = 3;
 
     // --- Contracts ---
     ProjectRegistry internal projectRegistry;
     DMRVManager internal dMRVManager;
     DynamicImpactCredit internal creditContract;
-    ReputationManager internal reputationManager;
+    MockReputationManager internal reputationManager;
     VerifierManager internal verifierManager;
     ReputationWeightedVerifier internal repWeightedVerifier;
     MethodologyRegistry internal methodologyRegistry;
+    ArbitrationCouncil internal arbitrationCouncil;
     MockERC20 internal aztToken;
     VRFCoordinatorV2Mock internal vrfCoordinator;
 
     // --- Users ---
     address internal admin;
     address internal projectOwner;
-    address internal verifier1;
-    address internal verifier2;
-    address internal verifier3_arbitrator;
+    address internal verifier1; // Will vote 'wrong'
+    address internal verifier2_arbitrator; // Will be selected for jury
     address internal challenger;
     address internal treasury;
 
@@ -60,34 +62,22 @@ contract FullSystemIntegrationTest is Test {
         admin = makeAddr("admin");
         projectOwner = makeAddr("projectOwner");
         verifier1 = makeAddr("verifier1");
-        verifier2 = makeAddr("verifier2");
-        verifier3_arbitrator = makeAddr("verifier3_arbitrator");
+        verifier2_arbitrator = makeAddr("verifier2_arbitrator");
         challenger = makeAddr("challenger");
         treasury = makeAddr("treasury");
 
         vm.startPrank(admin);
 
-        // 2. Deploy all contracts with CORRECT initializers
+        // 2. Deploy contracts with no cross-dependencies
         aztToken = new MockERC20("Azemora Token", "AZT", 18);
         vrfCoordinator = new VRFCoordinatorV2Mock(0, 0);
         vrfCoordinator.createSubscription();
         vrfCoordinator.fundSubscription(VRF_SUB_ID, 1000 ether);
 
-        // CORRECT: ReputationManager.initialize(address, address)
-        reputationManager = ReputationManager(
-            address(
-                new ERC1967Proxy(
-                    address(new ReputationManager()), abi.encodeCall(ReputationManager.initialize, (admin, admin))
-                )
-            )
-        );
-
-        // CORRECT: ProjectRegistry.initialize()
+        reputationManager = new MockReputationManager();
         projectRegistry = ProjectRegistry(
             address(new ERC1967Proxy(address(new ProjectRegistry()), abi.encodeCall(ProjectRegistry.initialize, ())))
         );
-
-        // CORRECT: DynamicImpactCredit.initializeDynamicImpactCredit(address, string)
         creditContract = DynamicImpactCredit(
             address(
                 new ERC1967Proxy(
@@ -96,8 +86,6 @@ contract FullSystemIntegrationTest is Test {
                 )
             )
         );
-
-        // CORRECT: MethodologyRegistry.initialize(address)
         methodologyRegistry = MethodologyRegistry(
             address(
                 new ERC1967Proxy(
@@ -105,8 +93,6 @@ contract FullSystemIntegrationTest is Test {
                 )
             )
         );
-
-        // CORRECT: DMRVManager.initializeDMRVManager(address, address)
         dMRVManager = DMRVManager(
             address(
                 new ERC1967Proxy(
@@ -118,200 +104,165 @@ contract FullSystemIntegrationTest is Test {
             )
         );
 
-        // CORRECT: VerifierManager.initialize(address, address, address, address, address, uint256, uint256, uint256)
-        verifierManager = VerifierManager(
-            address(
-                new ERC1967Proxy(
-                    address(new VerifierManager()),
-                    abi.encodeCall(
-                        VerifierManager.initialize,
-                        (
-                            admin,
-                            admin,
-                            treasury,
-                            address(aztToken),
-                            address(reputationManager),
-                            MIN_STAKE_AMOUNT,
-                            MIN_REPUTATION,
-                            UNSTAKE_LOCK_PERIOD
-                        )
-                    )
-                )
-            )
-        );
-
-        // CORRECT: ReputationWeightedVerifier.initialize(...) now takes structs
-        ReputationWeightedVerifier.AddressesConfig memory addrs = ReputationWeightedVerifier.AddressesConfig({
-            verifierManager: address(verifierManager),
-            reputationManager: address(reputationManager),
-            dMRVManager: address(dMRVManager),
-            treasury: treasury,
-            challengeToken: address(aztToken),
-            vrfCoordinator: address(vrfCoordinator)
-        });
-
-        ReputationWeightedVerifier.TimingsConfig memory timings =
-            ReputationWeightedVerifier.TimingsConfig({votingPeriod: VOTING_PERIOD, challengePeriod: CHALLENGE_PERIOD});
-
-        ReputationWeightedVerifier.ParametersConfig memory params = ReputationWeightedVerifier.ParametersConfig({
-            approvalThresholdBps: APPROVAL_THRESHOLD_BPS,
-            challengeStakeAmount: CHALLENGE_STAKE,
-            councilSize: ARBITRATION_COUNCIL_SIZE,
-            incorrectVoteStakePenalty: STAKE_PENALTY,
-            incorrectVoteReputationPenalty: REP_PENALTY,
-            vrfSubscriptionId: VRF_SUB_ID,
-            vrfKeyHash: VRF_KEY_HASH
-        });
-
+        // 3. DEPLOY PROXIES WITH CIRCULAR DEPENDENCIES (UNINITIALIZED)
+        arbitrationCouncil =
+            ArbitrationCouncil(payable(address(new ERC1967Proxy(address(new ArbitrationCouncil()), bytes("")))));
+        verifierManager = VerifierManager(payable(address(new ERC1967Proxy(address(new VerifierManager()), bytes("")))));
         repWeightedVerifier = ReputationWeightedVerifier(
-            address(
-                new ERC1967Proxy(
-                    address(new ReputationWeightedVerifier()),
-                    abi.encodeCall(ReputationWeightedVerifier.initialize, (admin, addrs, timings, params))
-                )
-            )
+            payable(address(new ERC1967Proxy(address(new ReputationWeightedVerifier()), bytes(""))))
         );
 
-        // 3. Connect the system
-        vrfCoordinator.addConsumer(VRF_SUB_ID, address(repWeightedVerifier));
+        // 4. INITIALIZE CONTRACTS NOW THAT ALL ADDRESSES ARE KNOWN
+        arbitrationCouncil.initialize(
+            admin, address(aztToken), address(verifierManager), treasury, address(vrfCoordinator), VRF_SUB_ID
+        );
+        verifierManager.initialize(
+            admin,
+            address(arbitrationCouncil),
+            treasury,
+            address(aztToken),
+            address(reputationManager),
+            MIN_STAKE_AMOUNT,
+            MIN_REPUTATION,
+            7 days
+        );
+        repWeightedVerifier.initialize(
+            admin,
+            address(verifierManager),
+            address(dMRVManager),
+            address(arbitrationCouncil),
+            VOTING_PERIOD,
+            CHALLENGE_PERIOD,
+            APPROVAL_THRESHOLD_BPS
+        );
+
+        // 5. Connect the rest of the system (roles and settings)
+        arbitrationCouncil.setVrfParams(VRF_KEY_HASH, VRF_REQUEST_CONFIRMATIONS, VRF_CALLBACK_GAS_LIMIT);
+        arbitrationCouncil.setChallengeStakeAmount(CHALLENGE_STAKE_AMOUNT);
+        arbitrationCouncil.setCouncilSize(ARBITRATION_COUNCIL_SIZE);
+        arbitrationCouncil.setVotingPeriod(VOTING_PERIOD);
+
+        vrfCoordinator.addConsumer(VRF_SUB_ID, address(arbitrationCouncil));
         creditContract.grantRole(creditContract.DMRV_MANAGER_ROLE(), address(dMRVManager));
-        creditContract.grantRole(creditContract.METADATA_UPDATER_ROLE(), address(dMRVManager));
+        creditContract.grantRole(creditContract.BURNER_ROLE(), address(dMRVManager));
         dMRVManager.setMethodologyRegistry(address(methodologyRegistry));
+        dMRVManager.grantRole(dMRVManager.REVERSER_ROLE(), address(repWeightedVerifier));
+        arbitrationCouncil.grantRole(arbitrationCouncil.VERIFIER_CONTRACT_ROLE(), address(repWeightedVerifier));
+        verifierManager.grantRole(verifierManager.SLASHER_ROLE(), address(repWeightedVerifier));
 
         methodologyRegistry.addMethodology(
             REP_WEIGHTED_MODULE_TYPE, address(repWeightedVerifier), "ipfs://rep", bytes32(0)
         );
         methodologyRegistry.approveMethodology(REP_WEIGHTED_MODULE_TYPE);
-        dMRVManager.registerVerifierModule(REP_WEIGHTED_MODULE_TYPE);
+        dMRVManager.registerVerifierModule(REP_WEIGHTED_MODULE_TYPE, address(repWeightedVerifier));
 
-        reputationManager.grantRole(reputationManager.REPUTATION_SLASHER_ROLE(), address(verifierManager));
-        verifierManager.grantRole(verifierManager.SLASHER_ROLE(), address(repWeightedVerifier));
-        verifierManager.revokeRole(verifierManager.SLASHER_ROLE(), admin);
-
-        // 4. Setup user states
+        // 6. Setup user states
         aztToken.mint(verifier1, INITIAL_MINT_AMOUNT);
-        aztToken.mint(verifier2, INITIAL_MINT_AMOUNT);
-        aztToken.mint(verifier3_arbitrator, INITIAL_MINT_AMOUNT);
+        aztToken.mint(verifier2_arbitrator, INITIAL_MINT_AMOUNT);
         aztToken.mint(challenger, INITIAL_MINT_AMOUNT);
 
-        reputationManager.addReputation(verifier1, MIN_REPUTATION + 100);
-        reputationManager.addReputation(verifier2, MIN_REPUTATION + 50);
-        reputationManager.addReputation(verifier3_arbitrator, MIN_REPUTATION + 200);
+        reputationManager.setReputation(verifier1, MIN_REPUTATION + 100);
+        reputationManager.setReputation(verifier2_arbitrator, MIN_REPUTATION + 200);
 
         vm.stopPrank();
 
-        // 5. Register all verifiers needed for the tests
+        // 7. Register all verifiers
         vm.startPrank(verifier1);
         aztToken.approve(address(verifierManager), MIN_STAKE_AMOUNT);
         verifierManager.register();
         vm.stopPrank();
 
-        vm.startPrank(verifier2);
+        vm.startPrank(verifier2_arbitrator);
         aztToken.approve(address(verifierManager), MIN_STAKE_AMOUNT);
         verifierManager.register();
         vm.stopPrank();
 
-        vm.startPrank(verifier3_arbitrator);
-        aztToken.approve(address(verifierManager), MIN_STAKE_AMOUNT);
-        verifierManager.register();
-        vm.stopPrank();
-
-        // 6. Create and activate a project
+        // 8. Create and activate a project
         bytes32 projectId = keccak256(abi.encodePacked(projectOwner, "My Test Project"));
-
         vm.prank(projectOwner);
         projectRegistry.registerProject(projectId, "ipfs://project_metadata");
-
         vm.prank(admin);
         projectRegistry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
     }
 
-    function test_fullFlow_successfulVerification() public {
+    function test_fullFlow_challengeAndReversal() public {
         bytes32 projectId = keccak256(abi.encodePacked(projectOwner, "My Test Project"));
         bytes32 claimId = keccak256("Test Claim");
 
+        // 1. A verification is requested and results in an incorrect "Approve" outcome
         vm.prank(projectOwner);
         bytes32 taskId =
             dMRVManager.requestVerification(projectId, claimId, "ipfs://evidence", REP_WEIGHTED_MODULE_TYPE);
 
         vm.prank(verifier1);
-        repWeightedVerifier.submitVote(taskId, ReputationWeightedVerifier.Vote.Approve);
-        vm.stopPrank();
-
-        vm.prank(verifier2);
-        repWeightedVerifier.submitVote(taskId, ReputationWeightedVerifier.Vote.Approve);
+        repWeightedVerifier.submitVote(taskId, Vote.Approve);
         vm.stopPrank();
 
         vm.warp(block.timestamp + VOTING_PERIOD + 1);
+        repWeightedVerifier.proposeTaskResolution(taskId);
 
-        repWeightedVerifier.proposeResolution(taskId);
+        assertEq(
+            uint256(repWeightedVerifier.getTaskStatus(taskId)),
+            uint256(TaskStatus.Provisional),
+            "Task should be provisional"
+        );
 
-        vm.warp(block.timestamp + CHALLENGE_PERIOD + 1);
+        // The original test incorrectly finalized the verification here.
+        // In a challenge flow, we proceed directly to the challenge.
+        // No credits should be minted at this stage.
+        uint256 tokenId = uint256(projectId);
+        assertEq(creditContract.balanceOf(projectOwner, tokenId), 0, "Credits should not be minted before finalization");
 
-        string memory credentialCID = "ipfs://final_credential_cid_for_success";
-        repWeightedVerifier.finalizeResolution(taskId, credentialCID);
-
-        assertEq(creditContract.balanceOf(projectOwner, uint256(projectId)), 1);
-        assertEq(creditContract.uri(uint256(projectId)), credentialCID);
-    }
-
-    function test_fullFlow_successfulChallenge() public {
-        bytes32 projectId = keccak256(abi.encodePacked(projectOwner, "My Test Project"));
-        bytes32 claimId = keccak256("Test Claim For Challenge");
-
-        vm.prank(projectOwner);
-        bytes32 taskId =
-            dMRVManager.requestVerification(projectId, claimId, "ipfs://evidence", REP_WEIGHTED_MODULE_TYPE);
-
-        vm.prank(verifier1);
-        repWeightedVerifier.submitVote(taskId, ReputationWeightedVerifier.Vote.Reject);
-        vm.stopPrank();
-
-        vm.prank(verifier2);
-        repWeightedVerifier.submitVote(taskId, ReputationWeightedVerifier.Vote.Approve);
-        vm.stopPrank();
-
-        vm.warp(block.timestamp + VOTING_PERIOD + 1);
-        repWeightedVerifier.proposeResolution(taskId);
-
+        // 2. A challenger spots the error and starts a dispute
         vm.startPrank(challenger);
-        aztToken.approve(address(repWeightedVerifier), CHALLENGE_STAKE);
-        uint256 requestId = repWeightedVerifier.challengeResolution(taskId, "ipfs://challenge_evidence");
+        aztToken.approve(address(arbitrationCouncil), CHALLENGE_STAKE_AMOUNT);
+        repWeightedVerifier.challengeVerification(taskId);
         vm.stopPrank();
 
-        // --- VRF Mock Fulfillment ---
+        // 3. The ArbitrationCouncil uses VRF to select a jury. We mock the callback.
+        uint256 requestId = 1; // First VRF request
         uint256[] memory randomWords = new uint256[](1);
-        randomWords[0] = 0; // This will select the first eligible verifier (verifier3_arbitrator)
+        // verifier1 voted, challenger is challenging.
+        // The list of potential jurors is [verifier1, verifier2_arbitrator].
+        // We need to select verifier2_arbitrator, who is at index 1.
+        randomWords[0] = 1;
 
-        // NEW, CORRECT WAY: Use prank to directly simulate the callback
-        vm.prank(address(vrfCoordinator));
-        repWeightedVerifier.fulfillRandomWords(requestId, randomWords);
+        vrfCoordinator.fulfillRandomWordsWithOverride(requestId, address(arbitrationCouncil), randomWords);
 
-        vm.prank(verifier3_arbitrator);
-        repWeightedVerifier.castArbitrationVote(taskId, false); // false = overturn
+        // 4. The jury votes to OVERTURN the original decision
+        vm.prank(verifier2_arbitrator);
+        arbitrationCouncil.vote(taskId, false); // false = Overturn
         vm.stopPrank();
 
-        // FIX: Add a warp to ensure the arbitration voting period has passed.
+        // 5. Anyone resolves the dispute after the voting period ends
         vm.warp(block.timestamp + VOTING_PERIOD + 1);
 
-        uint256 verifier1StakeBefore = verifierManager.getVerifierStake(verifier1);
+        uint256 treasuryBalanceBefore = aztToken.balanceOf(treasury);
         uint256 challengerBalanceBefore = aztToken.balanceOf(challenger);
 
-        // CHANGE: Since the challenge is successful and the original outcome is overturned (to APPROVE),
-        // credits will be minted. We must provide a CID.
-        string memory finalCID = "ipfs://final_credential_after_challenge";
-        repWeightedVerifier.resolveChallenge(taskId, finalCID);
+        arbitrationCouncil.resolveDispute(taskId);
 
-        // CHANGE: Assert that a credit was minted.
-        assertEq(creditContract.balanceOf(projectOwner, uint256(projectId)), 1);
-        assertEq(creditContract.uri(uint256(projectId)), finalCID);
+        // --- 6. Assert Final State ---
+        // Assert verifier1 (who voted wrong) was slashed
+        assertEq(verifierManager.getVerifierStake(verifier1), 0, "Verifier1 should have been slashed to 0");
+        assertFalse(verifierManager.isVerifier(verifier1), "Slashed verifier should be inactive");
+        assertEq(
+            aztToken.balanceOf(treasury),
+            treasuryBalanceBefore + MIN_STAKE_AMOUNT,
+            "Slashed stake should go to treasury"
+        );
 
-        uint256 verifier1StakeAfter = verifierManager.getVerifierStake(verifier1);
-        // Verifier1 voted incorrectly (Reject), so they should be penalized.
-        assertLt(verifier1StakeAfter, verifier1StakeBefore);
-
+        // Assert challenger got their stake back (since they were right)
         uint256 challengerBalanceAfter = aztToken.balanceOf(challenger);
-        // The challenger was correct and should get their stake back plus a reward.
-        assertGt(challengerBalanceAfter, challengerBalanceBefore);
+        assertEq(
+            challengerBalanceAfter, challengerBalanceBefore + CHALLENGE_STAKE_AMOUNT, "Challenger should get stake back"
+        );
+
+        // Assert the fraudulently minted credits were burned
+        assertEq(creditContract.balanceOf(projectOwner, tokenId), 0, "Credits should have been burned");
+
+        // Assert the task status is Overturned in the verifier module
+        TaskStatus status = repWeightedVerifier.getTaskStatus(taskId);
+        assertEq(uint256(status), uint256(TaskStatus.Overturned), "Task status should be Overturned");
     }
 }

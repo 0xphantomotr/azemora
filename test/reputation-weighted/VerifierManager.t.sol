@@ -21,7 +21,7 @@ contract VerifierManagerTest is Test {
     uint256 internal constant MIN_STAKE_AMOUNT = 100 * 1e18;
     uint256 internal constant MIN_REPUTATION = 50;
     uint256 internal constant UNSTAKE_LOCK_PERIOD = 7 days;
-    bytes32 internal constant SLASHER_ROLE = keccak256("SLASHER_ROLE");
+    bytes32 internal constant ARBITRATION_COUNCIL_ROLE = keccak256("ARBITRATION_COUNCIL_ROLE");
     bytes32 internal constant DEFAULT_ADMIN_ROLE = 0x00;
 
     // --- State ---
@@ -66,6 +66,7 @@ contract VerifierManagerTest is Test {
             UNSTAKE_LOCK_PERIOD
         );
         verifierManager = VerifierManager(address(new ERC1967Proxy(address(implementation), initData)));
+        verifierManager.grantRole(verifierManager.SLASHER_ROLE(), slasher);
         vm.stopPrank();
 
         // Setup user states
@@ -82,7 +83,7 @@ contract VerifierManagerTest is Test {
 
     function test_initialize_setsCorrectState() public {
         assertTrue(verifierManager.hasRole(DEFAULT_ADMIN_ROLE, admin), "Admin role not set");
-        assertTrue(verifierManager.hasRole(SLASHER_ROLE, slasher), "Slasher role not set");
+        assertTrue(verifierManager.hasRole(ARBITRATION_COUNCIL_ROLE, slasher), "Arbitration Council role not set");
         assertEq(verifierManager.treasury(), treasury, "Treasury not set");
         assertEq(address(verifierManager.stakingToken()), address(stakingToken), "Staking token not set");
         assertEq(address(verifierManager.reputationManager()), address(reputationManager), "Reputation manager not set");
@@ -187,26 +188,20 @@ contract VerifierManagerTest is Test {
         verifierManager.register();
         vm.stopPrank();
 
-        uint256 slashStakeAmount = MIN_STAKE_AMOUNT / 2;
-        uint256 slashReputationAmount = 20;
+        uint256 reputationBefore = reputationManager.getReputation(userWithReputation);
 
         vm.startPrank(slasher);
         // Expect reputation slash call
         vm.expectCall(
             address(reputationManager),
-            abi.encodeWithSelector(
-                reputationManager.slashReputation.selector, userWithReputation, slashReputationAmount
-            )
+            abi.encodeWithSelector(reputationManager.slashReputation.selector, userWithReputation, reputationBefore)
         );
-        verifierManager.slash(userWithReputation, slashStakeAmount, slashReputationAmount);
+        verifierManager.slash(userWithReputation);
         vm.stopPrank();
 
-        assertEq(
-            verifierManager.getVerifierStake(userWithReputation),
-            MIN_STAKE_AMOUNT - slashStakeAmount,
-            "Stake not slashed correctly"
-        );
-        assertEq(stakingToken.balanceOf(treasury), slashStakeAmount, "Treasury did not receive slashed stake");
+        assertEq(verifierManager.getVerifierStake(userWithReputation), 0, "Stake not fully slashed");
+        assertEq(stakingToken.balanceOf(treasury), MIN_STAKE_AMOUNT, "Treasury did not receive slashed stake");
+        assertFalse(verifierManager.isVerifier(userWithReputation), "Verifier should be deactivated after slash");
     }
 
     function test_slash_reverts_ifNotSlasher() public {
@@ -216,10 +211,11 @@ contract VerifierManagerTest is Test {
         vm.stopPrank();
 
         vm.startPrank(randomAddress);
-        bytes memory expectedRevert =
-            abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", randomAddress, SLASHER_ROLE);
+        bytes memory expectedRevert = abi.encodeWithSignature(
+            "AccessControlUnauthorizedAccount(address,bytes32)", randomAddress, verifierManager.SLASHER_ROLE()
+        );
         vm.expectRevert(expectedRevert);
-        verifierManager.slash(userWithReputation, 10, 10);
+        verifierManager.slash(userWithReputation);
         vm.stopPrank();
     }
 

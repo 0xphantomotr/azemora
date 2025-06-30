@@ -29,6 +29,7 @@ contract MockDMRVManager is IDMRVManager {
     bytes32 public lastClaimId;
     bytes public lastResultData;
     bool public wasCalled;
+    bool public wasReversed;
 
     function fulfillVerification(bytes32 projectId, bytes32 claimId, bytes calldata resultData) external {
         lastProjectId = projectId;
@@ -36,6 +37,14 @@ contract MockDMRVManager is IDMRVManager {
         lastResultData = resultData;
         wasCalled = true;
     }
+
+    function reverseFulfillment(bytes32 projectId, bytes32 claimId) external {
+        lastProjectId = projectId;
+        lastClaimId = claimId;
+        wasReversed = true;
+    }
+
+    function setMethodologyRegistry(address) external {}
 
     // Mock other functions if needed, otherwise leave empty
     function onDMRVReceived(address, uint256, bytes calldata) external pure returns (bytes4) {

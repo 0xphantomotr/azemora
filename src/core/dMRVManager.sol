@@ -22,6 +22,7 @@ error DMRVManager__ZeroAddress();
 error DMRVManager__ClaimNotFoundOrAlreadyFulfilled();
 error DMRVManager__MethodologyNotValid();
 error DMRVManager__RegistryNotSet();
+error DMRVManager__NothingToReverse();
 
 /**
  * @title DMRVManager
@@ -41,6 +42,8 @@ contract DMRVManager is
 {
     // --- Roles ---
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
+    bytes32 public constant MODULE_ADMIN_ROLE = keccak256("MODULE_ADMIN_ROLE");
+    bytes32 public constant REVERSER_ROLE = keccak256("REVERSER_ROLE");
 
     // --- State variables ---
     IProjectRegistry public projectRegistry;
@@ -51,9 +54,17 @@ contract DMRVManager is
     mapping(bytes32 => address) public verifierModules;
     // Mapping from a specific claim ID to the module type that is handling it
     mapping(bytes32 => bytes32) private _claimToModuleType;
+    // Records of fulfilled verifications to enable reversals.
+    mapping(bytes32 => FulfillmentRecord) public fulfillmentRecords;
 
     // Adjusted gap to maintain storage layout for UUPS proxy compatibility
-    uint256[48] private __gap;
+    uint256[47] private __gap;
+
+    // --- Data Structures ---
+    struct FulfillmentRecord {
+        address recipient;
+        uint256 creditAmount;
+    }
 
     // Structure for representing parsed verification data
     struct VerificationData {
@@ -73,6 +84,7 @@ contract DMRVManager is
     );
     event CredentialCIDUpdated(bytes32 indexed projectId, string newCID);
     event CreditsMinted(bytes32 indexed projectId, address indexed owner, uint256 amount);
+    event CreditsReversed(bytes32 indexed claimId, address indexed recipient, uint256 amount);
     event MissingProjectError(bytes32 indexed projectId);
     event VerifierModuleRegistered(bytes32 indexed moduleType, address indexed moduleAddress);
     event VerifierModuleRemoved(bytes32 indexed moduleType);
@@ -94,9 +106,21 @@ contract DMRVManager is
 
         _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
         _grantRole(PAUSER_ROLE, _msgSender());
+        _grantRole(MODULE_ADMIN_ROLE, _msgSender());
+        _grantRole(REVERSER_ROLE, _msgSender()); // Initially granted to deployer
 
         projectRegistry = IProjectRegistry(_registryAddress);
         creditContract = DynamicImpactCredit(_creditAddress);
+    }
+
+    /**
+     * @notice Sets the address for the MethodologyRegistry.
+     * @dev Can only be called once by an address with the `DEFAULT_ADMIN_ROLE`.
+     * @param _methodologyRegistry The address of the deployed MethodologyRegistry contract.
+     */
+    function setMethodologyRegistry(address _methodologyRegistry) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (_methodologyRegistry == address(0)) revert DMRVManager__ZeroAddress();
+        methodologyRegistry = IMethodologyRegistry(_methodologyRegistry);
     }
 
     /**
@@ -152,7 +176,7 @@ contract DMRVManager is
         VerificationData memory vData = parseVerificationData(data);
 
         // Act based on the verification data
-        processVerification(projectId, vData);
+        processVerification(projectId, claimId, vData);
 
         emit VerificationFulfilled(claimId, projectId, data);
     }
@@ -161,9 +185,10 @@ contract DMRVManager is
      * @dev Internal function to process verified dMRV data. It either mints new
      * credits to the project owner or updates the credential CID of the associated token.
      * @param projectId The project identifier.
+     * @param claimId The unique ID for the claim, used to record fulfillment data for potential reversals.
      * @param data The parsed verification data.
      */
-    function processVerification(bytes32 projectId, VerificationData memory data) internal {
+    function processVerification(bytes32 projectId, bytes32 claimId, VerificationData memory data) internal {
         if (data.updateMetadataOnly) {
             // Update metadata only
             creditContract.updateCredentialCID(projectId, data.credentialCID);
@@ -174,6 +199,10 @@ contract DMRVManager is
                 // Mint new credits to the project owner
                 creditContract.mintCredits(project.owner, projectId, data.creditAmount, data.credentialCID);
                 emit CreditsMinted(projectId, project.owner, data.creditAmount);
+
+                // Store a record of the fulfillment in case it needs to be reversed
+                fulfillmentRecords[claimId] =
+                    FulfillmentRecord({recipient: project.owner, creditAmount: data.creditAmount});
             } catch {
                 emit MissingProjectError(projectId);
             }
@@ -231,45 +260,39 @@ contract DMRVManager is
             signature: bytes32(0) // Not needed for admin functions
         });
 
-        processVerification(projectId, vData);
+        // Admin submissions are not reversible as they don't have a standard claimId.
+        processVerification(projectId, bytes32(0), vData);
         emit AdminVerificationSubmitted(projectId, creditAmount, credentialCID, updateMetadataOnly);
     }
 
     /**
-     * @notice Sets the address for the MethodologyRegistry.
-     * @dev Can only be called once by an address with the `DEFAULT_ADMIN_ROLE`.
-     * @param _registryAddress The address of the deployed MethodologyRegistry contract.
-     */
-    function setMethodologyRegistry(address _registryAddress) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (address(methodologyRegistry) != address(0)) revert DMRVManager__RegistryNotSet();
-        if (_registryAddress == address(0)) revert DMRVManager__ZeroAddress();
-        methodologyRegistry = IMethodologyRegistry(_registryAddress);
-    }
-
-    /**
      * @notice Registers a verifier module that has been approved in the MethodologyRegistry.
-     * @dev This can be called by anyone to sync an approved methodology. It replaces the old,
-     * privileged `registerVerifierModule` function.
-     * @param moduleType The identifier of the module type to register.
+     * @dev The caller must have the `MODULE_ADMIN_ROLE`. This function enforces that only
+     * methodologies that are valid (approved and not deprecated) in the `MethodologyRegistry`
+     * can be registered. This is a critical security gate.
+     * @param moduleType The unique identifier for the methodology (e.g., "REPUTATION_WEIGHTED_V1").
+     * @param moduleAddress The deployed address of the verifier module contract.
      */
-    function registerVerifierModule(bytes32 moduleType) external {
+    function registerVerifierModule(bytes32 moduleType, address moduleAddress) external onlyRole(MODULE_ADMIN_ROLE) {
+        if (address(methodologyRegistry) == address(0)) revert DMRVManager__RegistryNotSet();
+        if (!methodologyRegistry.isMethodologyValid(moduleType)) revert DMRVManager__MethodologyNotValid();
         if (verifierModules[moduleType] != address(0)) revert DMRVManager__ModuleAlreadyRegistered(moduleType);
-        require(address(methodologyRegistry) != address(0), "DMRVManager__RegistryNotSet");
-
-        (
-            ,
-            address moduleAddress,
-            , // methodologySchemaURI
-            , // schemaHash
-            , // version
-            bool isApproved,
-            bool isDeprecated
-        ) = methodologyRegistry.methodologies(moduleType);
-
-        if (!isApproved || isDeprecated) revert DMRVManager__MethodologyNotValid();
 
         verifierModules[moduleType] = moduleAddress;
         emit VerifierModuleRegistered(moduleType, moduleAddress);
+    }
+
+    /**
+     * @notice Removes a verifier module from the manager.
+     * @dev The caller must have the `MODULE_ADMIN_ROLE`. This prevents the module
+     * from being used for any new verification requests.
+     * @param moduleType The unique identifier for the module to remove.
+     */
+    function removeVerifierModule(bytes32 moduleType) external onlyRole(MODULE_ADMIN_ROLE) {
+        if (verifierModules[moduleType] == address(0)) revert DMRVManager__ModuleNotRegistered();
+
+        delete verifierModules[moduleType];
+        emit VerifierModuleRemoved(moduleType);
     }
 
     /**
@@ -291,8 +314,32 @@ contract DMRVManager is
         _unpause();
     }
 
+    /**
+     * @notice Reverses a fulfillment after a successful challenge.
+     * @dev This is a privileged function that can only be called by a contract with the `REVERSER_ROLE`.
+     * It burns any erroneously minted credits based on the fulfillment record.
+     * @param projectId The ID of the project associated with the claim (unused but kept for interface compatibility).
+     * @param claimId The ID of the verification claim being reversed.
+     */
+    function reverseFulfillment(bytes32 projectId, bytes32 claimId) external onlyRole(REVERSER_ROLE) {
+        // Silence unused parameter warning
+        projectId;
+
+        FulfillmentRecord memory record = fulfillmentRecords[claimId];
+        if (record.recipient == address(0) || record.creditAmount == 0) {
+            revert DMRVManager__NothingToReverse();
+        }
+
+        // Delete the record first to prevent re-entrancy.
+        delete fulfillmentRecords[claimId];
+
+        creditContract.burnCredits(record.recipient, claimId, record.creditAmount);
+
+        emit CreditsReversed(claimId, record.recipient, record.creditAmount);
+    }
+
     /* ---------- upgrade auth ---------- */
-    function _authorizeUpgrade(address /* newImpl */ ) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     /**
      * @notice Gets all the roles held by a specific account.
@@ -301,9 +348,10 @@ contract DMRVManager is
      * @return A list of role identifiers held by the account.
      */
     function getRoles(address account) external view returns (bytes32[] memory) {
-        bytes32[] memory allRoles = new bytes32[](2);
+        bytes32[] memory allRoles = new bytes32[](3);
         allRoles[0] = DEFAULT_ADMIN_ROLE;
         allRoles[1] = PAUSER_ROLE;
+        allRoles[2] = MODULE_ADMIN_ROLE;
 
         uint256 rolesLength = allRoles.length;
         uint256 count = 0;

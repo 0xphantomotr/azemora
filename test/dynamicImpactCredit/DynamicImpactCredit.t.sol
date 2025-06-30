@@ -76,9 +76,10 @@ contract DynamicImpactCreditTest is Test {
         mockModule = new MockVerifierModule();
         methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
         methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
-        dmrvManager.registerVerifierModule(MOCK_MODULE_TYPE);
+        dmrvManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
 
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), address(dmrvManager));
+        credit.grantRole(credit.BURNER_ROLE(), address(dmrvManager));
         credit.grantRole(credit.METADATA_UPDATER_ROLE(), address(dmrvManager));
         credit.grantRole(credit.METADATA_UPDATER_ROLE(), admin);
         credit.grantRole(credit.PAUSER_ROLE(), admin);

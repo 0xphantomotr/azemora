@@ -71,6 +71,7 @@ contract DMRVManagerRevertsTest is Test {
         registry.grantRole(registry.VERIFIER_ROLE(), verifier);
         dMRVManager.grantRole(dMRVManager.DEFAULT_ADMIN_ROLE(), admin);
         dMRVManager.grantRole(dMRVManager.PAUSER_ROLE(), admin);
+        dMRVManager.grantRole(dMRVManager.MODULE_ADMIN_ROLE(), admin);
         methodologyRegistry.grantRole(methodologyRegistry.DEFAULT_ADMIN_ROLE(), admin);
         methodologyRegistry.grantRole(methodologyRegistry.METHODOLOGY_ADMIN_ROLE(), admin);
 
@@ -92,7 +93,7 @@ contract DMRVManagerRevertsTest is Test {
         vm.prank(admin);
         methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
         methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE);
+        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
 
         vm.expectRevert(DMRVManager__ProjectNotActive.selector);
         vm.prank(projectDeveloper);
@@ -109,11 +110,11 @@ contract DMRVManagerRevertsTest is Test {
 
         methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
         methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE);
+        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
 
         methodologyRegistry.addMethodology(otherModuleType, address(otherModule), "ipfs://other", bytes32(0));
         methodologyRegistry.approveMethodology(otherModuleType);
-        dMRVManager.registerVerifierModule(otherModuleType);
+        dMRVManager.registerVerifierModule(otherModuleType, address(otherModule));
 
         vm.stopPrank();
 
@@ -134,7 +135,7 @@ contract DMRVManagerRevertsTest is Test {
         vm.prank(admin);
         methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
         methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE);
+        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
 
         bytes memory data = abi.encode(100, false, bytes32(0), "ipfs://data");
         vm.expectRevert(DMRVManager__ClaimNotFoundOrAlreadyFulfilled.selector);
@@ -147,7 +148,7 @@ contract DMRVManagerRevertsTest is Test {
         vm.prank(admin);
         methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
         methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE);
+        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
 
         vm.prank(projectDeveloper);
         bytes32 claimId = keccak256("my-claim");

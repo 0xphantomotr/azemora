@@ -15,6 +15,7 @@ error DePINVerifier__ZeroAddress();
 error DePINVerifier__AlreadySet();
 error DePINVerifier__InvalidEvidenceFormat();
 error DePINVerifier__ZeroRewardCalculator();
+error DePINVerifier__DelegationNotSupported();
 
 /**
  * @title DePINVerifier
@@ -29,12 +30,13 @@ contract DePINVerifier is
 {
     IOracleManager public oracleManager;
     IDMRVManager public dMRVManager;
+    address public contractOwner;
 
     // --- Events ---
     event DMRVManagerSet(address indexed dmrvManager);
     event OracleManagerSet(address indexed oracleManager);
 
-    uint256[49] private __gap;
+    uint256[48] private __gap;
 
     // --- Structs ---
     struct VerificationTerms {
@@ -66,6 +68,7 @@ contract DePINVerifier is
 
         dMRVManager = IDMRVManager(_dMRVManager);
         oracleManager = IOracleManager(_oracleManager);
+        contractOwner = initialOwner;
         _grantRole(DEFAULT_ADMIN_ROLE, initialOwner);
 
         emit DMRVManagerSet(_dMRVManager);
@@ -135,13 +138,12 @@ contract DePINVerifier is
     }
 
     // Not supported in this verifier type.
-    function delegateVerification(
-        bytes32, /* claimId */
-        bytes32, /* projectId */
-        bytes calldata, /* data */
-        address /* originalSender */
-    ) external pure override {
-        revert("DePINVerifier: Delegation not supported");
+    function delegateVerification(bytes32, /* claimId */ bytes calldata, /* data */ address /* originalSubmitter */ )
+        external
+        pure
+        override
+    {
+        revert DePINVerifier__DelegationNotSupported();
     }
 
     /**
@@ -156,22 +158,13 @@ contract DePINVerifier is
         emit OracleManagerSet(_newOracleManager);
     }
 
-    function getModuleName() external pure override returns (string memory) {
+    function getModuleName() external view override returns (string memory) {
         return "DePINVerifier_v3_ModularRewards";
     }
 
-    function owner() external view override returns (address) {
-        return getRoleMember(DEFAULT_ADMIN_ROLE, 0);
+    function owner() external view returns (address) {
+        return contractOwner;
     }
 
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
-
-    function supportsInterface(bytes4 interfaceId)
-        public
-        view
-        override(AccessControlEnumerableUpgradeable)
-        returns (bool)
-    {
-        return super.supportsInterface(interfaceId);
-    }
 }

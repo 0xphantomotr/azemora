@@ -3,16 +3,25 @@ pragma solidity ^0.8.20;
 
 /**
  * @title IDMRVManager
- * @dev The interface for the dMRVManager contract. It defines the core
- * function that verifier modules must call to submit their results.
+ * @dev Interface for the dMRVManager, defining the functions that can be
+ * called by verifier modules.
  */
 interface IDMRVManager {
     /**
-     * @notice Called by a verifier module to submit the result of a verification task.
-     * @param projectId The ID of the project being verified.
-     * @param claimId The unique ID for the specific claim.
-     * @param resultData ABI-encoded data containing the verification outcome.
-     * For example: `abi.encode(uint256 amountToMint, bool forceMetadataUpdate, ...)`
+     * @notice Callback function for registered verifier modules to deliver a final, trusted result.
+     * @param projectId The ID of the project associated with the claim.
+     * @param claimId The ID of the verification claim being fulfilled.
+     * @param data The raw, encoded verification data from the module.
      */
-    function fulfillVerification(bytes32 projectId, bytes32 claimId, bytes calldata resultData) external;
+    function fulfillVerification(bytes32 projectId, bytes32 claimId, bytes calldata data) external;
+
+    /**
+     * @notice Reverses a fulfillment after a successful challenge.
+     * @dev This should trigger the burning of any erroneously minted credits.
+     * @param projectId The ID of the project associated with the claim.
+     * @param claimId The ID of the verification claim being reversed.
+     */
+    function reverseFulfillment(bytes32 projectId, bytes32 claimId) external;
+
+    function setMethodologyRegistry(address _methodologyRegistry) external;
 }

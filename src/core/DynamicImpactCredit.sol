@@ -28,6 +28,10 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
         return keccak256("DMRV_MANAGER_ROLE");
     }
 
+    function BURNER_ROLE() public pure returns (bytes32) {
+        return keccak256("BURNER_ROLE");
+    }
+
     function METADATA_UPDATER_ROLE() public pure returns (bytes32) {
         return keccak256("METADATA_UPDATER_ROLE");
     }
@@ -68,6 +72,7 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
 
         _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
         _grantRole(DMRV_MANAGER_ROLE(), _msgSender()); // Initially grant to deployer
+        _grantRole(BURNER_ROLE(), _msgSender()); // Initially grant to deployer
 
         projectRegistry = IProjectRegistry(projectRegistryAddress);
     }
@@ -96,6 +101,23 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
         _credentialCIDs[tokenId].push(credentialCID);
 
         emit URI(credentialCID, tokenId);
+    }
+
+    /**
+     * @notice Burns credits from an account.
+     * @dev Can only be called by an address with `BURNER_ROLE`. This is used by the system
+     * to reverse fraudulent credit minting events.
+     * @param from The address holding the credits to be burned.
+     * @param projectId The project ID (`bytes32`) of the credits to burn.
+     * @param amount The quantity of credits to burn.
+     */
+    function burnCredits(address from, bytes32 projectId, uint256 amount)
+        external
+        onlyRole(BURNER_ROLE())
+        whenNotPaused
+    {
+        uint256 tokenId = uint256(projectId);
+        _burn(from, tokenId, amount);
     }
 
     /**

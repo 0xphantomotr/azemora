@@ -21,21 +21,13 @@ contract MockVerifierModule is IVerifierModule {
         return keccak256(abi.encodePacked(projectId, claimId, evidenceURI));
     }
 
-    function delegateVerification(bytes32 claimId, bytes32 projectId, bytes calldata data, address originalSender)
-        external
-        override
-    {
+    function delegateVerification(bytes32 claimId, bytes calldata data, address originalSender) external override {
         lastClaimId = claimId;
-        lastProjectId = projectId;
         lastData = data;
         lastOriginalSender = originalSender;
     }
 
     function getModuleName() external pure override returns (string memory) {
         return "MockVerifier_v1";
-    }
-
-    function owner() external view override returns (address) {
-        return address(this);
     }
 }
