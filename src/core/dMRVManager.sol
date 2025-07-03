@@ -78,7 +78,9 @@ contract DMRVManager is
     event VerificationDelegated(
         bytes32 indexed claimId, bytes32 indexed projectId, bytes32 indexed moduleType, address moduleAddress
     );
-    event VerificationFulfilled(bytes32 indexed claimId, bytes32 indexed projectId, bytes data);
+    event VerificationFulfilled(
+        bytes32 indexed claimId, bytes32 indexed projectId, bytes32 indexed moduleType, bytes data
+    );
     event AdminVerificationSubmitted(
         bytes32 indexed projectId, uint256 creditAmount, string credentialCID, bool updateMetadataOnly
     );
@@ -178,7 +180,7 @@ contract DMRVManager is
         // Act based on the verification data
         processVerification(projectId, claimId, vData);
 
-        emit VerificationFulfilled(claimId, projectId, data);
+        emit VerificationFulfilled(claimId, projectId, moduleType, data);
     }
 
     /**

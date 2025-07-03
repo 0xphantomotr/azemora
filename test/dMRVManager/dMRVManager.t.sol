@@ -28,7 +28,9 @@ contract DMRVManagerTest is Test {
     event VerificationDelegated(
         bytes32 indexed claimId, bytes32 indexed projectId, bytes32 indexed moduleType, address moduleAddress
     );
-    event VerificationFulfilled(bytes32 indexed claimId, bytes32 indexed projectId, bytes data);
+    event VerificationFulfilled(
+        bytes32 indexed claimId, bytes32 indexed projectId, bytes32 indexed moduleType, bytes data
+    );
 
     function setUp() public {
         // The test contract (address(this)) is now the deployer and initial admin.
@@ -202,7 +204,7 @@ contract DMRVManagerTest is Test {
 
         vm.prank(address(mockModule));
         vm.expectEmit(true, true, true, true);
-        emit VerificationFulfilled(claimId, projectId, fulfillmentData);
+        emit VerificationFulfilled(claimId, projectId, MOCK_MODULE_TYPE, fulfillmentData);
         dMRVManager.fulfillVerification(projectId, claimId, fulfillmentData);
 
         // Check if credits were minted
