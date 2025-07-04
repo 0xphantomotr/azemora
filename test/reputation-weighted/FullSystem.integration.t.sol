@@ -185,46 +185,35 @@ contract FullSystemIntegrationTest is Test {
         projectRegistry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
     }
 
-    function test_fullFlow_challengeAndReversal() public {
+    function test_fullFlow_optimisticChallengeAndOverturn() public {
         bytes32 projectId = keccak256(abi.encodePacked(projectOwner, "My Test Project"));
         bytes32 claimId = keccak256("Test Claim");
 
-        // 1. A verification is requested and results in an incorrect "Approve" outcome
+        // 1. A verification is requested optimistically. The task is now Pending.
         vm.prank(projectOwner);
         bytes32 taskId =
             dMRVManager.requestVerification(projectId, claimId, "ipfs://evidence", REP_WEIGHTED_MODULE_TYPE);
 
-        vm.prank(verifier1);
-        repWeightedVerifier.submitVote(taskId, Vote.Approve);
-        vm.stopPrank();
-
-        vm.warp(block.timestamp + VOTING_PERIOD + 1);
-        repWeightedVerifier.proposeTaskResolution(taskId);
-
         assertEq(
-            uint256(repWeightedVerifier.getTaskStatus(taskId)),
-            uint256(TaskStatus.Provisional),
-            "Task should be provisional"
+            uint256(repWeightedVerifier.getTaskStatus(taskId)), uint256(TaskStatus.Pending), "Task should be pending"
         );
 
-        // The original test incorrectly finalized the verification here.
-        // In a challenge flow, we proceed directly to the challenge.
-        // No credits should be minted at this stage.
-        uint256 tokenId = uint256(projectId);
-        assertEq(creditContract.balanceOf(projectOwner, tokenId), 0, "Credits should not be minted before finalization");
-
-        // 2. A challenger spots the error and starts a dispute
+        // 2. A challenger spots an error and starts a dispute within the challenge period.
         vm.startPrank(challenger);
         aztToken.approve(address(arbitrationCouncil), CHALLENGE_STAKE_AMOUNT);
         repWeightedVerifier.challengeVerification(taskId);
         vm.stopPrank();
 
+        assertEq(
+            uint256(repWeightedVerifier.getTaskStatus(taskId)),
+            uint256(TaskStatus.Challenged),
+            "Task should be challenged"
+        );
+
         // 3. The ArbitrationCouncil uses VRF to select a jury. We mock the callback.
         uint256 requestId = 1; // First VRF request
         uint256[] memory randomWords = new uint256[](1);
-        // verifier1 voted, challenger is challenging.
-        // The list of potential jurors is [verifier1, verifier2_arbitrator].
-        // We need to select verifier2_arbitrator, who is at index 1.
+        // The jury pool is [verifier1, verifier2_arbitrator]. Select index 1.
         randomWords[0] = 1;
 
         vrfCoordinator.fulfillRandomWordsWithOverride(requestId, address(arbitrationCouncil), randomWords);
@@ -237,20 +226,14 @@ contract FullSystemIntegrationTest is Test {
         // 5. Anyone resolves the dispute after the voting period ends
         vm.warp(block.timestamp + VOTING_PERIOD + 1);
 
-        uint256 treasuryBalanceBefore = aztToken.balanceOf(treasury);
         uint256 challengerBalanceBefore = aztToken.balanceOf(challenger);
-
         arbitrationCouncil.resolveDispute(taskId);
 
         // --- 6. Assert Final State ---
-        // Assert verifier1 (who voted wrong) was slashed
-        assertEq(verifierManager.getVerifierStake(verifier1), 0, "Verifier1 should have been slashed to 0");
-        assertFalse(verifierManager.isVerifier(verifier1), "Slashed verifier should be inactive");
-        assertEq(
-            aztToken.balanceOf(treasury),
-            treasuryBalanceBefore + MIN_STAKE_AMOUNT,
-            "Slashed stake should go to treasury"
-        );
+
+        // CRITICAL NOTE: The optimistic refactor has removed the concept of an initial "wrong voter".
+        // As such, the slashing logic for the original proposer is not yet implemented.
+        // This is a known issue to be addressed in the next development stage.
 
         // Assert challenger got their stake back (since they were right)
         uint256 challengerBalanceAfter = aztToken.balanceOf(challenger);
@@ -258,8 +241,9 @@ contract FullSystemIntegrationTest is Test {
             challengerBalanceAfter, challengerBalanceBefore + CHALLENGE_STAKE_AMOUNT, "Challenger should get stake back"
         );
 
-        // Assert the fraudulently minted credits were burned
-        assertEq(creditContract.balanceOf(projectOwner, tokenId), 0, "Credits should have been burned");
+        // Assert that no credits were ever minted.
+        uint256 tokenId = uint256(projectId);
+        assertEq(creditContract.balanceOf(projectOwner, tokenId), 0, "Credits should never have been minted");
 
         // Assert the task status is Overturned in the verifier module
         TaskStatus status = repWeightedVerifier.getTaskStatus(taskId);

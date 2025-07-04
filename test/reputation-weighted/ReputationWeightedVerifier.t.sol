@@ -4,7 +4,11 @@ pragma solidity ^0.8.20;
 import {Test, console} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {
-    ReputationWeightedVerifier, TaskStatus, Vote
+    ReputationWeightedVerifier,
+    TaskStatus,
+    Vote,
+    ReputationWeightedVerifier__ChallengePeriodNotOver,
+    ReputationWeightedVerifier__ChallengePeriodOver
 } from "../../src/reputation-weighted/ReputationWeightedVerifier.sol";
 import {VerifierManager} from "../../src/reputation-weighted/VerifierManager.sol";
 import {DMRVManager} from "../../src/core/dMRVManager.sol";
@@ -187,27 +191,25 @@ contract ReputationWeightedVerifierTest is Test {
     }
 
     function _startTask() internal returns (bytes32 taskId) {
+        // We must start the task via the dMRVManager to correctly simulate the flow.
+        // This ensures the dMRVManager has a record of the pending claim.
+        // Bypassing it and calling the verifierModule directly (as before) causes
+        // the dMRVManager to revert on fulfillment because it has no record of the claim.
+        vm.prank(admin); // Any user can request verification
         taskId = dMRVManager.requestVerification(projectId, claimId, "ipfs://evidence", MODULE_TYPE);
     }
 
-    function test_flow_happyPath_proposeAndFinalize() public {
+    /*//////////////////////////////////////////////////////////////
+                           NEW OPTIMISTIC FLOW TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    function test_flow_optimisticHappyPath() public {
         bytes32 taskId = _startTask();
 
-        vm.prank(verifier1); // 100 rep
-        verifierModule.submitVote(taskId, Vote.Approve);
-        vm.prank(verifier2); // 75 rep
-        verifierModule.submitVote(taskId, Vote.Approve);
-
-        vm.warp(block.timestamp + VOTING_PERIOD + 1);
-        verifierModule.proposeTaskResolution(taskId);
-
-        (,,,, TaskStatus status, bool provisionalOutcome,,,) = verifierModule.tasks(taskId);
-        assertEq(uint256(status), uint256(TaskStatus.Provisional));
-        assertTrue(provisionalOutcome);
-
+        // No voting occurs. We just fast-forward past the challenge period.
         vm.warp(block.timestamp + CHALLENGE_PERIOD + 1);
 
-        // We expect dMRVManager to be called
+        // We expect dMRVManager to be called with a successful outcome.
         bytes memory expectedData = abi.encode(1, false, bytes32(0), "ipfs://evidence");
         vm.expectCall(
             address(dMRVManager),
@@ -215,24 +217,18 @@ contract ReputationWeightedVerifierTest is Test {
         );
         verifierModule.finalizeVerification(taskId);
 
-        (,,,, TaskStatus finalStatus,,,,) = verifierModule.tasks(taskId);
+        TaskStatus finalStatus = verifierModule.getTaskStatus(taskId);
         assertEq(uint256(finalStatus), uint256(TaskStatus.Finalized));
     }
 
-    function test_flow_challengePath() public {
+    function test_flow_optimisticChallengePath() public {
         bytes32 taskId = _startTask();
 
-        vm.prank(verifier1);
-        verifierModule.submitVote(taskId, Vote.Approve);
-
-        vm.warp(block.timestamp + VOTING_PERIOD + 1);
-        verifierModule.proposeTaskResolution(taskId);
-
-        // Now, challenge it
+        // Immediately challenge the optimistic assumption.
         vm.startPrank(challenger);
         aztToken.approve(address(mockArbitrationCouncil), CHALLENGE_STAKE);
 
-        // We expect the module to call the arbitration council
+        // We expect the module to call the arbitration council to create a dispute.
         vm.expectCall(
             address(mockArbitrationCouncil),
             abi.encodeWithSelector(
@@ -242,36 +238,44 @@ contract ReputationWeightedVerifierTest is Test {
         verifierModule.challengeVerification(taskId);
         vm.stopPrank();
 
+        // Assert the state is now 'Challenged'.
         assertTrue(mockArbitrationCouncil.wasCalled());
         assertEq(mockArbitrationCouncil.lastClaimId(), taskId);
 
-        (,,,, TaskStatus status,,,,) = verifierModule.tasks(taskId);
+        TaskStatus status = verifierModule.getTaskStatus(taskId);
         assertEq(uint256(status), uint256(TaskStatus.Challenged));
     }
 
-    function test_flow_reversalPath() public {
+    function test_finalizeVerification_RevertsIfChallengePeriodNotOver() public {
         bytes32 taskId = _startTask();
 
-        // Have a task become challenged (abbreviated setup)
-        vm.prank(verifier1);
-        verifierModule.submitVote(taskId, Vote.Approve);
-        vm.warp(block.timestamp + VOTING_PERIOD + 1);
-        verifierModule.proposeTaskResolution(taskId);
+        // We are still within the challenge period.
+        vm.expectRevert(ReputationWeightedVerifier__ChallengePeriodNotOver.selector);
+        verifierModule.finalizeVerification(taskId);
+    }
+
+    function test_challengeVerification_RevertsIfChallengePeriodOver() public {
+        bytes32 taskId = _startTask();
+
+        // Fast-forward past the challenge period.
+        vm.warp(block.timestamp + CHALLENGE_PERIOD + 1);
 
         vm.prank(challenger);
-        aztToken.approve(address(mockArbitrationCouncil), CHALLENGE_STAKE);
+        vm.expectRevert(ReputationWeightedVerifier__ChallengePeriodOver.selector);
         verifierModule.challengeVerification(taskId);
-        vm.stopPrank();
+    }
 
-        // Now, have the (mock) council call back to process the overturned result
-        vm.startPrank(address(mockArbitrationCouncil));
+    /*//////////////////////////////////////////////////////////////
+                           DEPRECATED VOTE FLOW TESTS
+    //////////////////////////////////////////////////////////////*/
 
-        // We expect the incorrect voter (verifier1) to be slashed.
-        vm.expectCall(address(verifierManager), abi.encodeWithSelector(IVerifierManager.slash.selector, verifier1));
-        verifierModule.processArbitrationResult(taskId, true); // true = overturned
-        vm.stopPrank();
+    function test_revert_submitVote_isDeprecated() public {
+        vm.expectRevert("DEPRECATED");
+        verifierModule.submitVote(bytes32(0), Vote.Approve);
+    }
 
-        TaskStatus status = verifierModule.getTaskStatus(taskId);
-        assertEq(uint256(status), uint256(TaskStatus.Overturned));
+    function test_revert_proposeTaskResolution_isDeprecated() public {
+        vm.expectRevert("DEPRECATED");
+        verifierModule.proposeTaskResolution(bytes32(0));
     }
 }

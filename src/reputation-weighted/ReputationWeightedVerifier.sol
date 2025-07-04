@@ -23,12 +23,11 @@ error ReputationWeightedVerifier__ZeroAddress();
 error ReputationWeightedVerifier__VoteAlreadyCast();
 error ReputationWeightedVerifier__ChallengePeriodNotOver();
 error ReputationWeightedVerifier__ChallengePeriodOver();
-error ReputationWeightedVerifier__NotProvisional();
+error ReputationWeightedVerifier__NotPending();
 error ReputationWeightedVerifier__AlreadyFinalized();
 
 enum TaskStatus {
-    Voting,
-    Provisional,
+    Pending,
     Challenged,
     Finalized,
     Overturned
@@ -64,9 +63,9 @@ contract ReputationWeightedVerifier is
         bytes32 projectId;
         bytes32 claimId;
         string evidenceURI;
-        uint256 deadline;
+        uint256 deadline; // Note: This field is now deprecated but kept for storage layout compatibility.
         TaskStatus status;
-        bool provisionalOutcome; // true for approve, false for reject
+        bool outcome;
         uint256 challengeDeadline;
         uint256 weightedApproveVotes;
         uint256 weightedRejectVotes;
@@ -88,7 +87,7 @@ contract ReputationWeightedVerifier is
     uint256[42] private __gap;
 
     // --- Events ---
-    event TaskCreated(bytes32 indexed taskId, bytes32 indexed projectId, string evidenceURI, uint256 deadline);
+    event TaskCreated(bytes32 indexed taskId, bytes32 indexed projectId, string evidenceURI, uint256 challengeDeadline);
     event Voted(bytes32 indexed taskId, address indexed voter, Vote vote, uint256 weight);
     event TaskResolutionProposed(bytes32 indexed taskId, bool provisionalOutcome, uint256 challengeDeadline);
     event TaskChallenged(bytes32 indexed taskId, address indexed challenger);
@@ -125,6 +124,10 @@ contract ReputationWeightedVerifier is
         approvalThresholdBps = _approvalThresholdBps;
     }
 
+    /**
+     * @notice MODIFICATION: This function now implements the optimistic verification model.
+     * It creates a task in a 'Pending' state, assuming a successful outcome unless challenged.
+     */
     function startVerificationTask(bytes32 projectId, bytes32 claimId, string calldata evidenceURI)
         external
         override
@@ -139,53 +142,29 @@ contract ReputationWeightedVerifier is
         task.projectId = projectId;
         task.claimId = claimId;
         task.evidenceURI = evidenceURI;
-        task.deadline = block.timestamp + votingPeriod;
-        task.status = TaskStatus.Voting;
+        task.status = TaskStatus.Pending; // Task is now pending and open to challenges.
+        task.outcome = true; // Assume a successful outcome optimistically.
+        task.challengeDeadline = block.timestamp + challengePeriod;
 
-        emit TaskCreated(taskId, projectId, evidenceURI, task.deadline);
+        emit TaskCreated(taskId, projectId, evidenceURI, task.challengeDeadline);
     }
 
+    /*  ----------- DEPRECATED VOTING LOGIC -----------
+        The optimistic verification model bypasses the need for universal, active voting.
+        These functions are preserved to potentially be repurposed for the dispute/arbitration
+        phase in a future implementation but are not part of the core optimistic flow.
+    */
     function submitVote(bytes32 taskId, Vote vote) external nonReentrant {
-        VerificationTask storage task = tasks[taskId];
-        if (task.deadline == 0) revert ReputationWeightedVerifier__TaskNotFound();
-        if (block.timestamp > task.deadline) revert ReputationWeightedVerifier__VotingPeriodOver();
-        if (task.status != TaskStatus.Voting) revert ReputationweightedVerifier__InvalidTaskStatus(taskId, task.status);
-        if (!verifierManager.isVerifier(msg.sender)) revert ReputationWeightedVerifier__NotActiveVerifier();
-        if (task.votes[msg.sender] != Vote.None) revert ReputationWeightedVerifier__VoteAlreadyCast();
-
-        taskVoters[taskId].push(msg.sender);
-        // For simplicity, reputation is 1 for now. This will be replaced by a call to a reputation contract.
-        uint256 weight = 1; // reputationManager.getReputation(msg.sender);
-        task.votes[msg.sender] = vote;
-
-        if (vote == Vote.Approve) {
-            task.weightedApproveVotes += weight;
-        } else {
-            task.weightedRejectVotes += weight;
-        }
-
-        emit Voted(taskId, msg.sender, vote, weight);
+        revert("DEPRECATED");
     }
 
     function proposeTaskResolution(bytes32 taskId) external nonReentrant {
-        VerificationTask storage task = tasks[taskId];
-        if (task.deadline == 0) revert ReputationWeightedVerifier__TaskNotFound();
-        if (block.timestamp <= task.deadline) revert ReputationWeightedVerifier__VotingPeriodNotOver();
-        if (task.status != TaskStatus.Voting) revert ReputationweightedVerifier__InvalidTaskStatus(taskId, task.status);
-
-        uint256 totalVotes = task.weightedApproveVotes + task.weightedRejectVotes;
-        bool approved = (totalVotes > 0) && ((task.weightedApproveVotes * 10000) / totalVotes > approvalThresholdBps);
-
-        task.provisionalOutcome = approved;
-        task.status = TaskStatus.Provisional;
-        task.challengeDeadline = block.timestamp + challengePeriod;
-
-        emit TaskResolutionProposed(taskId, approved, task.challengeDeadline);
+        revert("DEPRECATED");
     }
 
     function challengeVerification(bytes32 taskId) external nonReentrant {
         VerificationTask storage task = tasks[taskId];
-        if (task.status != TaskStatus.Provisional) revert ReputationWeightedVerifier__NotProvisional();
+        if (task.status != TaskStatus.Pending) revert ReputationWeightedVerifier__NotPending();
         if (block.timestamp > task.challengeDeadline) revert ReputationWeightedVerifier__ChallengePeriodOver();
 
         task.status = TaskStatus.Challenged;
@@ -198,13 +177,13 @@ contract ReputationWeightedVerifier is
 
     function finalizeVerification(bytes32 taskId) external nonReentrant {
         VerificationTask storage task = tasks[taskId];
-        if (task.status != TaskStatus.Provisional) revert ReputationWeightedVerifier__NotProvisional();
+        if (task.status != TaskStatus.Pending) revert ReputationWeightedVerifier__NotPending();
         if (block.timestamp <= task.challengeDeadline) revert ReputationWeightedVerifier__ChallengePeriodNotOver();
 
         task.status = TaskStatus.Finalized;
 
         bytes memory data;
-        if (task.provisionalOutcome) {
+        if (task.outcome) {
             // On approval, mint 1 credit. The evidence URI becomes the credential CID.
             data = abi.encode(1, false, bytes32(0), task.evidenceURI);
         } else {
@@ -213,7 +192,7 @@ contract ReputationWeightedVerifier is
         }
         dMRVManager.fulfillVerification(task.projectId, task.claimId, data);
 
-        emit TaskFinalized(taskId, task.provisionalOutcome);
+        emit TaskFinalized(taskId, task.outcome);
     }
 
     function processArbitrationResult(bytes32 taskId, bool overturned) external override {
@@ -225,32 +204,18 @@ contract ReputationWeightedVerifier is
         }
 
         if (overturned) {
-            // The provisional outcome was WRONG. The challenge was successful.
-            // There is no need to call dMRVManager to reverse, because nothing was ever fulfilled.
-            // We just update our internal state and slash the voters who were incorrect.
             task.status = TaskStatus.Overturned;
-
-            Vote incorrectVote = task.provisionalOutcome ? Vote.Approve : Vote.Reject;
-            address[] memory voters = taskVoters[taskId];
-            for (uint256 i = 0; i < voters.length; i++) {
-                if (task.votes[voters[i]] == incorrectVote) {
-                    verifierManager.slash(voters[i]);
-                }
-            }
             emit TaskOverturned(taskId);
         } else {
-            // The provisional outcome was CORRECT. The challenge failed. Finalize it.
             task.status = TaskStatus.Finalized;
             bytes memory data;
-            if (task.provisionalOutcome) {
-                // Mint 1 credit (or the appropriate amount).
+            if (task.outcome) {
                 data = abi.encode(1, false, bytes32(0), task.evidenceURI);
             } else {
-                // Mint 0 credits.
                 data = abi.encode(0, false, bytes32(0), task.evidenceURI);
             }
             dMRVManager.fulfillVerification(task.projectId, task.claimId, data);
-            emit TaskFinalized(taskId, task.provisionalOutcome);
+            emit TaskFinalized(taskId, task.outcome);
         }
     }
 
