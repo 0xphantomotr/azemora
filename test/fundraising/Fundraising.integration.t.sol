@@ -14,6 +14,8 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {MockCollateral} from "../mocks/MockCollateral.sol";
 import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
+import {BondingCurveStrategyRegistry} from "../../src/fundraising/BondingCurveStrategyRegistry.sol";
+import {MockERC20} from "../mocks/MockERC20.sol";
 
 contract FundraisingIntegrationTest is Test {
     // --- Constants ---
@@ -23,12 +25,15 @@ contract FundraisingIntegrationTest is Test {
     uint256 public constant TEAM_ALLOCATION = 1000 * WAD;
     uint256 public constant AMOUNT_TO_BUY = 50 * WAD;
     uint256 public constant AMOUNT_TO_SELL = 25 * WAD; // Sell half of what was bought
+    bytes32 internal constant LINEAR_CURVE_V1 = keccak256("LINEAR_CURVE_V1");
 
     // --- Contracts ---
-    ProjectRegistry public projectRegistry;
-    BondingCurveFactory public factory;
-    ProjectBondingCurve public implementation;
-    MockCollateral public collateral;
+    ProjectRegistry internal projectRegistry;
+    BondingCurveStrategyRegistry internal strategyRegistry;
+    ProjectBondingCurve internal bondingCurveImplementation; // The logic contract
+    BondingCurveFactory internal factory;
+    MockERC20 internal collateralToken;
+    ProjectToken internal projectToken;
 
     // --- Users ---
     address public admin;
@@ -52,21 +57,34 @@ contract FundraisingIntegrationTest is Test {
 
         // --- Deploy core infrastructure ---
         vm.startPrank(admin);
-        collateral = new MockCollateral();
+        collateralToken = new MockERC20("Mock USDC", "USDC", 6);
 
-        // Correctly deploy ProjectRegistry (upgradeable contract) via a proxy
-        ProjectRegistry registryImpl = new ProjectRegistry();
+        // Deploy implementation contracts
+        ProjectRegistry registryImplementation = new ProjectRegistry();
+        BondingCurveStrategyRegistry strategyRegistryImplementation = new BondingCurveStrategyRegistry();
+
+        // Deploy proxies and initialize
         bytes memory registryData = abi.encodeWithSelector(ProjectRegistry.initialize.selector);
-        ERC1967Proxy registryProxy = new ERC1967Proxy(address(registryImpl), registryData);
-        projectRegistry = ProjectRegistry(address(registryProxy));
+        projectRegistry = ProjectRegistry(address(new ERC1967Proxy(address(registryImplementation), registryData)));
 
-        // Deploy the bonding curve implementation contract. It has no constructor logic.
-        implementation = new ProjectBondingCurve();
-        factory = new BondingCurveFactory(address(projectRegistry), address(implementation), address(collateral));
+        bytes memory strategyData = abi.encodeWithSelector(BondingCurveStrategyRegistry.initialize.selector, admin);
+        strategyRegistry = BondingCurveStrategyRegistry(
+            address(new ERC1967Proxy(address(strategyRegistryImplementation), strategyData))
+        );
+
+        bondingCurveImplementation = new ProjectBondingCurve();
+
+        factory = new BondingCurveFactory(address(projectRegistry), address(strategyRegistry), address(collateralToken));
+
+        // --- Setup ---
+        // Note: No need to start/stop prank around admin actions here as we are already admin
+        strategyRegistry.addStrategy(LINEAR_CURVE_V1, address(bondingCurveImplementation));
+        // The project is registered once by Alice, then activated by the Admin.
+        // We will do the activation later, after Alice registers it.
         vm.stopPrank();
 
         // --- Mint collateral for Bob ---
-        collateral.mint(bob, 1_000_000 * WAD); // Give Bob a reasonable starting balance
+        collateralToken.mint(bob, 2_000_000 * 1e6); // Give Bob a reasonable starting balance
 
         // --- Setup Alice's project ---
         vm.startPrank(alice);
@@ -86,19 +104,22 @@ contract FundraisingIntegrationTest is Test {
         ProjectBondingCurve bondingCurve = ProjectBondingCurve(
             factory.createBondingCurve(
                 projectId,
+                LINEAR_CURVE_V1,
                 TOKEN_NAME,
                 TOKEN_SYMBOL,
-                SLOPE,
-                TEAM_ALLOCATION,
-                VESTING_CLIFF_SECONDS,
-                VESTING_DURATION_SECONDS,
-                MAX_WITHDRAWAL_PERCENTAGE,
-                WITHDRAWAL_FREQUENCY_SECONDS
+                abi.encode(
+                    SLOPE,
+                    TEAM_ALLOCATION,
+                    VESTING_CLIFF_SECONDS,
+                    VESTING_DURATION_SECONDS,
+                    MAX_WITHDRAWAL_PERCENTAGE,
+                    WITHDRAWAL_FREQUENCY_SECONDS
+                )
             )
         );
         vm.stopPrank();
 
-        ProjectToken projectToken = ProjectToken(bondingCurve.projectToken());
+        projectToken = ProjectToken(bondingCurve.projectToken());
 
         // --- Assertions ---
         assertEq(bondingCurve.owner(), alice, "Alice should be the owner of the curve");
@@ -111,13 +132,13 @@ contract FundraisingIntegrationTest is Test {
         uint256 buyPrice = bondingCurve.getBuyPrice(AMOUNT_TO_BUY);
 
         vm.startPrank(bob);
-        collateral.approve(address(bondingCurve), buyPrice);
+        collateralToken.approve(address(bondingCurve), buyPrice);
         bondingCurve.buy(AMOUNT_TO_BUY, buyPrice);
         vm.stopPrank();
 
         // --- Assertions ---
         assertEq(projectToken.balanceOf(bob), AMOUNT_TO_BUY, "Bob should have the tokens he bought");
-        assertEq(collateral.balanceOf(address(bondingCurve)), buyPrice, "Curve should have Bob's collateral");
+        assertEq(collateralToken.balanceOf(address(bondingCurve)), buyPrice, "Curve should have Bob's collateral");
 
         // =================================================================
         // 3. Alice (Project Owner) Withdraws Collateral
@@ -131,10 +152,10 @@ contract FundraisingIntegrationTest is Test {
         // Warp time forward to after the first withdrawal period
         vm.warp(block.timestamp + WITHDRAWAL_FREQUENCY_SECONDS + 1);
 
-        uint256 initialAliceBalance = collateral.balanceOf(alice);
+        uint256 initialAliceBalance = collateralToken.balanceOf(alice);
         uint256 expectedWithdrawal = (buyPrice * MAX_WITHDRAWAL_PERCENTAGE) / 10000;
         bondingCurve.withdrawCollateral();
-        uint256 finalAliceBalance = collateral.balanceOf(alice);
+        uint256 finalAliceBalance = collateralToken.balanceOf(alice);
 
         // --- Assertions ---
         assertEq(
@@ -153,9 +174,9 @@ contract FundraisingIntegrationTest is Test {
 
         projectToken.approve(address(bondingCurve), AMOUNT_TO_SELL);
 
-        uint256 bobCollateralBefore = collateral.balanceOf(bob);
+        uint256 bobCollateralBefore = collateralToken.balanceOf(bob);
         bondingCurve.sell(AMOUNT_TO_SELL, sellProceeds);
-        uint256 bobCollateralAfter = collateral.balanceOf(bob);
+        uint256 bobCollateralAfter = collateralToken.balanceOf(bob);
 
         // --- Assertions ---
         assertEq(bobCollateralAfter - bobCollateralBefore, sellProceeds, "Bob did not receive correct proceeds");
@@ -179,14 +200,17 @@ contract FundraisingIntegrationTest is Test {
         vm.expectRevert(BondingCurveFactory__NotVerifiedProject.selector);
         factory.createBondingCurve(
             unverifiedProjectId,
+            LINEAR_CURVE_V1,
             "Unverified Token",
             "UT",
-            SLOPE,
-            TEAM_ALLOCATION,
-            VESTING_CLIFF_SECONDS,
-            VESTING_DURATION_SECONDS,
-            MAX_WITHDRAWAL_PERCENTAGE,
-            WITHDRAWAL_FREQUENCY_SECONDS
+            abi.encode(
+                SLOPE,
+                TEAM_ALLOCATION,
+                VESTING_CLIFF_SECONDS,
+                VESTING_DURATION_SECONDS,
+                MAX_WITHDRAWAL_PERCENTAGE,
+                WITHDRAWAL_FREQUENCY_SECONDS
+            )
         );
         vm.stopPrank();
     }

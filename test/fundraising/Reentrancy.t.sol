@@ -4,8 +4,9 @@ pragma solidity ^0.8.20;
 import {Test, console} from "forge-std/Test.sol";
 import {ProjectBondingCurve} from "../../src/fundraising/ProjectBondingCurve.sol";
 import {ProjectToken} from "../../src/fundraising/ProjectToken.sol";
-import {MockCollateral} from "../mocks/MockCollateral.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {MockERC20} from "../mocks/MockERC20.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 
 // This is a malicious version of our ProjectToken.
 // It overrides the internal `_update` function (which is called by `_burn`)
@@ -29,26 +30,41 @@ contract MaliciousProjectToken is ProjectToken {
         // If this `_update` was triggered by a burn (to == address(0))
         // and we have a target, launch the re-entrant attack.
         if (to == address(0) && address(curve) != address(0)) {
-            // This call should be reverted by the nonReentrant modifier on withdrawCollateral
+            // This call should be reverted by the nonReentrant modifier.
+            // Even though the attacker is not the owner, the re-entrancy check
+            // happens before the ownership check.
             curve.withdrawCollateral();
         }
     }
 }
 
 contract ReentrancyTest is Test {
+    // --- Constants ---
+    uint256 internal constant SLOPE = 1e9;
+    uint256 internal constant TEAM_ALLOCATION = 1000e18;
+    uint256 internal constant VESTING_CLIFF = 30 days;
+    uint256 internal constant VESTING_DURATION = 90 days;
+    uint256 internal constant MAX_WITHDRAWAL_PERCENTAGE = 1500; // 15%
+    uint256 internal constant WITHDRAWAL_FREQUENCY = 7 days;
+
     // --- Actors ---
-    address public owner = makeAddr("owner");
-    address public investor = makeAddr("investor");
+    address public projectOwner;
+    address public attacker;
 
     // --- Contracts ---
     ProjectBondingCurve public curve;
     MaliciousProjectToken public maliciousToken;
-    MockCollateral public collateral;
+    MockERC20 public collateralToken;
 
     function setUp() public {
-        // --- Deploy contracts ---
-        collateral = new MockCollateral();
-        curve = new ProjectBondingCurve();
+        projectOwner = makeAddr("projectOwner");
+        attacker = makeAddr("attacker");
+        collateralToken = new MockERC20("Mock USDC", "USDC", 6);
+
+        // Deploy the implementation and create a proxy clone
+        ProjectBondingCurve implementation = new ProjectBondingCurve();
+        address curveAddress = Clones.clone(address(implementation));
+        curve = ProjectBondingCurve(curveAddress);
 
         // Deploy our malicious token, with the test contract as the initial owner
         maliciousToken = new MaliciousProjectToken("Malicious", "EVIL", address(this));
@@ -56,48 +72,52 @@ contract ReentrancyTest is Test {
         // Set the attack target on the token
         maliciousToken.setAttackTarget(address(curve));
 
-        // Transfer ownership of the malicious token to the curve contract
+        bytes memory strategyData = abi.encode(
+            SLOPE, TEAM_ALLOCATION, VESTING_CLIFF, VESTING_DURATION, MAX_WITHDRAWAL_PERCENTAGE, WITHDRAWAL_FREQUENCY
+        );
+
+        // Transfer ownership of the malicious token to the curve contract so it can mint/burn
         maliciousToken.transferOwnership(address(curve));
 
         // Initialize the curve to use the malicious token
-        curve.initialize(
-            address(maliciousToken),
-            address(collateral),
-            owner, // Project owner
-            1e9, // slope
-            1000e18, // teamAllocation
-            30 days, // cliff
-            90 days, // duration
-            1500, // maxWithdrawal
-            7 days // frequency
-        );
+        curve.initialize(address(maliciousToken), address(collateralToken), projectOwner, strategyData);
+
+        // Attacker buys some malicious tokens to be able to sell them later
+        collateralToken.mint(attacker, 10_000_000 * 1e6);
+        vm.startPrank(attacker);
+        collateralToken.approve(address(curve), type(uint256).max);
+        uint256 buyCost = curve.getBuyPrice(100e18);
+        curve.buy(100e18, buyCost);
+        vm.stopPrank();
     }
 
     function test_Fail_ReentrantSell() public {
         // --- Setup the scenario ---
-        // 1. Investor buys some tokens to populate the curve with collateral
-        uint256 buyAmount = 100e18;
-        uint256 buyCost = curve.getBuyPrice(buyAmount);
-        collateral.mint(investor, buyCost);
+        // 1. Warp time forward so a withdrawal would be possible (to make the attack vector realistic)
+        vm.warp(block.timestamp + WITHDRAWAL_FREQUENCY + 1);
 
-        vm.startPrank(investor);
-        collateral.approve(address(curve), buyCost);
-        curve.buy(buyAmount, buyCost);
+        // 2. To make a withdrawal possible, there must be collateral available for withdrawal.
+        // We simulate another user buying tokens.
+        address anotherBuyer = makeAddr("anotherBuyer");
+        collateralToken.mint(anotherBuyer, 10_000_000 * 1e6);
+        vm.startPrank(anotherBuyer);
+        collateralToken.approve(address(curve), type(uint256).max);
+        uint256 buyCost = curve.getBuyPrice(50e18);
+        curve.buy(50e18, buyCost);
         vm.stopPrank();
 
-        // 2. Warp time forward so the owner can withdraw
-        vm.warp(block.timestamp + 8 days);
-
         // --- Launch the attack ---
-        // The investor will try to sell their tokens.
+        // The attacker will try to sell their 100 tokens.
         // Inside the `burnFrom` call, our malicious token will try to re-enter
         // the `withdrawCollateral` function.
-        vm.startPrank(investor);
-        maliciousToken.approve(address(curve), buyAmount);
+        vm.startPrank(attacker);
+
+        // Attacker needs to approve the curve to spend their project tokens for the sell
+        maliciousToken.approve(address(curve), 100e18);
 
         // We expect this to revert with the error from OpenZeppelin's ReentrancyGuard
-        vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
-        curve.sell(buyAmount, 0); // minProceeds = 0 for simplicity
+        vm.expectRevert(ReentrancyGuardUpgradeable.ReentrancyGuardReentrantCall.selector);
+        curve.sell(100e18, 0); // minProceeds = 0 for simplicity
 
         vm.stopPrank();
     }

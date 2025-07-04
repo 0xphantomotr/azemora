@@ -16,6 +16,8 @@ import {ProjectToken} from "../../src/fundraising/ProjectToken.sol";
 import {MockCollateral} from "../mocks/MockCollateral.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
+import {MockERC20} from "../mocks/MockERC20.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 
 contract ProjectBondingCurveUnitTest is Test {
     // --- Constants ---
@@ -24,40 +26,45 @@ contract ProjectBondingCurveUnitTest is Test {
     uint256 public constant TEAM_ALLOCATION = 1000 * WAD;
     uint256 public constant VESTING_CLIFF_SECONDS = 30 days;
     uint256 public constant VESTING_DURATION_SECONDS = 90 days;
+    uint256 public constant MAX_WITHDRAWAL_PERCENTAGE = 1500;
+    uint256 public constant WITHDRAWAL_FREQUENCY = 7 days;
 
     // --- Actors ---
-    address public owner = makeAddr("owner");
     address public attacker = makeAddr("attacker");
-    address public bob = makeAddr("bob");
+    address public buyer = makeAddr("buyer");
+    address public seller = makeAddr("seller");
+    address public projectOwner;
 
     // --- Contracts ---
     ProjectBondingCurve public curve;
     ProjectToken public projectToken;
-    MockCollateral public collateral;
+    MockERC20 public collateralToken;
 
     function setUp() public {
-        // Deploy dependencies
+        projectOwner = makeAddr("projectOwner");
         projectToken = new ProjectToken("Test Token", "TT", address(this));
-        collateral = new MockCollateral();
+        collateralToken = new MockERC20("Mock USDC", "USDC", 6);
 
-        // Deploy the contract we are testing
-        curve = new ProjectBondingCurve();
+        ProjectBondingCurve implementation = new ProjectBondingCurve();
+        address curveAddress = Clones.clone(address(implementation));
+        curve = ProjectBondingCurve(curveAddress);
 
-        // Transfer ownership of token to the curve
         projectToken.transferOwnership(address(curve));
 
-        // Initialize the curve
-        curve.initialize(
-            address(projectToken),
-            address(collateral),
-            owner,
-            SLOPE,
-            TEAM_ALLOCATION,
-            VESTING_CLIFF_SECONDS,
-            VESTING_DURATION_SECONDS,
-            1500, // maxWithdrawalPercentage
-            7 days // withdrawalFrequency
+        bytes memory strategyData = abi.encode(
+            SLOPE, // slope
+            TEAM_ALLOCATION, // teamAllocation
+            VESTING_CLIFF_SECONDS, // vestingCliffSeconds
+            VESTING_DURATION_SECONDS, // vestingDurationSeconds
+            MAX_WITHDRAWAL_PERCENTAGE, // maxWithdrawalPercentage
+            WITHDRAWAL_FREQUENCY // withdrawalFrequencySeconds
         );
+
+        curve.initialize(address(projectToken), address(collateralToken), projectOwner, strategyData);
+
+        // Mint collateral to buyer and seller for tests
+        collateralToken.mint(buyer, 10_000_000 * 1e6);
+        collateralToken.mint(seller, 1_000_000 * 1e6);
     }
 
     // =================================================================
@@ -68,7 +75,7 @@ contract ProjectBondingCurveUnitTest is Test {
         // Warp time to just before the cliff ends
         vm.warp(block.timestamp + VESTING_CLIFF_SECONDS - 1);
 
-        vm.startPrank(owner);
+        vm.startPrank(projectOwner);
         vm.expectRevert(ProjectBondingCurve__VestingNotStarted.selector);
         curve.claimVestedTokens();
         vm.stopPrank();
@@ -83,10 +90,10 @@ contract ProjectBondingCurveUnitTest is Test {
         uint256 timeElapsed = halfwayPoint;
         uint256 expectedVestedAmount = (TEAM_ALLOCATION * timeElapsed) / VESTING_DURATION_SECONDS;
 
-        vm.startPrank(owner);
+        vm.startPrank(projectOwner);
         uint256 claimedAmount = curve.claimVestedTokens();
         assertEq(claimedAmount, expectedVestedAmount, "Claimed amount at halfway point is incorrect");
-        assertEq(projectToken.balanceOf(owner), expectedVestedAmount, "Owner token balance is incorrect");
+        assertEq(projectToken.balanceOf(projectOwner), expectedVestedAmount, "Owner token balance is incorrect");
         vm.stopPrank();
     }
 
@@ -94,7 +101,7 @@ contract ProjectBondingCurveUnitTest is Test {
         // Warp time to after the vesting period is fully complete
         vm.warp(block.timestamp + VESTING_DURATION_SECONDS + 1);
 
-        vm.startPrank(owner);
+        vm.startPrank(projectOwner);
         uint256 claimedAmount = curve.claimVestedTokens();
         assertEq(claimedAmount, TEAM_ALLOCATION, "Should be able to claim the full allocation after duration");
 
@@ -105,7 +112,7 @@ contract ProjectBondingCurveUnitTest is Test {
     }
 
     function test_ClaimVestedTokens_Incrementally() public {
-        vm.startPrank(owner);
+        vm.startPrank(projectOwner);
 
         // 1. Claim exactly at the cliff
         vm.warp(block.timestamp + VESTING_CLIFF_SECONDS);
@@ -120,7 +127,7 @@ contract ProjectBondingCurveUnitTest is Test {
         assertEq(claimedRemainder, remainingAmount, "Incorrect remaining amount claimed");
 
         // 3. Total balance should be the full allocation
-        assertEq(projectToken.balanceOf(owner), TEAM_ALLOCATION, "Owner should have the full allocation");
+        assertEq(projectToken.balanceOf(projectOwner), TEAM_ALLOCATION, "Owner should have the full allocation");
         vm.stopPrank();
     }
 
@@ -138,7 +145,7 @@ contract ProjectBondingCurveUnitTest is Test {
     // =================================================================
 
     function test_Fail_Withdraw_WithNoCollateral() public {
-        vm.startPrank(owner);
+        vm.startPrank(projectOwner);
         // Warp time to be past the first frequency period
         vm.warp(block.timestamp + 7 days + 1);
         // Should fail because no funds have been deposited yet
@@ -151,15 +158,16 @@ contract ProjectBondingCurveUnitTest is Test {
         // Simulate a user buying tokens to populate collateral
         uint256 buyAmount = 100 * WAD;
         uint256 buyCost = curve.getBuyPrice(buyAmount);
-        collateral.mint(address(this), buyCost);
-        collateral.approve(address(curve), buyCost);
+        vm.startPrank(buyer);
+        collateralToken.approve(address(curve), buyCost);
         curve.buy(buyAmount, buyCost);
+        vm.stopPrank();
 
         uint256 maxWithdrawalPercentage = curve.maxWithdrawalPercentage();
         uint256 withdrawalFrequency = curve.withdrawalFrequency();
 
         // --- First Withdrawal ---
-        vm.startPrank(owner);
+        vm.startPrank(projectOwner);
 
         // Fail before frequency period passes
         vm.warp(block.timestamp + withdrawalFrequency - 10);
@@ -169,9 +177,9 @@ contract ProjectBondingCurveUnitTest is Test {
         // Succeed after frequency period passes
         vm.warp(block.timestamp + 11); // move 1 second past the period
         uint256 expectedWithdrawal = (buyCost * maxWithdrawalPercentage) / 10000;
-        uint256 ownerBalanceBefore = collateral.balanceOf(owner);
+        uint256 ownerBalanceBefore = collateralToken.balanceOf(projectOwner);
         curve.withdrawCollateral();
-        uint256 ownerBalanceAfter = collateral.balanceOf(owner);
+        uint256 ownerBalanceAfter = collateralToken.balanceOf(projectOwner);
 
         assertEq(ownerBalanceAfter - ownerBalanceBefore, expectedWithdrawal, "First withdrawal amount incorrect");
         assertEq(curve.collateralAvailableForWithdrawal(), 0, "Collateral for withdrawal not reset");
@@ -186,10 +194,12 @@ contract ProjectBondingCurveUnitTest is Test {
 
     function test_Fail_WithdrawByNonOwner() public {
         // Simulate a buy to add collateral
-        uint256 buyCost = curve.getBuyPrice(1 * WAD);
-        collateral.mint(address(this), buyCost);
-        collateral.approve(address(curve), buyCost);
-        curve.buy(1 * WAD, buyCost);
+        uint256 buyAmount = 1 * WAD;
+        uint256 buyCost = curve.getBuyPrice(buyAmount);
+        vm.startPrank(buyer);
+        collateralToken.approve(address(curve), buyCost);
+        curve.buy(buyAmount, buyCost);
+        vm.stopPrank();
 
         // Warp past the frequency period
         vm.warp(block.timestamp + 7 days + 1);
@@ -205,14 +215,14 @@ contract ProjectBondingCurveUnitTest is Test {
     // =================================================================
 
     function test_Fail_Buy_WithZeroAmount() public {
-        vm.startPrank(bob);
+        vm.startPrank(buyer);
         vm.expectRevert(ProjectBondingCurve__InvalidParameter.selector);
         curve.buy(0, 100);
         vm.stopPrank();
     }
 
     function test_Fail_Sell_WithZeroAmount() public {
-        vm.startPrank(bob);
+        vm.startPrank(seller);
         vm.expectRevert(ProjectBondingCurve__InvalidParameter.selector);
         curve.sell(0, 0);
         vm.stopPrank();
@@ -222,10 +232,9 @@ contract ProjectBondingCurveUnitTest is Test {
         uint256 buyAmount = 10 * WAD;
         uint256 actualCost = curve.getBuyPrice(buyAmount);
 
-        // Bob tries to buy, but sets his max spend just 1 wei too low
-        vm.startPrank(bob);
-        collateral.mint(bob, actualCost);
-        collateral.approve(address(curve), actualCost);
+        // buyer tries to buy, but sets his max spend just 1 wei too low
+        vm.startPrank(buyer);
+        collateralToken.approve(address(curve), actualCost);
 
         vm.expectRevert(ProjectBondingCurve__SlippageExceeded.selector);
         curve.buy(buyAmount, actualCost - 1);
@@ -233,16 +242,17 @@ contract ProjectBondingCurveUnitTest is Test {
     }
 
     function test_Fail_Sell_SlippageExceeded() public {
-        // An address buys tokens first to give Bob something to sell
+        // A buyer buys tokens first to give the seller something to sell
         uint256 buyAmount = 10 * WAD;
         uint256 buyCost = curve.getBuyPrice(buyAmount);
-        collateral.mint(address(this), buyCost);
-        collateral.approve(address(curve), buyCost);
+        vm.startPrank(buyer);
+        collateralToken.approve(address(curve), buyCost);
         curve.buy(buyAmount, buyCost);
-        projectToken.transfer(bob, buyAmount); // Give tokens to Bob
+        projectToken.transfer(seller, buyAmount); // Give tokens to seller
+        vm.stopPrank();
 
-        // Bob tries to sell, but demands 1 wei more than he would get
-        vm.startPrank(bob);
+        // seller tries to sell, but demands 1 wei more than he would get
+        vm.startPrank(seller);
         uint256 actualProceeds = curve.getSellPrice(buyAmount);
         projectToken.approve(address(curve), buyAmount);
 
@@ -252,40 +262,41 @@ contract ProjectBondingCurveUnitTest is Test {
     }
 
     function test_Fail_Sell_MoreThanBalance() public {
-        // The test address buys tokens and sends half to Bob.
+        // The buyer buys tokens and sends half to the seller.
         uint256 buyAmount = 50 * WAD;
         uint256 buyCost = curve.getBuyPrice(buyAmount);
-        collateral.mint(address(this), buyCost);
-        collateral.approve(address(curve), buyCost);
+        vm.startPrank(buyer);
+        collateralToken.approve(address(curve), buyCost);
         curve.buy(buyAmount, buyCost);
-        projectToken.transfer(bob, buyAmount / 2);
+        projectToken.transfer(seller, buyAmount / 2);
+        vm.stopPrank();
 
-        // Bob tries to sell more tokens than he owns
-        vm.startPrank(bob);
+        // seller tries to sell more tokens than he owns
+        vm.startPrank(seller);
         uint256 amountToSell = buyAmount; // more than his balance of buyAmount / 2
         projectToken.approve(address(curve), amountToSell);
 
         // Expect revert from the ERC20 contract itself
         vm.expectRevert(
-            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, bob, buyAmount / 2, amountToSell)
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, seller, buyAmount / 2, amountToSell)
         );
         curve.sell(amountToSell, 0);
         vm.stopPrank();
     }
 
     function test_Fail_Sell_MoreThanCirculatingSupply() public {
-        // The test address buys some tokens
+        // The buyer buys some tokens
         uint256 buyAmount = 50 * WAD;
         uint256 buyCost = curve.getBuyPrice(buyAmount);
-        collateral.mint(address(this), buyCost);
-        collateral.approve(address(curve), buyCost);
+        vm.startPrank(buyer);
+        collateralToken.approve(address(curve), buyCost);
         curve.buy(buyAmount, buyCost);
+        // It transfers the tokens to the projectOwner, who will try to sell them.
+        projectToken.transfer(projectOwner, buyAmount);
+        vm.stopPrank();
 
-        // It transfers the tokens to the owner, who will try to sell them.
-        projectToken.transfer(owner, buyAmount);
-
-        // Now the owner tries to sell more tokens than are in circulation
-        vm.startPrank(owner);
+        // Now the projectOwner tries to sell more tokens than are in circulation
+        vm.startPrank(projectOwner);
         uint256 amountToSell = buyAmount + 1;
         projectToken.approve(address(curve), amountToSell);
 

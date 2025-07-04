@@ -4,8 +4,11 @@ pragma solidity ^0.8.20;
 import "./IProjectBonding.sol";
 import "./ProjectToken.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "./interfaces/IBondingCurveStrategy.sol";
 
 // --- Custom Errors ---
 error ProjectBondingCurve__ZeroAddress();
@@ -17,7 +20,6 @@ error ProjectBondingCurve__WithdrawalTooSoon();
 error ProjectBondingCurve__VestingNotStarted();
 error ProjectBondingCurve__NothingToClaim();
 error ProjectBondingCurve__TransferFailed();
-error ProjectBondingCurve__AlreadyInitialized();
 
 /**
  * @title ProjectBondingCurve
@@ -27,7 +29,15 @@ error ProjectBondingCurve__AlreadyInitialized();
  * on a linear bonding curve, and enforces vesting and fund withdrawal safeguards.
  * Each verified project gets its own unique instance of this contract, deployed by the Factory.
  */
-contract ProjectBondingCurve is IProjectBonding, Ownable, ReentrancyGuard {
+contract ProjectBondingCurve is
+    Initializable,
+    OwnableUpgradeable,
+    ReentrancyGuardUpgradeable,
+    IBondingCurveStrategy,
+    IProjectBonding
+{
+    using SafeERC20 for IERC20;
+
     // --- State Variables ---
 
     // Core Contracts
@@ -52,49 +62,55 @@ contract ProjectBondingCurve is IProjectBonding, Ownable, ReentrancyGuard {
 
     uint256 private constant PERCENTAGE_DENOMINATOR = 10000;
     uint256 private constant WAD = 1e18; // For fixed-point math scaling
-    bool private _initialized;
 
-    constructor() Ownable(msg.sender) {}
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
 
+    /**
+     * @notice Initializes the bonding curve contract.
+     * @dev This is called only once by the BondingCurveFactory immediately after deployment.
+     * It decodes the strategy-specific parameters to configure the curve.
+     */
     function initialize(
-        address _projectTokenAddress,
-        address _collateralTokenAddress,
+        address _projectToken,
+        address _collateralToken,
         address _projectOwner,
-        uint256 _slope,
-        uint256 _teamAllocation,
-        uint256 _vestingCliffSeconds,
-        uint256 _vestingDurationSeconds,
-        uint256 _maxWithdrawalPercentage,
-        uint256 _withdrawalFrequencySeconds
-    ) external {
-        if (_initialized) revert ProjectBondingCurve__AlreadyInitialized();
-        _initialized = true;
+        bytes calldata strategyInitializationData
+    ) external override initializer {
+        __Ownable_init(_projectOwner);
+        __ReentrancyGuard_init();
 
-        if (_projectTokenAddress == address(0) || _collateralTokenAddress == address(0)) {
-            revert ProjectBondingCurve__ZeroAddress();
-        }
-        if (_slope == 0 || _vestingDurationSeconds == 0) revert ProjectBondingCurve__InvalidParameter();
+        (
+            uint256 _slope,
+            uint256 _teamAllocation,
+            uint256 _vestingCliffSeconds,
+            uint256 _vestingDurationSeconds,
+            uint256 _maxWithdrawalPercentage,
+            uint256 _withdrawalFrequency
+        ) = abi.decode(strategyInitializationData, (uint256, uint256, uint256, uint256, uint256, uint256));
 
-        _transferOwnership(_projectOwner);
-
-        projectToken = ProjectToken(_projectTokenAddress);
-        collateralToken = IERC20(_collateralTokenAddress);
+        projectToken = ProjectToken(_projectToken);
+        collateralToken = IERC20(_collateralToken);
         slope = _slope;
-        teamAllocation = _teamAllocation;
-        vestingStartTime = block.timestamp;
-        vestingCliff = block.timestamp + _vestingCliffSeconds;
-        vestingDuration = _vestingDurationSeconds;
+        lastWithdrawalTimestamp = block.timestamp;
         maxWithdrawalPercentage = _maxWithdrawalPercentage;
-        withdrawalFrequency = _withdrawalFrequencySeconds;
+        withdrawalFrequency = _withdrawalFrequency;
 
+        // Set up vesting parameters based on the contract's original logic
+        teamAllocation = _teamAllocation;
         if (_teamAllocation > 0) {
+            vestingStartTime = block.timestamp;
+            vestingCliff = block.timestamp + _vestingCliffSeconds;
+            vestingDuration = _vestingDurationSeconds;
             projectToken.mint(address(this), _teamAllocation);
         }
     }
 
     // --- User-Facing Functions ---
 
-    function buy(uint256 amountToBuy, uint256 maxCollateralToSpend) external nonReentrant returns (uint256) {
+    function buy(uint256 amountToBuy, uint256 maxCollateralToSpend) external override nonReentrant returns (uint256) {
         if (amountToBuy == 0) revert ProjectBondingCurve__InvalidParameter();
 
         uint256 cost = _calculateBuyCost(amountToBuy);
@@ -111,7 +127,12 @@ contract ProjectBondingCurve is IProjectBonding, Ownable, ReentrancyGuard {
         return cost;
     }
 
-    function sell(uint256 amountToSell, uint256 minCollateralToReceive) external nonReentrant returns (uint256) {
+    function sell(uint256 amountToSell, uint256 minCollateralToReceive)
+        external
+        override
+        nonReentrant
+        returns (uint256)
+    {
         if (amountToSell == 0) revert ProjectBondingCurve__InvalidParameter();
 
         uint256 proceeds = _calculateSellProceeds(amountToSell);
@@ -129,17 +150,17 @@ contract ProjectBondingCurve is IProjectBonding, Ownable, ReentrancyGuard {
 
     // --- Price Calculation Views ---
 
-    function getBuyPrice(uint256 amountToBuy) external view returns (uint256) {
+    function getBuyPrice(uint256 amountToBuy) external view override returns (uint256) {
         return _calculateBuyCost(amountToBuy);
     }
 
-    function getSellPrice(uint256 amountToSell) external view returns (uint256) {
+    function getSellPrice(uint256 amountToSell) external view override returns (uint256) {
         return _calculateSellProceeds(amountToSell);
     }
 
     // --- Project Owner Functions ---
 
-    function withdrawCollateral() external nonReentrant onlyOwner returns (uint256) {
+    function withdrawCollateral() external override nonReentrant onlyOwner returns (uint256) {
         if (block.timestamp < lastWithdrawalTimestamp + withdrawalFrequency) {
             revert ProjectBondingCurve__WithdrawalTooSoon();
         }
