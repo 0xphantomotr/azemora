@@ -216,6 +216,10 @@ contract VerifierManager is
         return verifiers[_verifier].active;
     }
 
+    function getVerifierReputation(address account) external view returns (uint256) {
+        return reputationManager.getReputation(account);
+    }
+
     // --- Internal Functions ---
 
     function _addVerifierToList(address verifier) private {

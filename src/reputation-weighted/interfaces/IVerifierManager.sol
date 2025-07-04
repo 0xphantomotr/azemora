@@ -27,4 +27,8 @@ interface IVerifierManager {
      * @return A list of verifier addresses.
      */
     function getAllVerifiers() external view returns (address[] memory);
+
+    function getVerifierStake(address account) external view returns (uint256);
+
+    function getVerifierReputation(address account) external view returns (uint256);
 }

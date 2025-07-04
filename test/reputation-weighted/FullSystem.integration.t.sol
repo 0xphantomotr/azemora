@@ -54,6 +54,7 @@ contract FullSystemIntegrationTest is Test {
     address internal projectOwner;
     address internal verifier1; // Will vote 'wrong'
     address internal verifier2_arbitrator; // Will be selected for jury
+    address internal verifier3_arbitrator; // Will also be selected
     address internal challenger;
     address internal treasury;
 
@@ -63,6 +64,7 @@ contract FullSystemIntegrationTest is Test {
         projectOwner = makeAddr("projectOwner");
         verifier1 = makeAddr("verifier1");
         verifier2_arbitrator = makeAddr("verifier2_arbitrator");
+        verifier3_arbitrator = makeAddr("verifier3_arbitrator");
         challenger = makeAddr("challenger");
         treasury = makeAddr("treasury");
 
@@ -139,7 +141,7 @@ contract FullSystemIntegrationTest is Test {
         // 5. Connect the rest of the system (roles and settings)
         arbitrationCouncil.setVrfParams(VRF_KEY_HASH, VRF_REQUEST_CONFIRMATIONS, VRF_CALLBACK_GAS_LIMIT);
         arbitrationCouncil.setChallengeStakeAmount(CHALLENGE_STAKE_AMOUNT);
-        arbitrationCouncil.setCouncilSize(ARBITRATION_COUNCIL_SIZE);
+        arbitrationCouncil.setCouncilSize(2);
         arbitrationCouncil.setVotingPeriod(VOTING_PERIOD);
 
         vrfCoordinator.addConsumer(VRF_SUB_ID, address(arbitrationCouncil));
@@ -159,10 +161,12 @@ contract FullSystemIntegrationTest is Test {
         // 6. Setup user states
         aztToken.mint(verifier1, INITIAL_MINT_AMOUNT);
         aztToken.mint(verifier2_arbitrator, INITIAL_MINT_AMOUNT);
+        aztToken.mint(verifier3_arbitrator, INITIAL_MINT_AMOUNT);
         aztToken.mint(challenger, INITIAL_MINT_AMOUNT);
 
-        reputationManager.setReputation(verifier1, MIN_REPUTATION + 100);
-        reputationManager.setReputation(verifier2_arbitrator, MIN_REPUTATION + 200);
+        reputationManager.setReputation(verifier1, MIN_REPUTATION + 50); // 100 total
+        reputationManager.setReputation(verifier2_arbitrator, MIN_REPUTATION + 150); // 200 total
+        reputationManager.setReputation(verifier3_arbitrator, MIN_REPUTATION + 250); // 300 total
 
         vm.stopPrank();
 
@@ -177,6 +181,11 @@ contract FullSystemIntegrationTest is Test {
         verifierManager.register();
         vm.stopPrank();
 
+        vm.startPrank(verifier3_arbitrator);
+        aztToken.approve(address(verifierManager), MIN_STAKE_AMOUNT);
+        verifierManager.register();
+        vm.stopPrank();
+
         // 8. Create and activate a project
         bytes32 projectId = keccak256(abi.encodePacked(projectOwner, "My Test Project"));
         vm.prank(projectOwner);
@@ -185,7 +194,7 @@ contract FullSystemIntegrationTest is Test {
         projectRegistry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
     }
 
-    function test_fullFlow_optimisticChallengeAndOverturn() public {
+    function test_fullFlow_quantitativeArbitration() public {
         bytes32 projectId = keccak256(abi.encodePacked(projectOwner, "My Test Project"));
         bytes32 claimId = keccak256("Test Claim");
 
@@ -194,59 +203,63 @@ contract FullSystemIntegrationTest is Test {
         bytes32 taskId =
             dMRVManager.requestVerification(projectId, claimId, "ipfs://evidence", REP_WEIGHTED_MODULE_TYPE);
 
-        assertEq(
-            uint256(repWeightedVerifier.getTaskStatus(taskId)), uint256(TaskStatus.Pending), "Task should be pending"
-        );
-
-        // 2. A challenger spots an error and starts a dispute within the challenge period.
+        // 2. A challenger spots an error and starts a dispute.
         vm.startPrank(challenger);
         aztToken.approve(address(arbitrationCouncil), CHALLENGE_STAKE_AMOUNT);
         repWeightedVerifier.challengeVerification(taskId);
         vm.stopPrank();
 
-        assertEq(
-            uint256(repWeightedVerifier.getTaskStatus(taskId)),
-            uint256(TaskStatus.Challenged),
-            "Task should be challenged"
-        );
-
-        // 3. The ArbitrationCouncil uses VRF to select a jury. We mock the callback.
-        uint256 requestId = 1; // First VRF request
-        uint256[] memory randomWords = new uint256[](1);
-        // The jury pool is [verifier1, verifier2_arbitrator]. Select index 1.
+        // 3. The ArbitrationCouncil uses VRF to select a jury of 2.
+        uint256 requestId = 1;
+        uint256[] memory randomWords = new uint256[](2);
+        // Juror pool is [verifier1, verifier2, verifier3]. We want to select
+        // verifier2 (index 1) and verifier3 (index 2).
         randomWords[0] = 1;
-
+        randomWords[1] = 2;
         vrfCoordinator.fulfillRandomWordsWithOverride(requestId, address(arbitrationCouncil), randomWords);
 
-        // 4. The jury votes to OVERTURN the original decision
+        // 4. The jurors cast quantitative votes.
+        uint256 vote2 = 90; // verifier2 votes 90
+        uint256 vote3 = 96; // verifier3 votes 96
+
         vm.prank(verifier2_arbitrator);
-        arbitrationCouncil.vote(taskId, false); // false = Overturn
+        arbitrationCouncil.vote(taskId, vote2);
         vm.stopPrank();
 
-        // 5. Anyone resolves the dispute after the voting period ends
+        vm.prank(verifier3_arbitrator);
+        arbitrationCouncil.vote(taskId, vote3);
+        vm.stopPrank();
+
+        // 5. Anyone resolves the dispute after the voting period ends.
         vm.warp(block.timestamp + VOTING_PERIOD + 1);
 
-        uint256 challengerBalanceBefore = aztToken.balanceOf(challenger);
-        arbitrationCouncil.resolveDispute(taskId);
+        // --- 6. Calculate Expected Outcome & Set up Mock Call ---
+        uint256 rep2 = reputationManager.getReputation(verifier2_arbitrator); // 200
+        uint256 rep3 = reputationManager.getReputation(verifier3_arbitrator); // 300
+        uint256 expectedAmount = ((vote2 * rep2) + (vote3 * rep3)) / (rep2 + rep3);
+        // ((90 * 200) + (96 * 300)) / (200 + 300) = (18000 + 28800) / 500 = 46800 / 500 = 93.6
+        // Solidity integer division results in 93.
+        assertEq(expectedAmount, 93);
 
-        // --- 6. Assert Final State ---
-
-        // CRITICAL NOTE: The optimistic refactor has removed the concept of an initial "wrong voter".
-        // As such, the slashing logic for the original proposer is not yet implemented.
-        // This is a known issue to be addressed in the next development stage.
-
-        // Assert challenger got their stake back (since they were right)
-        uint256 challengerBalanceAfter = aztToken.balanceOf(challenger);
-        assertEq(
-            challengerBalanceAfter, challengerBalanceBefore + CHALLENGE_STAKE_AMOUNT, "Challenger should get stake back"
+        bytes memory expectedData = abi.encode(expectedAmount, false, bytes32(0), "ipfs://evidence");
+        vm.expectCall(
+            address(dMRVManager),
+            abi.encodeWithSelector(dMRVManager.fulfillVerification.selector, projectId, claimId, expectedData)
         );
 
-        // Assert that no credits were ever minted.
-        uint256 tokenId = uint256(projectId);
-        assertEq(creditContract.balanceOf(projectOwner, tokenId), 0, "Credits should never have been minted");
+        arbitrationCouncil.resolveDispute(taskId);
 
-        // Assert the task status is Overturned in the verifier module
+        // --- 7. Assert Final State ---
+        // Assert that the correct number of credits were minted.
+        uint256 tokenId = uint256(projectId);
+        assertEq(
+            creditContract.balanceOf(projectOwner, tokenId),
+            expectedAmount,
+            "The precise, reputation-weighted average of credits should have been minted"
+        );
+
+        // Assert the task status is Finalized in the verifier module
         TaskStatus status = repWeightedVerifier.getTaskStatus(taskId);
-        assertEq(uint256(status), uint256(TaskStatus.Overturned), "Task status should be Overturned");
+        assertEq(uint256(status), uint256(TaskStatus.Finalized), "Task status should be Finalized");
     }
 }

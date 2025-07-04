@@ -195,7 +195,7 @@ contract ReputationWeightedVerifier is
         emit TaskFinalized(taskId, task.outcome);
     }
 
-    function processArbitrationResult(bytes32 taskId, bool overturned) external override {
+    function processArbitrationResult(bytes32 taskId, uint256 finalAmount) external override {
         require(msg.sender == address(arbitrationCouncil), "Only ArbitrationCouncil can call this");
 
         VerificationTask storage task = tasks[taskId];
@@ -203,19 +203,15 @@ contract ReputationWeightedVerifier is
             revert ReputationweightedVerifier__InvalidTaskStatus(taskId, task.status);
         }
 
-        if (overturned) {
+        if (finalAmount > 0) {
+            task.status = TaskStatus.Finalized;
+            bytes memory data = abi.encode(finalAmount, false, bytes32(0), task.evidenceURI);
+            dMRVManager.fulfillVerification(task.projectId, task.claimId, data);
+            emit TaskFinalized(taskId, true); // True because some amount was approved.
+        } else {
+            // If the final amount is 0, the claim is fully overturned.
             task.status = TaskStatus.Overturned;
             emit TaskOverturned(taskId);
-        } else {
-            task.status = TaskStatus.Finalized;
-            bytes memory data;
-            if (task.outcome) {
-                data = abi.encode(1, false, bytes32(0), task.evidenceURI);
-            } else {
-                data = abi.encode(0, false, bytes32(0), task.evidenceURI);
-            }
-            dMRVManager.fulfillVerification(task.projectId, task.claimId, data);
-            emit TaskFinalized(taskId, task.outcome);
         }
     }
 

@@ -76,21 +76,16 @@ contract ArbitrationCouncil is
         Expired
     }
 
-    enum VoteOutcome {
-        Uphold,
-        Overturn
-    }
-
     // --- Data Structures ---
     struct Dispute {
         bytes32 claimId;
         address challenger;
         address defendant; // The address of the verifier module contract
         DisputeStatus status;
-        VoteOutcome outcome;
+        uint256 totalWeightedVotes; // Stores the sum of (vote * reputation)
+        uint256 totalReputationWeight; // Stores the sum of reputation of all who voted
         uint256 votingDeadline;
-        uint256 votesForUphold;
-        uint256 votesForOverturn;
+        mapping(address => uint256) votes; // Stores the quantitative vote of each council member
         mapping(address => bool) hasVoted;
         address[] councilMembers;
     }
@@ -126,10 +121,8 @@ contract ArbitrationCouncil is
     event DisputeCreated(
         bytes32 indexed claimId, address indexed challenger, address indexed defendant, uint256 vrfRequestId
     );
-    event Voted(bytes32 indexed claimId, address indexed voter, VoteOutcome vote);
-    event DisputeResolved(
-        bytes32 indexed claimId, VoteOutcome outcome, uint256 votesForUphold, uint256 votesForOverturn
-    );
+    event Voted(bytes32 indexed claimId, address indexed voter, uint256 votedAmount, uint256 weight);
+    event DisputeResolved(bytes32 indexed claimId, uint256 finalAmount);
     event CouncilSelected(bytes32 indexed claimId, address[] councilMembers);
 
     constructor() {
@@ -262,63 +255,63 @@ contract ArbitrationCouncil is
 
     // --- Core Functions ---
 
-    function vote(bytes32 claimId, bool supportOriginalDecision) external nonReentrant {
+    /**
+     * @notice Allows a selected council member to cast a quantitative vote on a dispute.
+     * @param claimId The ID of the dispute.
+     * @param votedAmount The amount the juror believes is the correct outcome for the claim.
+     */
+    function vote(bytes32 claimId, uint256 votedAmount) external nonReentrant {
         Dispute storage dispute = disputes[claimId];
-
         if (dispute.status != DisputeStatus.Voting) {
             revert ArbitrationCouncil__InvalidDisputeStatus(claimId, DisputeStatus.Voting);
         }
-
         if (block.timestamp > dispute.votingDeadline) revert ArbitrationCouncil__VotingPeriodOver();
-        if (!_isCouncilMember(claimId, msg.sender)) revert ArbitrationCouncil__NotCouncilMember(msg.sender);
         if (dispute.hasVoted[msg.sender]) revert ArbitrationCouncil__AlreadyVoted();
 
-        VoteOutcome outcome;
-        if (supportOriginalDecision) {
-            dispute.votesForUphold++;
-            outcome = VoteOutcome.Uphold;
-        } else {
-            dispute.votesForOverturn++;
-            outcome = VoteOutcome.Overturn;
+        bool isMember = false;
+        for (uint256 i = 0; i < dispute.councilMembers.length; i++) {
+            if (dispute.councilMembers[i] == msg.sender) {
+                isMember = true;
+                break;
+            }
         }
+        if (!isMember) revert ArbitrationCouncil__NotCouncilMember(msg.sender);
 
         dispute.hasVoted[msg.sender] = true;
+        dispute.votes[msg.sender] = votedAmount;
 
-        emit Voted(claimId, msg.sender, outcome);
+        uint256 reputation = verifierManager.getVerifierReputation(msg.sender);
+
+        dispute.totalWeightedVotes += votedAmount * reputation;
+        dispute.totalReputationWeight += reputation;
+
+        emit Voted(claimId, msg.sender, votedAmount, reputation);
     }
 
-    function resolveDispute(bytes32 claimId) external nonReentrant {
+    function resolveDispute(bytes32 claimId) public nonReentrant {
         Dispute storage dispute = disputes[claimId];
         if (dispute.status != DisputeStatus.Voting) {
             revert ArbitrationCouncil__InvalidDisputeStatus(claimId, DisputeStatus.Voting);
         }
-
         if (block.timestamp <= dispute.votingDeadline) revert ArbitrationCouncil__VotingPeriodNotOver();
-
-        bool overturned = dispute.votesForOverturn > dispute.votesForUphold;
-        VoteOutcome finalOutcome;
 
         dispute.status = DisputeStatus.Resolved;
 
-        if (overturned) {
-            dispute.outcome = VoteOutcome.Overturn;
-            finalOutcome = VoteOutcome.Overturn;
-
-            if (!azeToken.transfer(dispute.challenger, challengeStakeAmount)) {
-                revert ArbitrationCouncil__TransferFailed();
-            }
-        } else {
-            dispute.outcome = VoteOutcome.Uphold;
-            finalOutcome = VoteOutcome.Uphold;
-
-            if (!azeToken.transfer(treasury, challengeStakeAmount)) {
-                revert ArbitrationCouncil__TransferFailed();
-            }
+        uint256 finalAmount = 0;
+        if (dispute.totalReputationWeight > 0) {
+            finalAmount = dispute.totalWeightedVotes / dispute.totalReputationWeight;
         }
 
-        IReputationWeightedVerifier(dispute.defendant).processArbitrationResult(claimId, overturned);
+        // For now, we assume the challenger always wins if a challenge occurs and is resolved.
+        // The stake is returned to the challenger. A future iteration could make this logic
+        // more nuanced based on how much `finalAmount` deviates from an original claim.
+        if (!azeToken.transfer(dispute.challenger, challengeStakeAmount)) {
+            revert ArbitrationCouncil__TransferFailed();
+        }
 
-        emit DisputeResolved(claimId, finalOutcome, dispute.votesForUphold, dispute.votesForOverturn);
+        IReputationWeightedVerifier(dispute.defendant).processArbitrationResult(claimId, finalAmount);
+
+        emit DisputeResolved(claimId, finalAmount);
     }
 
     // --- Private Helper Functions ---

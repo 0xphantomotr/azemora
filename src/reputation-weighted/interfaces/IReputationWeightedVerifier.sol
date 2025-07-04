@@ -8,17 +8,15 @@ pragma solidity ^0.8.20;
  */
 interface IReputationWeightedVerifier {
     /**
-     * @notice Reverses a prior verification outcome after a successful challenge.
+     * @notice Called by the ArbitrationCouncil to process the outcome of a dispute.
+     * @param taskId The ID of the task being arbitrated.
+     * @param finalAmount The final, quantitative outcome determined by the council's vote.
+     */
+    function processArbitrationResult(bytes32 taskId, uint256 finalAmount) external;
+
+    /**
+     * @notice Reverses a previously fulfilled verification.
      * @param claimId The unique ID of the claim to be reversed.
      */
     function reverseVerification(bytes32 claimId) external;
-
-    /**
-     * @notice Processes the final outcome of an arbitration.
-     * @dev Called by the ArbitrationCouncil once a dispute is resolved. This contract
-     * is then responsible for enacting the consequences (slashing, etc.).
-     * @param taskId The ID of the task that was disputed.
-     * @param overturned True if the original decision was overturned, false if it was upheld.
-     */
-    function processArbitrationResult(bytes32 taskId, bool overturned) external;
 }
