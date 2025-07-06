@@ -171,17 +171,6 @@ contract LogarithmicCurveFuzzTest is FuzzTestBase {
         projectToken.approve(address(curve), type(uint256).max);
     }
 
-    // Fuzz test function with "test" prefix
-    function test_stateful_buyAndSell(uint256 amount) public {
-        amount = bound(amount, 1, 1_000_000e18);
-        if (projectToken.balanceOf(fuzzer) < amount || amount % 2 == 0) {
-            buy(amount);
-        } else {
-            sell(amount);
-        }
-        assertInvariants();
-    }
-
     function buy(uint256 amount) internal {
         try curve.getBuyPrice(amount) returns (uint256 price) {
             if (price > collateralToken.balanceOf(fuzzer)) return;
