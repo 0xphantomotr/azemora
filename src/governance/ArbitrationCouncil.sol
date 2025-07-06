@@ -84,6 +84,7 @@ contract ArbitrationCouncil is
         DisputeStatus status;
         uint256 totalWeightedVotes; // Stores the sum of (vote * reputation)
         uint256 totalReputationWeight; // Stores the sum of reputation of all who voted
+        uint256 quantitativeOutcome; // Stores the final weighted-average outcome
         uint256 votingDeadline;
         mapping(address => uint256) votes; // Stores the quantitative vote of each council member
         mapping(address => bool) hasVoted;
@@ -288,6 +289,14 @@ contract ArbitrationCouncil is
         emit Voted(claimId, msg.sender, votedAmount, reputation);
     }
 
+    /**
+     * @notice Resolves a dispute after the voting period has ended.
+     * @dev Calculates the final weighted-average outcome based on council votes and reputation.
+     * The function sets the dispute status to 'Resolved', stores the outcome,
+     * returns the challenger's stake, and notifies the verifier contract of the result.
+     * It can be called by anyone, but only after the voting deadline has passed.
+     * @param claimId The ID of the dispute to resolve.
+     */
     function resolveDispute(bytes32 claimId) public nonReentrant {
         Dispute storage dispute = disputes[claimId];
         if (dispute.status != DisputeStatus.Voting) {
@@ -301,6 +310,8 @@ contract ArbitrationCouncil is
         if (dispute.totalReputationWeight > 0) {
             finalAmount = dispute.totalWeightedVotes / dispute.totalReputationWeight;
         }
+
+        dispute.quantitativeOutcome = finalAmount;
 
         // For now, we assume the challenger always wins if a challenge occurs and is resolved.
         // The stake is returned to the challenger. A future iteration could make this logic

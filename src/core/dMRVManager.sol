@@ -23,6 +23,7 @@ error DMRVManager__ClaimNotFoundOrAlreadyFulfilled();
 error DMRVManager__MethodologyNotValid();
 error DMRVManager__RegistryNotSet();
 error DMRVManager__NothingToReverse();
+error DMRVManager__InvalidQuantitativeOutcome();
 
 /**
  * @title DMRVManager
@@ -54,32 +55,49 @@ contract DMRVManager is
     mapping(bytes32 => address) public verifierModules;
     // Mapping from a specific claim ID to the module type that is handling it
     mapping(bytes32 => bytes32) private _claimToModuleType;
+    // Stores the details of an active verification request.
+    mapping(bytes32 => Verification) public verifications;
     // Records of fulfilled verifications to enable reversals.
     mapping(bytes32 => FulfillmentRecord) public fulfillmentRecords;
 
     // Adjusted gap to maintain storage layout for UUPS proxy compatibility
-    uint256[47] private __gap;
+    uint256[46] private __gap;
 
     // --- Data Structures ---
     struct FulfillmentRecord {
         address recipient;
         uint256 creditAmount;
+        uint256 quantitativeOutcome; // The percentage outcome that led to this amount
     }
 
-    // Structure for representing parsed verification data
+    struct Verification {
+        bytes32 projectId;
+        string evidenceURI;
+        uint256 amount; // The originally requested credit amount
+    }
+
+    // Structure for representing parsed verification data from a module
     struct VerificationData {
-        uint256 creditAmount;
+        uint256 quantitativeOutcome; // e.g., 85 for 85%
+        bool wasArbitrated;
+        bytes32 arbitrationDisputeId;
         string credentialCID;
-        bool updateMetadataOnly;
-        bytes32 signature; // For validating that data came from an authorized source
     }
 
     // --- Events ---
     event VerificationDelegated(
-        bytes32 indexed claimId, bytes32 indexed projectId, bytes32 indexed moduleType, address moduleAddress
+        bytes32 indexed claimId,
+        bytes32 indexed projectId,
+        bytes32 indexed moduleType,
+        address moduleAddress,
+        uint256 amount
     );
     event VerificationFulfilled(
-        bytes32 indexed claimId, bytes32 indexed projectId, bytes32 indexed moduleType, bytes data
+        bytes32 indexed claimId,
+        bytes32 indexed projectId,
+        bytes32 indexed moduleType,
+        uint256 quantitativeOutcome,
+        uint256 mintedAmount
     );
     event AdminVerificationSubmitted(
         bytes32 indexed projectId, uint256 creditAmount, string credentialCID, bool updateMetadataOnly
@@ -132,23 +150,26 @@ contract DMRVManager is
      * @param projectId The unique identifier of the project to verify.
      * @param claimId A unique identifier for the specific claim being verified.
      * @param evidenceURI A URI pointing to off-chain evidence related to the claim.
+     * @param amount The number of impact credits being requested for this claim.
      * @param moduleType The type of verification module to use (e.g., "REPUTATION_WEIGHTED_V1").
      * @return taskId A unique ID for the task, returned from the verifier module.
      */
-    function requestVerification(bytes32 projectId, bytes32 claimId, string calldata evidenceURI, bytes32 moduleType)
-        external
-        nonReentrant
-        whenNotPaused
-        returns (bytes32 taskId)
-    {
+    function requestVerification(
+        bytes32 projectId,
+        bytes32 claimId,
+        string calldata evidenceURI,
+        uint256 amount,
+        bytes32 moduleType
+    ) external nonReentrant whenNotPaused returns (bytes32 taskId) {
         if (!projectRegistry.isProjectActive(projectId)) revert DMRVManager__ProjectNotActive();
 
         address moduleAddress = verifierModules[moduleType];
         if (moduleAddress == address(0)) revert DMRVManager__ModuleNotRegistered();
 
         _claimToModuleType[claimId] = moduleType;
+        verifications[claimId] = Verification({projectId: projectId, evidenceURI: evidenceURI, amount: amount});
 
-        emit VerificationDelegated(claimId, projectId, moduleType, moduleAddress);
+        emit VerificationDelegated(claimId, projectId, moduleType, moduleAddress, amount);
 
         taskId = IVerifierModule(moduleAddress).startVerificationTask(projectId, claimId, evidenceURI);
     }
@@ -165,46 +186,60 @@ contract DMRVManager is
     function fulfillVerification(bytes32 projectId, bytes32 claimId, bytes calldata data) external whenNotPaused {
         bytes32 moduleType = _claimToModuleType[claimId];
         if (moduleType == bytes32(0)) revert DMRVManager__ClaimNotFoundOrAlreadyFulfilled();
+        if (verifications[claimId].amount == 0) revert DMRVManager__ClaimNotFoundOrAlreadyFulfilled();
 
         address expectedModule = verifierModules[moduleType];
 
         if (expectedModule == address(0)) revert DMRVManager__ModuleNotRegistered();
         if (msg.sender != expectedModule) revert DMRVManager__CallerNotRegisteredModule();
 
-        // Clean up state BEFORE processing to prevent re-fulfillment (checks-effects-interactions)
-        delete _claimToModuleType[claimId];
-
         // Process the verification data
         VerificationData memory vData = parseVerificationData(data);
+        if (vData.quantitativeOutcome > 100) revert DMRVManager__InvalidQuantitativeOutcome();
+
+        // Retrieve the original request
+        Verification memory request = verifications[claimId];
+
+        // Clean up state BEFORE processing to prevent re-fulfillment (checks-effects-interactions)
+        delete _claimToModuleType[claimId];
+        delete verifications[claimId];
+
+        // Calculate the proportional amount of credits to mint
+        uint256 amountToMint = (request.amount * vData.quantitativeOutcome) / 100;
 
         // Act based on the verification data
-        processVerification(projectId, claimId, vData);
+        processVerification(projectId, claimId, amountToMint, vData);
 
-        emit VerificationFulfilled(claimId, projectId, moduleType, data);
+        emit VerificationFulfilled(claimId, projectId, moduleType, vData.quantitativeOutcome, amountToMint);
     }
 
     /**
-     * @dev Internal function to process verified dMRV data. It either mints new
-     * credits to the project owner or updates the credential CID of the associated token.
+     * @dev Internal function to process verified dMRV data. It mints new
+     * credits to the project owner.
      * @param projectId The project identifier.
      * @param claimId The unique ID for the claim, used to record fulfillment data for potential reversals.
-     * @param data The parsed verification data.
+     * @param amountToMint The calculated number of credits to mint.
+     * @param vData The parsed verification data containing the outcome and metadata.
      */
-    function processVerification(bytes32 projectId, bytes32 claimId, VerificationData memory data) internal {
-        if (data.updateMetadataOnly) {
-            // Update metadata only
-            creditContract.updateCredentialCID(projectId, data.credentialCID);
-            emit CredentialCIDUpdated(projectId, data.credentialCID);
-        } else if (data.creditAmount > 0) {
+    function processVerification(
+        bytes32 projectId,
+        bytes32 claimId,
+        uint256 amountToMint,
+        VerificationData memory vData
+    ) internal {
+        if (amountToMint > 0) {
             // Get project owner from registry to mint credits to them
             try projectRegistry.getProject(projectId) returns (IProjectRegistry.Project memory project) {
-                // Mint new credits to the project owner
-                creditContract.mintCredits(project.owner, projectId, data.creditAmount, data.credentialCID);
-                emit CreditsMinted(projectId, project.owner, data.creditAmount);
+                creditContract.mintCredits(project.owner, projectId, amountToMint, vData.credentialCID);
 
-                // Store a record of the fulfillment in case it needs to be reversed
-                fulfillmentRecords[claimId] =
-                    FulfillmentRecord({recipient: project.owner, creditAmount: data.creditAmount});
+                // Store fulfillment data for potential reversal
+                fulfillmentRecords[claimId] = FulfillmentRecord({
+                    recipient: project.owner,
+                    creditAmount: amountToMint,
+                    quantitativeOutcome: vData.quantitativeOutcome
+                });
+
+                emit CreditsMinted(projectId, project.owner, amountToMint);
             } catch {
                 emit MissingProjectError(projectId);
             }
@@ -220,20 +255,21 @@ contract DMRVManager is
     }
 
     /**
-     * @dev Parses raw verification data from the oracle into a structured format.
-     * @param data The raw byte data from the oracle.
+     * @dev Parses the raw bytes data from a verifier module into a structured format.
+     * This is the central point for adapting different module outputs into a standard internal format.
+     * @param data The raw data from the module.
      * @return A `VerificationData` struct.
      */
     function parseVerificationData(bytes calldata data) internal pure returns (VerificationData memory) {
-        // A more robust decoding scheme.
-        (uint256 creditAmount, bool updateMetadataOnly, bytes32 signature, string memory credentialCID) =
+        // Current format from ReputationWeightedVerifier: (uint256 finalAmount, bool wasArbitrated, bytes32 disputeId, string evidenceURI)
+        (uint256 quantitativeOutcome, bool wasArbitrated, bytes32 arbitrationDisputeId, string memory credentialCID) =
             abi.decode(data, (uint256, bool, bytes32, string));
 
         return VerificationData({
-            creditAmount: creditAmount,
-            credentialCID: credentialCID,
-            updateMetadataOnly: updateMetadataOnly,
-            signature: signature
+            quantitativeOutcome: quantitativeOutcome,
+            wasArbitrated: wasArbitrated,
+            arbitrationDisputeId: arbitrationDisputeId,
+            credentialCID: credentialCID
         });
     }
 
@@ -256,14 +292,14 @@ contract DMRVManager is
         if (!projectRegistry.isProjectActive(projectId)) revert DMRVManager__ProjectNotActive();
 
         VerificationData memory vData = VerificationData({
-            creditAmount: creditAmount,
-            credentialCID: credentialCID,
-            updateMetadataOnly: updateMetadataOnly,
-            signature: bytes32(0) // Not needed for admin functions
+            quantitativeOutcome: 0, // Not needed for admin functions
+            wasArbitrated: false,
+            arbitrationDisputeId: bytes32(0), // Not needed for admin functions
+            credentialCID: credentialCID
         });
 
         // Admin submissions are not reversible as they don't have a standard claimId.
-        processVerification(projectId, bytes32(0), vData);
+        processVerification(projectId, bytes32(0), creditAmount, vData);
         emit AdminVerificationSubmitted(projectId, creditAmount, credentialCID, updateMetadataOnly);
     }
 
@@ -276,8 +312,10 @@ contract DMRVManager is
      * @param moduleAddress The deployed address of the verifier module contract.
      */
     function registerVerifierModule(bytes32 moduleType, address moduleAddress) external onlyRole(MODULE_ADMIN_ROLE) {
-        if (address(methodologyRegistry) == address(0)) revert DMRVManager__RegistryNotSet();
+        if (moduleAddress == address(0)) revert DMRVManager__ZeroAddress();
+        if (methodologyRegistry == IMethodologyRegistry(address(0))) revert DMRVManager__RegistryNotSet();
         if (!methodologyRegistry.isMethodologyValid(moduleType)) revert DMRVManager__MethodologyNotValid();
+
         if (verifierModules[moduleType] != address(0)) revert DMRVManager__ModuleAlreadyRegistered(moduleType);
 
         verifierModules[moduleType] = moduleAddress;

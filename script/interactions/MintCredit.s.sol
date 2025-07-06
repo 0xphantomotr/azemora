@@ -40,7 +40,8 @@ contract MintCreditScript is Script {
         console.log("   Project ID:", vm.toString(projectId));
         console.log("   Claim ID:  ", vm.toString(claimId));
         console.log("   Module Type:", moduleTypeStr);
-        dMRVManager.requestVerification(projectId, claimId, evidenceURI, moduleType);
+        uint256 requestedAmount = 150 * 1e18; // Request 150 credits
+        dMRVManager.requestVerification(projectId, claimId, evidenceURI, requestedAmount, moduleType);
         console.log("On-chain request created successfully.");
 
         // 2. Fulfill verification (in a real scenario, this would be done by the module owner)

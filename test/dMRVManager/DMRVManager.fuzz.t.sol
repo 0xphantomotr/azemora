@@ -83,62 +83,52 @@ contract DMRVManagerFuzzTest is Test {
     }
 
     function testFuzz_FulfillVerification(
-        uint96 creditAmount, // Bounded to prevent overflow in some calculations
-        bool updateMetadataOnly,
-        bytes32 signature, // Unused in this test but kept for signature consistency
+        uint8 quantitativeOutcome, // Represents a percentage, 0-100
         string calldata credentialCID
     ) public {
-        // Skip empty strings or strings that are too long to be practical for CIDs
+        // --- Assumptions ---
+        vm.assume(quantitativeOutcome <= 100); // Quantitative outcome is a percentage.
         vm.assume(bytes(credentialCID).length > 0 && bytes(credentialCID).length < 200);
 
         // --- Setup State ---
         // 1. Create a fresh verification request for each fuzz run
+        uint256 requestedAmount = 100e18; // This is the fixed request amount for the test.
+        bytes32 claimId = keccak256(abi.encodePacked(quantitativeOutcome, credentialCID, block.timestamp));
         vm.prank(projectOwner);
-        bytes32 claimId = keccak256(abi.encodePacked(creditAmount, updateMetadataOnly, credentialCID, block.timestamp));
-        dMRVManager.requestVerification(projectId, claimId, "ipfs://fuzz-evidence", MOCK_MODULE_TYPE);
+        dMRVManager.requestVerification(projectId, claimId, "ipfs://fuzz-evidence", requestedAmount, MOCK_MODULE_TYPE);
 
-        // 2. Capture initial state
+        // 2. Calculate expected outcome
+        uint256 expectedMintAmount = (requestedAmount * quantitativeOutcome) / 100;
+
+        // 3. Capture initial state
         uint256 tokenId = uint256(projectId);
         uint256 initialBalance = credit.balanceOf(projectOwner, tokenId);
         uint256 initialHistoryLength = credit.getCredentialCIDHistory(tokenId).length;
 
         // --- Execute Action ---
-        // 3. Prepare module data and fulfill the request
-        bytes memory data = abi.encode(creditAmount, updateMetadataOnly, signature, credentialCID);
+        // 4. Prepare module data and fulfill the request
+        bytes memory data = abi.encode(uint256(quantitativeOutcome), false, bytes32(0), credentialCID);
 
         vm.prank(address(mockModule));
         dMRVManager.fulfillVerification(projectId, claimId, data);
 
         // --- Assert Final State ---
-        // 4. Verify the state changes match the inputs
-        if (updateMetadataOnly) {
-            // Balance should be unchanged
-            assertEq(
-                credit.balanceOf(projectOwner, tokenId), initialBalance, "Balance should not change on metadata update"
-            );
+        // 5. Verify the state changes match the inputs
+        assertEq(
+            credit.balanceOf(projectOwner, tokenId),
+            initialBalance + expectedMintAmount,
+            "Balance should increase by the calculated proportional amount"
+        );
 
-            // Metadata should be updated and history grown by 1
+        // Metadata should be updated if credits were minted
+        if (expectedMintAmount > 0) {
             string[] memory finalHistory = credit.getCredentialCIDHistory(tokenId);
-            assertEq(finalHistory.length, initialHistoryLength + 1, "CID history should grow by 1");
-            assertEq(finalHistory[finalHistory.length - 1], credentialCID, "New CID should be last in history");
+            assertEq(finalHistory.length, initialHistoryLength + 1, "CID history should grow by 1 on mint");
+            assertEq(finalHistory[finalHistory.length - 1], credentialCID, "CID should be updated on mint");
         } else {
-            // Balance should increase by the credit amount
-            assertEq(
-                credit.balanceOf(projectOwner, tokenId),
-                initialBalance + creditAmount,
-                "Balance should increase on mint"
-            );
-
-            // Metadata should be updated if credits were minted
-            if (creditAmount > 0) {
-                string[] memory finalHistory = credit.getCredentialCIDHistory(tokenId);
-                assertEq(finalHistory.length, initialHistoryLength + 1, "CID history should grow by 1 on mint");
-                assertEq(finalHistory[finalHistory.length - 1], credentialCID, "CID should be updated on mint");
-            } else {
-                // If amount is 0 and not update-only, nothing should change, history length is the same.
-                string[] memory finalHistory = credit.getCredentialCIDHistory(tokenId);
-                assertEq(finalHistory.length, initialHistoryLength, "CID history should not change if amount is 0");
-            }
+            // If amount is 0, nothing should change, history length is the same.
+            string[] memory finalHistory = credit.getCredentialCIDHistory(tokenId);
+            assertEq(finalHistory.length, initialHistoryLength, "CID history should not change if amount is 0");
         }
     }
 }

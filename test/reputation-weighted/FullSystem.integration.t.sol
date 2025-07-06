@@ -22,6 +22,17 @@ import {MockReputationManager} from "../mocks/MockReputationManager.sol";
 import {VRFCoordinatorV2Mock} from "@chainlink/contracts/src/v0.8/vrf/mocks/VRFCoordinatorV2Mock.sol";
 
 contract FullSystemIntegrationTest is Test {
+    // --- Test Data Struct ---
+    // Group test variables into a struct to reduce stack depth.
+    struct TestData {
+        bytes32 projectId;
+        bytes32 claimId;
+        uint256 originalRequestedAmount;
+        bytes32 taskId;
+        uint256 vote2;
+        uint256 vote3;
+    }
+
     // --- Constants ---
     uint256 internal constant INITIAL_MINT_AMOUNT = 1_000_000 * 1e18;
     uint256 internal constant MIN_STAKE_AMOUNT = 100 * 1e18;
@@ -195,71 +206,80 @@ contract FullSystemIntegrationTest is Test {
     }
 
     function test_fullFlow_quantitativeArbitration() public {
-        bytes32 projectId = keccak256(abi.encodePacked(projectOwner, "My Test Project"));
-        bytes32 claimId = keccak256("Test Claim");
+        TestData memory data;
 
-        // 1. A verification is requested optimistically. The task is now Pending.
+        data.projectId = keccak256(abi.encodePacked(projectOwner, "My Test Project"));
+        data.claimId = keccak256("Test Claim");
+        data.originalRequestedAmount = 1000 * 1e18; // The project requests 1000 credits.
+
+        // 1. A verification is requested optimistically.
         vm.prank(projectOwner);
-        bytes32 taskId =
-            dMRVManager.requestVerification(projectId, claimId, "ipfs://evidence", REP_WEIGHTED_MODULE_TYPE);
+        data.taskId = dMRVManager.requestVerification(
+            data.projectId, data.claimId, "ipfs://evidence", data.originalRequestedAmount, REP_WEIGHTED_MODULE_TYPE
+        );
 
-        // 2. A challenger spots an error and starts a dispute.
+        // 2. A challenger starts a dispute.
         vm.startPrank(challenger);
         aztToken.approve(address(arbitrationCouncil), CHALLENGE_STAKE_AMOUNT);
-        repWeightedVerifier.challengeVerification(taskId);
+        repWeightedVerifier.challengeVerification(data.taskId);
         vm.stopPrank();
 
-        // 3. The ArbitrationCouncil uses VRF to select a jury of 2.
-        uint256 requestId = 1;
-        uint256[] memory randomWords = new uint256[](2);
-        // Juror pool is [verifier1, verifier2, verifier3]. We want to select
-        // verifier2 (index 1) and verifier3 (index 2).
-        randomWords[0] = 1;
-        randomWords[1] = 2;
-        vrfCoordinator.fulfillRandomWordsWithOverride(requestId, address(arbitrationCouncil), randomWords);
+        // 3. The ArbitrationCouncil uses VRF to select a jury.
+        // Use a tight scope for VRF variables as they are not needed later.
+        {
+            uint256 requestId = 1;
+            uint256[] memory randomWords = new uint256[](2);
+            randomWords[0] = 1;
+            randomWords[1] = 2;
+            vm.prank(admin);
+            vrfCoordinator.fulfillRandomWordsWithOverride(requestId, address(arbitrationCouncil), randomWords);
+        }
 
         // 4. The jurors cast quantitative votes.
-        uint256 vote2 = 90; // verifier2 votes 90
-        uint256 vote3 = 96; // verifier3 votes 96
-
+        data.vote2 = 90;
+        data.vote3 = 96;
         vm.prank(verifier2_arbitrator);
-        arbitrationCouncil.vote(taskId, vote2);
+        arbitrationCouncil.vote(data.taskId, data.vote2);
         vm.stopPrank();
-
         vm.prank(verifier3_arbitrator);
-        arbitrationCouncil.vote(taskId, vote3);
+        arbitrationCouncil.vote(data.taskId, data.vote3);
         vm.stopPrank();
 
         // 5. Anyone resolves the dispute after the voting period ends.
         vm.warp(block.timestamp + VOTING_PERIOD + 1);
 
         // --- 6. Calculate Expected Outcome & Set up Mock Call ---
-        uint256 rep2 = reputationManager.getReputation(verifier2_arbitrator); // 200
-        uint256 rep3 = reputationManager.getReputation(verifier3_arbitrator); // 300
-        uint256 expectedAmount = ((vote2 * rep2) + (vote3 * rep3)) / (rep2 + rep3);
-        // ((90 * 200) + (96 * 300)) / (200 + 300) = (18000 + 28800) / 500 = 46800 / 500 = 93.6
-        // Solidity integer division results in 93.
-        assertEq(expectedAmount, 93);
+        uint256 quantitativeOutcome;
+        uint256 expectedMintAmount;
+        {
+            uint256 rep2 = reputationManager.getReputation(verifier2_arbitrator);
+            uint256 rep3 = reputationManager.getReputation(verifier3_arbitrator);
+            quantitativeOutcome = ((data.vote2 * rep2) + (data.vote3 * rep3)) / (rep2 + rep3);
+            assertEq(quantitativeOutcome, 93, "Quantitative outcome calculation is incorrect");
 
-        bytes memory expectedData = abi.encode(expectedAmount, false, bytes32(0), "ipfs://evidence");
-        vm.expectCall(
-            address(dMRVManager),
-            abi.encodeWithSelector(dMRVManager.fulfillVerification.selector, projectId, claimId, expectedData)
-        );
+            expectedMintAmount = (data.originalRequestedAmount * quantitativeOutcome) / 100;
+            assertEq(expectedMintAmount, 930 * 1e18, "Expected mint amount calculation is incorrect");
 
-        arbitrationCouncil.resolveDispute(taskId);
+            bytes memory expectedDataBytes = abi.encode(quantitativeOutcome, true, data.taskId, "ipfs://evidence");
+            vm.expectCall(
+                address(dMRVManager),
+                abi.encodeWithSelector(
+                    dMRVManager.fulfillVerification.selector, data.projectId, data.claimId, expectedDataBytes
+                )
+            );
+        }
+
+        arbitrationCouncil.resolveDispute(data.taskId);
 
         // --- 7. Assert Final State ---
-        // Assert that the correct number of credits were minted.
-        uint256 tokenId = uint256(projectId);
+        uint256 tokenId = uint256(data.projectId);
         assertEq(
             creditContract.balanceOf(projectOwner, tokenId),
-            expectedAmount,
-            "The precise, reputation-weighted average of credits should have been minted"
+            expectedMintAmount,
+            "The precise, reputation-weighted amount of credits should have been minted"
         );
 
-        // Assert the task status is Finalized in the verifier module
-        TaskStatus status = repWeightedVerifier.getTaskStatus(taskId);
+        TaskStatus status = repWeightedVerifier.getTaskStatus(data.taskId);
         assertEq(uint256(status), uint256(TaskStatus.Finalized), "Task status should be Finalized");
     }
 }

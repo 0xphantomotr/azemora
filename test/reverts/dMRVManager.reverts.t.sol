@@ -97,7 +97,8 @@ contract DMRVManagerRevertsTest is Test {
 
         vm.expectRevert(DMRVManager__ProjectNotActive.selector);
         vm.prank(projectDeveloper);
-        dMRVManager.requestVerification(pendingProjectId, keccak256("claim"), "uri", MOCK_MODULE_TYPE);
+        uint256 requestedAmount = 100e18;
+        dMRVManager.requestVerification(pendingProjectId, keccak256("claim"), "uri", requestedAmount, MOCK_MODULE_TYPE);
     }
 
     // --- fulfillVerification ---
@@ -121,7 +122,8 @@ contract DMRVManagerRevertsTest is Test {
         // Step 2: Create a valid request with the main module
         bytes32 claimId = keccak256("claim-to-fail");
         vm.prank(projectDeveloper);
-        dMRVManager.requestVerification(activeProjectId, claimId, "uri", MOCK_MODULE_TYPE);
+        uint256 requestedAmount = 100e18;
+        dMRVManager.requestVerification(activeProjectId, claimId, "uri", requestedAmount, MOCK_MODULE_TYPE);
 
         // Step 3: Attempt to fulfill from the wrong module
         bytes memory data = abi.encode(100, false, bytes32(0), "ipfs://data");
@@ -152,7 +154,8 @@ contract DMRVManagerRevertsTest is Test {
 
         vm.prank(projectDeveloper);
         bytes32 claimId = keccak256("my-claim");
-        dMRVManager.requestVerification(activeProjectId, claimId, "uri", MOCK_MODULE_TYPE);
+        uint256 requestedAmount = 100e18;
+        dMRVManager.requestVerification(activeProjectId, claimId, "uri", requestedAmount, MOCK_MODULE_TYPE);
 
         // Step 2: Fulfill it
         bytes memory data = abi.encode(100, false, bytes32(0), "ipfs://data");
@@ -188,6 +191,7 @@ contract DMRVManagerRevertsTest is Test {
 
         vm.expectRevert(bytes("EnforcedPause()"));
         vm.prank(projectDeveloper);
-        dMRVManager.requestVerification(activeProjectId, keccak256("claim"), "uri", MOCK_MODULE_TYPE);
+        uint256 requestedAmount = 100e18;
+        dMRVManager.requestVerification(activeProjectId, keccak256("claim"), "uri", requestedAmount, MOCK_MODULE_TYPE);
     }
 }

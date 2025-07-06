@@ -196,7 +196,8 @@ contract ReputationWeightedVerifierTest is Test {
         // Bypassing it and calling the verifierModule directly (as before) causes
         // the dMRVManager to revert on fulfillment because it has no record of the claim.
         vm.prank(admin); // Any user can request verification
-        taskId = dMRVManager.requestVerification(projectId, claimId, "ipfs://evidence", MODULE_TYPE);
+        uint256 requestedAmount = 100e18; // Standard request for tests
+        taskId = dMRVManager.requestVerification(projectId, claimId, "ipfs://evidence", requestedAmount, MODULE_TYPE);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -209,8 +210,8 @@ contract ReputationWeightedVerifierTest is Test {
         // No voting occurs. We just fast-forward past the challenge period.
         vm.warp(block.timestamp + CHALLENGE_PERIOD + 1);
 
-        // We expect dMRVManager to be called with a successful outcome.
-        bytes memory expectedData = abi.encode(1, false, bytes32(0), "ipfs://evidence");
+        // We expect dMRVManager to be called with a successful outcome (100%).
+        bytes memory expectedData = abi.encode(100, false, bytes32(0), "ipfs://evidence");
         vm.expectCall(
             address(dMRVManager),
             abi.encodeWithSelector(dMRVManager.fulfillVerification.selector, projectId, claimId, expectedData)

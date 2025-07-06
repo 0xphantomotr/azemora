@@ -93,9 +93,10 @@ contract DMRVManagerUncovered is Test {
         dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
 
         bytes32 claimId = keccak256("claim-double-fulfill");
+        uint256 requestedAmount = 100e18;
         vm.prank(user);
-        dMRVManager.requestVerification(projectId, claimId, "ipfs://evidence.json", MOCK_MODULE_TYPE);
-        bytes memory fulfillmentData = abi.encode(100e18, false, bytes32(0), "ipfs://new-metadata.json");
+        dMRVManager.requestVerification(projectId, claimId, "ipfs://evidence.json", requestedAmount, MOCK_MODULE_TYPE);
+        bytes memory fulfillmentData = abi.encode(100, false, bytes32(0), "ipfs://new-metadata.json");
 
         // Fulfill once successfully
         vm.prank(address(mockModule));
@@ -115,10 +116,11 @@ contract DMRVManagerUncovered is Test {
         dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
 
         bytes32 claimId = keccak256("claim-get-module");
+        uint256 requestedAmount = 100e18;
 
         // Action
         vm.prank(user);
-        dMRVManager.requestVerification(projectId, claimId, "ipfs://evidence.json", MOCK_MODULE_TYPE);
+        dMRVManager.requestVerification(projectId, claimId, "ipfs://evidence.json", requestedAmount, MOCK_MODULE_TYPE);
 
         // Assert
         assertEq(dMRVManager.getModuleForClaim(claimId), MOCK_MODULE_TYPE);
@@ -157,7 +159,8 @@ contract DMRVManagerUncovered is Test {
         // Test requestVerification
         vm.prank(user);
         vm.expectRevert(expectedRevert);
-        dMRVManager.requestVerification(projectId, keccak256("c1"), "uri", MOCK_MODULE_TYPE);
+        uint256 requestedAmount = 100e18;
+        dMRVManager.requestVerification(projectId, keccak256("c1"), "uri", requestedAmount, MOCK_MODULE_TYPE);
 
         // Test fulfillVerification
         // Note: Can't test fulfill because request is blocked, so we test admin submit
@@ -174,5 +177,128 @@ contract DMRVManagerUncovered is Test {
 
         bytes32[] memory emptyRoles = dMRVManager.getRoles(user);
         assertEq(emptyRoles.length, 0);
+    }
+
+    function test_requestVerification_and_fulfill() public {
+        bytes32 localProjectId = keccak256("Project Alpha");
+        bytes32 claimId = keccak256("Claim 001");
+        string memory evidenceURI = "ipfs://evidence-for-alpha-1";
+        uint256 requestedAmount = 100e18;
+
+        // Register and activate project
+        vm.prank(projectOwner);
+        registry.registerProject(localProjectId, "ipfs://metadata");
+        vm.prank(admin);
+        registry.setProjectStatus(localProjectId, IProjectRegistry.ProjectStatus.Active);
+
+        // --- FIX: Register the module first ---
+        vm.prank(admin);
+        methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
+        methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
+        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+
+        // Request verification
+        vm.prank(projectOwner);
+        dMRVManager.requestVerification(localProjectId, claimId, evidenceURI, requestedAmount, MOCK_MODULE_TYPE);
+
+        // Fulfill verification
+        uint256 mintAmount = 50 * 1e18;
+        string memory credentialCID = "ipfs://final-cid-alpha-1";
+        bytes memory data = abi.encode(50, false, bytes32(0), credentialCID); // 50% outcome
+
+        vm.prank(address(mockModule));
+        dMRVManager.fulfillVerification(localProjectId, claimId, data);
+
+        assertEq(
+            credit.balanceOf(projectOwner, uint256(localProjectId)),
+            (requestedAmount * 50) / 100,
+            "Credits were not minted correctly"
+        );
+    }
+
+    function test_fulfill_reverts_if_claim_not_found() public {
+        bytes32 localProjectId = keccak256("p1");
+        bytes32 claimId = keccak256("c1");
+        uint256 requestedAmount = 100e18;
+
+        // DONT request verification, so claim is not found
+        // dMRVManager.requestVerification(localProjectId, claimId, "ipfs://evidence.json", requestedAmount, MOCK_MODULE_TYPE);
+
+        bytes memory data = abi.encode(100, false, bytes32(0), "cid");
+
+        vm.prank(address(mockModule));
+        vm.expectRevert(DMRVManager__ClaimNotFoundOrAlreadyFulfilled.selector);
+        dMRVManager.fulfillVerification(localProjectId, claimId, data);
+    }
+
+    function test_fulfill_reverts_if_already_fulfilled() public {
+        // --- FIX: Register the module first ---
+        vm.prank(admin);
+        methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
+        methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
+        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+
+        bytes32 claimId = keccak256("c1");
+        uint256 requestedAmount = 100e18;
+
+        vm.prank(projectOwner);
+        // --- FIX: Use the globally activated projectId ---
+        dMRVManager.requestVerification(projectId, claimId, "ipfs://evidence.json", requestedAmount, MOCK_MODULE_TYPE);
+
+        bytes memory data = abi.encode(100, false, bytes32(0), "cid");
+
+        vm.prank(address(mockModule));
+        dMRVManager.fulfillVerification(projectId, claimId, data);
+
+        // Try to fulfill again
+        vm.prank(address(mockModule));
+        vm.expectRevert(DMRVManager__ClaimNotFoundOrAlreadyFulfilled.selector);
+        dMRVManager.fulfillVerification(projectId, claimId, data);
+    }
+
+    function test_register_module_reverts_if_not_admin() public {
+        vm.prank(projectOwner); // Not admin
+        vm.expectRevert(); // Basic revert as it checks for role
+        dMRVManager.registerVerifierModule(keccak256("new module"), address(0x456));
+    }
+
+    function test_register_module_reverts_on_zero_address() public {
+        bytes32 moduleType = keccak256("new module");
+        // --- FIX: Add and approve a valid methodology first ---
+        vm.prank(admin);
+        methodologyRegistry.addMethodology(moduleType, address(0x123), "uri", bytes32(0));
+        methodologyRegistry.approveMethodology(moduleType);
+
+        vm.prank(admin);
+        vm.expectRevert(DMRVManager__ZeroAddress.selector);
+        dMRVManager.registerVerifierModule(moduleType, address(0));
+    }
+
+    function test_register_reverts_if_methodology_not_valid() public {
+        bytes32 invalidMethodology = keccak256("invalid");
+        vm.prank(admin);
+        vm.expectRevert(DMRVManager__MethodologyNotValid.selector);
+        dMRVManager.registerVerifierModule(invalidMethodology, address(0x123));
+    }
+
+    function test_set_methodology_reverts_if_not_admin() public {
+        vm.prank(projectOwner);
+        vm.expectRevert(); // Basic revert
+        dMRVManager.setMethodologyRegistry(address(0x789));
+    }
+
+    function test_set_methodology_reverts_on_zero_address() public {
+        vm.prank(admin);
+        vm.expectRevert(DMRVManager__ZeroAddress.selector);
+        dMRVManager.setMethodologyRegistry(address(0));
+    }
+
+    function test_requestVerification_reverts_when_paused() public {
+        vm.prank(admin);
+        dMRVManager.pause();
+
+        vm.prank(projectOwner);
+        vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
+        dMRVManager.requestVerification(keccak256("p1"), keccak256("c1"), "uri", 100e18, MOCK_MODULE_TYPE);
     }
 }

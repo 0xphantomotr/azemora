@@ -175,44 +175,54 @@ contract ReputationWeightedVerifier is
         emit TaskChallenged(taskId, msg.sender);
     }
 
+    /**
+     * @notice Finalizes a verification task that has passed its challenge period without being challenged.
+     * @dev Assumes a 100% successful outcome as per the optimistic model.
+     * It calls the dMRVManager to fulfill the verification with a full credit amount.
+     * @param taskId The ID of the task to finalize.
+     */
     function finalizeVerification(bytes32 taskId) external nonReentrant {
         VerificationTask storage task = tasks[taskId];
         if (task.status != TaskStatus.Pending) revert ReputationWeightedVerifier__NotPending();
         if (block.timestamp <= task.challengeDeadline) revert ReputationWeightedVerifier__ChallengePeriodNotOver();
 
         task.status = TaskStatus.Finalized;
+        task.outcome = true; // Optimistic outcome is true
 
-        bytes memory data;
-        if (task.outcome) {
-            // On approval, mint 1 credit. The evidence URI becomes the credential CID.
-            data = abi.encode(1, false, bytes32(0), task.evidenceURI);
-        } else {
-            // On rejection, mint 0 credits, which effectively does nothing but records the event.
-            data = abi.encode(0, false, bytes32(0), task.evidenceURI);
-        }
+        // For an unchallenged task, the quantitative outcome is 100%.
+        uint256 quantitativeOutcome = 100;
+        bool wasArbitrated = false;
+        bytes32 arbitrationDisputeId = bytes32(0);
+
+        bytes memory data = abi.encode(quantitativeOutcome, wasArbitrated, arbitrationDisputeId, task.evidenceURI);
         dMRVManager.fulfillVerification(task.projectId, task.claimId, data);
 
         emit TaskFinalized(taskId, task.outcome);
     }
 
+    /**
+     * @notice Processes the final, quantitative outcome of a dispute from the ArbitrationCouncil.
+     * @dev This function is called exclusively by the ArbitrationCouncil after a dispute has been resolved.
+     * It marks the task as finalized and forwards the quantitative result to the dMRVManager
+     * to mint a proportional amount of credits.
+     * @param taskId The ID of the task that was arbitrated.
+     * @param finalAmount The weighted-average outcome (0-100) from the council's vote.
+     */
     function processArbitrationResult(bytes32 taskId, uint256 finalAmount) external override {
         require(msg.sender == address(arbitrationCouncil), "Only ArbitrationCouncil can call this");
 
         VerificationTask storage task = tasks[taskId];
-        if (task.status != TaskStatus.Challenged) {
-            revert ReputationweightedVerifier__InvalidTaskStatus(taskId, task.status);
-        }
+        require(task.status == TaskStatus.Challenged, "Task not challenged");
 
-        if (finalAmount > 0) {
-            task.status = TaskStatus.Finalized;
-            bytes memory data = abi.encode(finalAmount, false, bytes32(0), task.evidenceURI);
-            dMRVManager.fulfillVerification(task.projectId, task.claimId, data);
-            emit TaskFinalized(taskId, true); // True because some amount was approved.
-        } else {
-            // If the final amount is 0, the claim is fully overturned.
-            task.status = TaskStatus.Overturned;
-            emit TaskOverturned(taskId);
-        }
+        task.status = TaskStatus.Finalized;
+        task.outcome = finalAmount > 0; // Set outcome based on whether any credit was awarded.
+
+        // The finalAmount is the quantitative outcome (e.g., 85 for 85%).
+        // We will pass this directly to the dMRVManager.
+        bytes memory data = abi.encode(finalAmount, true, taskId, task.evidenceURI);
+        dMRVManager.fulfillVerification(task.projectId, task.claimId, data);
+
+        emit TaskFinalized(taskId, task.outcome);
     }
 
     function reverseVerification(bytes32 claimId) external override onlyRole(ARBITRATION_COUNCIL_ROLE) {
@@ -230,7 +240,7 @@ contract ReputationWeightedVerifier is
     /**
      * @notice Returns the current status of a verification task.
      * @param taskId The ID of the task to query.
-     * @return The status enum of the task.
+     * @return The `TaskStatus` enum of the task.
      */
     function getTaskStatus(bytes32 taskId) external view returns (TaskStatus) {
         return tasks[taskId].status;
