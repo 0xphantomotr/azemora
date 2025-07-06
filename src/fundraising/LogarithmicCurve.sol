@@ -11,25 +11,25 @@ import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/ut
 import "./interfaces/IBondingCurveStrategy.sol";
 
 // --- Custom Errors ---
-error ProjectBondingCurve__ZeroAddress();
-error ProjectBondingCurve__InvalidParameter();
-error ProjectBondingCurve__SlippageExceeded();
-error ProjectBondingCurve__InsufficientBalance();
-error ProjectBondingCurve__WithdrawalLimitExceeded();
-error ProjectBondingCurve__WithdrawalTooSoon();
-error ProjectBondingCurve__VestingNotStarted();
-error ProjectBondingCurve__NothingToClaim();
-error ProjectBondingCurve__TransferFailed();
+error LogarithmicCurve__ZeroAddress();
+error LogarithmicCurve__InvalidParameter();
+error LogarithmicCurve__SlippageExceeded();
+error LogarithmicCurve__InsufficientBalance();
+error LogarithmicCurve__WithdrawalLimitExceeded();
+error LogarithmicCurve__WithdrawalTooSoon();
+error LogarithmicCurve__VestingNotStarted();
+error LogarithmicCurve__NothingToClaim();
+error LogarithmicCurve__TransferFailed();
+error LogarithmicCurve__OverflowRisk();
 
 /**
- * @title ProjectBondingCurve
+ * @title LogarithmicCurve
  * @author Azemora Team
- * @dev This is the dedicated, project-specific contract that manages the entire market
- * for a single project's token. It holds collateral, mints/burns project tokens based
- * on a linear bonding curve, and enforces vesting and fund withdrawal safeguards.
- * Each verified project gets its own unique instance of this contract, deployed by the Factory.
+ * @dev This contract implements a logarithmic-like (sub-linear) bonding curve, using a square root function
+ * where price is proportional to sqrt(supply). The token price increases at a decreasing rate,
+ * encouraging wider initial distribution. It is a strategy meant to be deployed by the BondingCurveFactory.
  */
-contract ProjectBondingCurve is
+contract LogarithmicCurve is
     Initializable,
     OwnableUpgradeable,
     ReentrancyGuardUpgradeable,
@@ -40,39 +40,35 @@ contract ProjectBondingCurve is
 
     // --- State Variables ---
 
-    // Core Contracts
     ProjectToken public projectToken;
     IERC20 public collateralToken;
 
-    // Bonding Curve Parameters
-    uint256 public slope; // Determines the price steepness (price = slope * supply)
+    uint256 public priceCoefficient; // 'k' in the formula price = k * sqrt(supply)
 
     // Team Vesting Parameters
     uint256 public teamAllocation;
-    uint256 public vestingCliff; // Absolute timestamp of the cliff
-    uint256 public vestingDuration; // Total duration of vesting in seconds
-    uint256 public vestingStartTime; // Timestamp when vesting begins
+    uint256 public vestingCliff;
+    uint256 public vestingDuration;
+    uint256 public vestingStartTime;
     uint256 public teamTokensClaimed;
 
     // Withdrawal Safeguards
-    uint256 public maxWithdrawalPercentage; // e.g., 1500 for 15.00%
-    uint256 public withdrawalFrequency; // e.g., 7 days in seconds
+    uint256 public maxWithdrawalPercentage;
+    uint256 public withdrawalFrequency;
     uint256 public lastWithdrawalTimestamp;
     uint256 public collateralAvailableForWithdrawal;
 
     uint256 private constant PERCENTAGE_DENOMINATOR = 10000;
-    uint256 private constant WAD = 1e18; // For fixed-point math scaling
+    uint256 private constant WAD = 1e18;
+    // For sqrt math, s is 18 decimals. s^3 is 54 decimals. sqrt(s^3) is 27 decimals.
+    // So we normalize by 10^27.
+    uint256 private constant WAD_POW_1_5 = 1e27;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
 
-    /**
-     * @notice Initializes the bonding curve contract.
-     * @dev This is called only once by the BondingCurveFactory immediately after deployment.
-     * It decodes the strategy-specific parameters to configure the curve.
-     */
     function initialize(
         address _projectToken,
         address _collateralToken,
@@ -83,7 +79,7 @@ contract ProjectBondingCurve is
         __ReentrancyGuard_init();
 
         (
-            uint256 _slope,
+            uint256 _priceCoefficient,
             uint256 _teamAllocation,
             uint256 _vestingCliffSeconds,
             uint256 _vestingDurationSeconds,
@@ -93,12 +89,11 @@ contract ProjectBondingCurve is
 
         projectToken = ProjectToken(_projectToken);
         collateralToken = IERC20(_collateralToken);
-        slope = _slope;
+        priceCoefficient = _priceCoefficient;
         lastWithdrawalTimestamp = block.timestamp;
         maxWithdrawalPercentage = _maxWithdrawalPercentage;
         withdrawalFrequency = _withdrawalFrequency;
 
-        // Set up vesting parameters based on the contract's original logic
         teamAllocation = _teamAllocation;
         if (_teamAllocation > 0) {
             vestingStartTime = block.timestamp;
@@ -111,17 +106,15 @@ contract ProjectBondingCurve is
     // --- User-Facing Functions ---
 
     function buy(uint256 amountToBuy, uint256 maxCollateralToSpend) external override nonReentrant returns (uint256) {
-        if (amountToBuy == 0) revert ProjectBondingCurve__InvalidParameter();
+        if (amountToBuy == 0) revert LogarithmicCurve__InvalidParameter();
 
         uint256 cost = _calculateBuyCost(amountToBuy);
-        if (cost > maxCollateralToSpend) revert ProjectBondingCurve__SlippageExceeded();
+        if (cost > maxCollateralToSpend) revert LogarithmicCurve__SlippageExceeded();
 
         collateralAvailableForWithdrawal += cost;
         projectToken.mint(msg.sender, amountToBuy);
 
-        if (!collateralToken.transferFrom(msg.sender, address(this), cost)) {
-            revert ProjectBondingCurve__TransferFailed();
-        }
+        collateralToken.safeTransferFrom(msg.sender, address(this), cost);
 
         emit Buy(msg.sender, cost, amountToBuy);
         return cost;
@@ -133,16 +126,14 @@ contract ProjectBondingCurve is
         nonReentrant
         returns (uint256)
     {
-        if (amountToSell == 0) revert ProjectBondingCurve__InvalidParameter();
+        if (amountToSell == 0) revert LogarithmicCurve__InvalidParameter();
 
         uint256 proceeds = _calculateSellProceeds(amountToSell);
-        if (proceeds < minCollateralToReceive) revert ProjectBondingCurve__SlippageExceeded();
+        if (proceeds < minCollateralToReceive) revert LogarithmicCurve__SlippageExceeded();
 
         projectToken.burnFrom(msg.sender, amountToSell);
 
-        if (!collateralToken.transfer(msg.sender, proceeds)) {
-            revert ProjectBondingCurve__TransferFailed();
-        }
+        collateralToken.safeTransfer(msg.sender, proceeds);
 
         emit Sell(msg.sender, amountToSell, proceeds);
         return proceeds;
@@ -162,37 +153,33 @@ contract ProjectBondingCurve is
 
     function withdrawCollateral() external override nonReentrant onlyOwner returns (uint256) {
         if (block.timestamp < lastWithdrawalTimestamp + withdrawalFrequency) {
-            revert ProjectBondingCurve__WithdrawalTooSoon();
+            revert LogarithmicCurve__WithdrawalTooSoon();
         }
 
         uint256 withdrawableAmount =
             (collateralAvailableForWithdrawal * maxWithdrawalPercentage) / PERCENTAGE_DENOMINATOR;
-        if (withdrawableAmount == 0) revert ProjectBondingCurve__WithdrawalLimitExceeded();
+        if (withdrawableAmount == 0) revert LogarithmicCurve__WithdrawalLimitExceeded();
 
         lastWithdrawalTimestamp = block.timestamp;
         collateralAvailableForWithdrawal = 0;
 
-        if (!collateralToken.transfer(owner(), withdrawableAmount)) {
-            revert ProjectBondingCurve__TransferFailed();
-        }
+        collateralToken.safeTransfer(owner(), withdrawableAmount);
 
         emit Withdrawal(owner(), withdrawableAmount);
         return withdrawableAmount;
     }
 
     function claimVestedTokens() external nonReentrant onlyOwner returns (uint256) {
-        if (block.timestamp < vestingCliff) revert ProjectBondingCurve__VestingNotStarted();
+        if (block.timestamp < vestingCliff) revert LogarithmicCurve__VestingNotStarted();
 
         uint256 vestedAmount = _calculateVestedAmount();
         uint256 claimableAmount = vestedAmount - teamTokensClaimed;
 
-        if (claimableAmount == 0) revert ProjectBondingCurve__NothingToClaim();
+        if (claimableAmount == 0) revert LogarithmicCurve__NothingToClaim();
 
         teamTokensClaimed += claimableAmount;
 
-        if (!projectToken.transfer(owner(), claimableAmount)) {
-            revert ProjectBondingCurve__TransferFailed();
-        }
+        projectToken.transfer(owner(), claimableAmount);
         return claimableAmount;
     }
 
@@ -201,25 +188,36 @@ contract ProjectBondingCurve is
     function _calculateBuyCost(uint256 amountToBuy) internal view returns (uint256) {
         uint256 s1 = projectToken.totalSupply() - teamAllocation;
         uint256 s2 = s1 + amountToBuy;
-        // cost = integral of (slope * s)ds from s1 to s2
-        // cost = slope/2 * (s2^2 - s1^2)
-        // We divide by WAD twice to account for s being in 18 decimals (WAD), and thus s^2 being in 36 decimals.
-        return (slope * ((s2 * s2) - (s1 * s1))) / 2 / WAD / WAD;
+        // cost = integral of (k * s^(1/2))ds from s1 to s2
+        // cost = k * 2/3 * (s2^(3/2) - s1^(3/2))
+        // s^(3/2) is calculated as sqrt(s^3) to maintain precision with integer math.
+        if (s2 > 2.2e25) revert LogarithmicCurve__OverflowRisk(); // s^3 must be < uint256.max
+
+        uint256 s2_pow_3_2 = _sqrt(s2 * s2 * s2);
+        uint256 s1_pow_3_2 = _sqrt(s1 * s1 * s1);
+        uint256 diff = s2_pow_3_2 - s1_pow_3_2;
+
+        // The result is normalized by WAD_POW_1_5 because s^(3/2) has 27 decimal places.
+        return (priceCoefficient * 2 * diff) / 3 / WAD_POW_1_5;
     }
 
     function _calculateSellProceeds(uint256 amountToSell) internal view returns (uint256) {
         uint256 currentSupply = projectToken.totalSupply() - teamAllocation;
-        if (amountToSell > currentSupply) revert ProjectBondingCurve__InsufficientBalance();
+        if (amountToSell > currentSupply) revert LogarithmicCurve__InsufficientBalance();
         uint256 s1 = currentSupply;
         uint256 s2 = s1 - amountToSell;
-        // proceeds = integral of (slope * s)ds from s2 to s1
-        // proceeds = slope/2 * (s1^2 - s2^2)
-        // We divide by WAD twice to account for s being in 18 decimals (WAD), and thus s^2 being in 36 decimals.
-        return (slope * ((s1 * s1) - (s2 * s2))) / 2 / WAD / WAD;
+        // proceeds = k * 2/3 * (s1^(3/2) - s2^(3/2))
+        if (s1 > 2.2e25) revert LogarithmicCurve__OverflowRisk();
+
+        uint256 s1_pow_3_2 = _sqrt(s1 * s1 * s1);
+        uint256 s2_pow_3_2 = _sqrt(s2 * s2 * s2);
+        uint256 diff = s1_pow_3_2 - s2_pow_3_2;
+
+        return (priceCoefficient * 2 * diff) / 3 / WAD_POW_1_5;
     }
 
     function _calculateVestedAmount() internal view returns (uint256) {
-        if (block.timestamp < vestingStartTime) return 0; // Should not happen
+        if (block.timestamp < vestingStartTime) return 0;
 
         uint256 vestingEnd = vestingStartTime + vestingDuration;
         if (block.timestamp >= vestingEnd) {
@@ -231,5 +229,21 @@ contract ProjectBondingCurve is
         }
 
         return (teamAllocation * (block.timestamp - vestingStartTime)) / vestingDuration;
+    }
+
+    /**
+     * @dev A simple Babylonian method for calculating the integer square root.
+     */
+    function _sqrt(uint256 y) internal pure returns (uint256 z) {
+        if (y > 3) {
+            z = y;
+            uint256 x = y / 2 + 1;
+            while (x < z) {
+                z = x;
+                x = (y / x + x) / 2;
+            }
+        } else if (y != 0) {
+            z = 1;
+        }
     }
 }
