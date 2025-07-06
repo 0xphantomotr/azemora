@@ -8,7 +8,8 @@ import {
     TaskStatus,
     Vote,
     ReputationWeightedVerifier__ChallengePeriodNotOver,
-    ReputationWeightedVerifier__ChallengePeriodOver
+    ReputationWeightedVerifier__ChallengePeriodOver,
+    ReputationWeightedVerifier__UnauthorizedCaller
 } from "../../src/reputation-weighted/ReputationWeightedVerifier.sol";
 import {VerifierManager} from "../../src/reputation-weighted/VerifierManager.sol";
 import {DMRVManager} from "../../src/core/dMRVManager.sol";
@@ -278,5 +279,18 @@ contract ReputationWeightedVerifierTest is Test {
     function test_revert_proposeTaskResolution_isDeprecated() public {
         vm.expectRevert("DEPRECATED");
         verifierModule.proposeTaskResolution(bytes32(0));
+    }
+
+    /// @notice Tests that processArbitrationResult can only be called by the designated ArbitrationCouncil.
+    function test_revert_processArbitrationResult_if_not_council() public {
+        // 1. Start a task to have a valid taskId to work with.
+        bytes32 taskId = _startTask();
+
+        // 2. Attempt to call from an unauthorized address (admin in this case)
+        vm.prank(admin);
+
+        // 3. Assert that the call reverts due to our custom error.
+        vm.expectRevert(ReputationWeightedVerifier__UnauthorizedCaller.selector);
+        verifierModule.processArbitrationResult(taskId, 100); // 100% outcome
     }
 }

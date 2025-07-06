@@ -296,4 +296,61 @@ contract DMRVManagerTest is Test {
         vm.expectRevert(DMRVManager__CallerNotRegisteredModule.selector);
         dMRVManager.fulfillVerification(projectId, claimId, fulfillmentData);
     }
+
+    /// @notice Tests that fulfillVerification correctly mints a proportional amount of credits based on the quantitative outcome.
+    /// @dev This test covers three scenarios: partial (75%), zero (0%), and full (100%) minting.
+    function test_FulfillVerification_MintsProportionalAmount() public {
+        // --- Setup ---
+        // 1. Register the module
+        vm.prank(admin);
+        methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
+        methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
+        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+
+        // 2. Request verification for a baseline amount
+        vm.prank(user);
+        bytes32 claimId = keccak256("proportional-claim");
+        uint256 requestedAmount = 200e18; // Request 200 tokens as a baseline
+        dMRVManager.requestVerification(projectId, claimId, "ipfs://prop", requestedAmount, MOCK_MODULE_TYPE);
+        uint256 tokenId = uint256(projectId);
+
+        // --- Test Scenario 1: Partial Mint (75%) ---
+        uint256 outcome75 = 75;
+        uint256 expectedMint75 = (requestedAmount * outcome75) / 100;
+        bytes memory fulfillmentData75 = abi.encode(outcome75, false, bytes32(0), "");
+
+        vm.prank(address(mockModule)); // Only the module can fulfill
+        dMRVManager.fulfillVerification(projectId, claimId, fulfillmentData75);
+
+        assertEq(credit.balanceOf(projectOwner, tokenId), expectedMint75, "Balance should be 75% of requested amount");
+
+        // --- Test Scenario 2: Zero Mint (0%) ---
+        // We need a new claim since the previous one is fulfilled.
+        bytes32 claimIdZero = keccak256("zero-claim");
+        vm.prank(user);
+        dMRVManager.requestVerification(projectId, claimIdZero, "ipfs://zero", requestedAmount, MOCK_MODULE_TYPE);
+
+        uint256 initialBalance = credit.balanceOf(projectOwner, tokenId);
+        bytes memory fulfillmentData0 = abi.encode(0, false, bytes32(0), "");
+        vm.prank(address(mockModule));
+        dMRVManager.fulfillVerification(projectId, claimIdZero, fulfillmentData0);
+
+        assertEq(credit.balanceOf(projectOwner, tokenId), initialBalance, "Balance should not change for 0% outcome");
+
+        // --- Test Scenario 3: Full Mint (100%) ---
+        bytes32 claimIdFull = keccak256("full-claim");
+        vm.prank(user);
+        dMRVManager.requestVerification(projectId, claimIdFull, "ipfs://full", requestedAmount, MOCK_MODULE_TYPE);
+
+        initialBalance = credit.balanceOf(projectOwner, tokenId);
+        bytes memory fulfillmentData100 = abi.encode(100, false, bytes32(0), "");
+        vm.prank(address(mockModule));
+        dMRVManager.fulfillVerification(projectId, claimIdFull, fulfillmentData100);
+
+        assertEq(
+            credit.balanceOf(projectOwner, tokenId),
+            initialBalance + requestedAmount,
+            "Balance should increase by 100% of requested amount"
+        );
+    }
 }

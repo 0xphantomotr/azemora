@@ -25,6 +25,8 @@ error ReputationWeightedVerifier__ChallengePeriodNotOver();
 error ReputationWeightedVerifier__ChallengePeriodOver();
 error ReputationWeightedVerifier__NotPending();
 error ReputationWeightedVerifier__AlreadyFinalized();
+error ReputationWeightedVerifier__InvalidStateForAction();
+error ReputationWeightedVerifier__UnauthorizedCaller();
 
 enum TaskStatus {
     Pending,
@@ -209,7 +211,7 @@ contract ReputationWeightedVerifier is
      * @param finalAmount The weighted-average outcome (0-100) from the council's vote.
      */
     function processArbitrationResult(bytes32 taskId, uint256 finalAmount) external override {
-        require(msg.sender == address(arbitrationCouncil), "Only ArbitrationCouncil can call this");
+        if (msg.sender != address(arbitrationCouncil)) revert ReputationWeightedVerifier__UnauthorizedCaller();
 
         VerificationTask storage task = tasks[taskId];
         require(task.status == TaskStatus.Challenged, "Task not challenged");
