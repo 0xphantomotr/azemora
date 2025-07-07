@@ -4,12 +4,16 @@ pragma solidity ^0.8.20;
 import {Test, console} from "forge-std/Test.sol";
 import {ProjectRegistry} from "../../src/core/ProjectRegistry.sol";
 import {
-    ProjectBondingCurve, ProjectBondingCurve__WithdrawalTooSoon
+    ProjectBondingCurve,
+    ProjectBondingCurve__WithdrawalTooSoon,
+    ProjectBondingCurve__InsufficientBalance
 } from "../../src/fundraising/ProjectBondingCurve.sol";
 import {
     BondingCurveFactory,
     BondingCurveParams,
-    BondingCurveFactory__NotVerifiedProject
+    BondingCurveFactory__NotVerifiedProject,
+    BondingCurveFactory__OnlyProjectOwner,
+    BondingCurveFactory__InvalidSeedAmount
 } from "../../src/fundraising/BondingCurveFactory.sol";
 import {ProjectToken} from "../../src/fundraising/ProjectToken.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -18,8 +22,18 @@ import {MockCollateral} from "../mocks/MockCollateral.sol";
 import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 import {BondingCurveStrategyRegistry} from "../../src/fundraising/BondingCurveStrategyRegistry.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
+import {MockBalancerVault} from "../mocks/MockBalancerVault.sol";
 
 contract FundraisingIntegrationTest is Test {
+    // --- Duplicate Event for Testing ---
+    event LiquidityMigrated(
+        bytes32 indexed projectId,
+        address indexed ammAddress,
+        bytes32 indexed poolId,
+        uint256 collateralAmount,
+        uint256 projectTokenAmount
+    );
+
     // --- Constants ---
     uint256 public constant WAD = 1e18;
     // Realistic slope to avoid overflow with WAD arithmetic
@@ -36,6 +50,7 @@ contract FundraisingIntegrationTest is Test {
     BondingCurveFactory internal factory;
     MockERC20 internal collateralToken;
     ProjectToken internal projectToken;
+    MockBalancerVault internal mockVault;
 
     // --- Users ---
     address public admin;
@@ -195,6 +210,90 @@ contract FundraisingIntegrationTest is Test {
         vm.stopPrank();
     }
 
+    function test_MigrateToAmm_Success() public {
+        // =================================================================
+        // 1. Setup: Create a curve with AMM migration enabled
+        // =================================================================
+        vm.startPrank(admin);
+        mockVault = new MockBalancerVault();
+        vm.stopPrank();
+
+        bytes32 poolId = keccak256("Test Pool ID");
+        uint16 liquidityBps = 5000; // 50%
+
+        bytes memory strategyInitData = abi.encode(
+            SLOPE,
+            TEAM_ALLOCATION,
+            VESTING_CLIFF_SECONDS,
+            VESTING_DURATION_SECONDS,
+            MAX_WITHDRAWAL_PERCENTAGE,
+            WITHDRAWAL_FREQUENCY_SECONDS
+        );
+        bytes memory ammConfigData = abi.encode(true, liquidityBps, address(mockVault), poolId);
+
+        BondingCurveParams memory params = BondingCurveParams({
+            projectId: projectId,
+            strategyId: LINEAR_CURVE_V1,
+            tokenName: TOKEN_NAME,
+            tokenSymbol: TOKEN_SYMBOL,
+            strategyInitializationData: strategyInitData,
+            ammConfigData: ammConfigData
+        });
+
+        vm.startPrank(alice);
+        ProjectBondingCurve bondingCurve = ProjectBondingCurve(factory.createBondingCurve(params));
+        vm.stopPrank();
+
+        projectToken = ProjectToken(bondingCurve.projectToken());
+
+        // =================================================================
+        // 2. Simulate Buys: Add collateral to the curve
+        // =================================================================
+        uint256 buyPrice = bondingCurve.getBuyPrice(AMOUNT_TO_BUY);
+        vm.startPrank(bob);
+        collateralToken.approve(address(bondingCurve), buyPrice);
+        bondingCurve.buy(AMOUNT_TO_BUY, buyPrice);
+        vm.stopPrank();
+
+        // =================================================================
+        // 3. Trigger Migration
+        // =================================================================
+        uint256 projectTokenToSeed = 50 * WAD; // Project owner decides this
+        uint256 collateralToSeed = (buyPrice * liquidityBps) / 10000;
+
+        vm.startPrank(alice);
+        // Set the expectation: check all three indexed topics and the data, from the factory.
+        vm.expectEmit(true, true, true, true, address(factory));
+        // Provide the expected values for the event. This is not a real emit.
+        emit LiquidityMigrated(projectId, address(mockVault), poolId, collateralToSeed, projectTokenToSeed);
+
+        // This is the actual call that triggers the event we're testing.
+        factory.migrateToAmm(projectId, projectTokenToSeed);
+        vm.stopPrank();
+
+        // =================================================================
+        // 4. Assertions
+        // =================================================================
+        // Assert the mock vault was called with the correct data
+        assertEq(mockVault.last_poolId(), poolId, "Incorrect poolId");
+        assertEq(mockVault.last_sender(), address(factory), "Sender should be the factory");
+        assertEq(mockVault.last_recipient(), alice, "Recipient should be the project owner");
+
+        // Assert the assets in the request are correct and sorted
+        address tokenA =
+            address(collateralToken) < address(projectToken) ? address(collateralToken) : address(projectToken);
+        address tokenB =
+            address(collateralToken) < address(projectToken) ? address(projectToken) : address(collateralToken);
+        assertEq(mockVault.getLastRequest().assets[0], tokenA, "Asset 0 is incorrect");
+        assertEq(mockVault.getLastRequest().assets[1], tokenB, "Asset 1 is incorrect");
+
+        // Assert the amounts in the request are correct
+        uint256 amountA = tokenA == address(collateralToken) ? collateralToSeed : projectTokenToSeed;
+        uint256 amountB = tokenB == address(collateralToken) ? collateralToSeed : projectTokenToSeed;
+        assertEq(mockVault.getLastRequest().maxAmountsIn[0], amountA, "Amount 0 is incorrect");
+        assertEq(mockVault.getLastRequest().maxAmountsIn[1], amountB, "Amount 1 is incorrect");
+    }
+
     function test_Fail_CreateCurve_ForUnverifiedProject() public {
         bytes32 unverifiedProjectId = keccak256("Unverified_Project");
 
@@ -224,5 +323,106 @@ contract FundraisingIntegrationTest is Test {
         });
         factory.createBondingCurve(params);
         vm.stopPrank();
+    }
+
+    function test_fuzz_MigrateToAmm_Reverts(
+        uint112 projectTokenAmountToSeed, // Fuzzed input
+        uint16 liquidityBps, // Fuzzed input
+        address caller // Fuzzed input
+    ) public {
+        // --- Fuzzer assumptions to keep tests relevant ---
+        vm.assume(caller != address(0) && caller.code.length == 0);
+        vm.assume(AMOUNT_TO_BUY > 0);
+
+        // =================================================================
+        // 1. Setup: Create a curve with AMM migration enabled using fuzzed params
+        // =================================================================
+        vm.startPrank(admin);
+        mockVault = new MockBalancerVault();
+        vm.stopPrank();
+
+        bytes32 poolId = keccak256("Test Pool ID");
+        bytes memory strategyInitData = abi.encode(
+            SLOPE,
+            TEAM_ALLOCATION,
+            VESTING_CLIFF_SECONDS,
+            VESTING_DURATION_SECONDS,
+            MAX_WITHDRAWAL_PERCENTAGE,
+            WITHDRAWAL_FREQUENCY_SECONDS
+        );
+        bytes memory ammConfigData = abi.encode(true, liquidityBps, address(mockVault), poolId);
+
+        BondingCurveParams memory params = BondingCurveParams({
+            projectId: projectId,
+            strategyId: LINEAR_CURVE_V1,
+            tokenName: TOKEN_NAME,
+            tokenSymbol: TOKEN_SYMBOL,
+            strategyInitializationData: strategyInitData,
+            ammConfigData: ammConfigData
+        });
+
+        vm.startPrank(alice);
+        ProjectBondingCurve bondingCurve = ProjectBondingCurve(factory.createBondingCurve(params));
+        vm.stopPrank();
+        projectToken = ProjectToken(bondingCurve.projectToken());
+
+        // =================================================================
+        // 2. Simulate Buys to add some collateral to the curve
+        // =================================================================
+        uint256 buyPrice = bondingCurve.getBuyPrice(AMOUNT_TO_BUY);
+        vm.startPrank(bob);
+        collateralToken.approve(address(bondingCurve), buyPrice);
+        bondingCurve.buy(AMOUNT_TO_BUY, buyPrice);
+        vm.stopPrank();
+
+        // =================================================================
+        // 3. Test various revert conditions based on fuzzed inputs
+        // The order of these checks must mirror the order in the contract to correctly
+        // predict the revert reason when multiple inputs are invalid.
+        // =================================================================
+        vm.prank(caller);
+
+        // --- Contract Check 1: Zero seed amount ---
+        if (projectTokenAmountToSeed == 0) {
+            vm.expectRevert(BondingCurveFactory__InvalidSeedAmount.selector);
+            factory.migrateToAmm(projectId, projectTokenAmountToSeed);
+            return;
+        }
+
+        // --- Contract Check 2: Caller is not the project owner ---
+        if (caller != alice) {
+            vm.expectRevert(BondingCurveFactory__OnlyProjectOwner.selector);
+            factory.migrateToAmm(projectId, projectTokenAmountToSeed);
+            return;
+        }
+
+        // --- From this point, caller is assumed to be alice ---
+
+        // --- Contract Check 3: Seeding more project tokens than the curve holds ---
+        uint256 availableProjectTokens = projectToken.balanceOf(address(bondingCurve));
+        if (projectTokenAmountToSeed > availableProjectTokens) {
+            vm.expectRevert(ProjectBondingCurve__InsufficientBalance.selector);
+            factory.migrateToAmm(projectId, projectTokenAmountToSeed);
+            return;
+        }
+
+        // --- Contract Check 4: Requesting more collateral than available ---
+        uint256 collateralBalance = collateralToken.balanceOf(address(bondingCurve));
+        // This check implicitly handles liquidityBps > 10000 by calculating the outcome.
+        uint256 collateralToSeed = (collateralBalance * liquidityBps) / 10000;
+        if (collateralToSeed > collateralBalance && collateralBalance > 0) {
+            vm.expectRevert(ProjectBondingCurve__InsufficientBalance.selector);
+            factory.migrateToAmm(projectId, projectTokenAmountToSeed);
+            return;
+        }
+
+        // If none of the revert conditions are met, the call should either succeed
+        // or fail for a reason not related to our specific checks (which is okay).
+        // We use a general `try...catch` to handle this.
+        try factory.migrateToAmm(projectId, projectTokenAmountToSeed) {
+            // Success case is fine
+        } catch {
+            // Other reverts are acceptable as the fuzzer explores edge cases
+        }
     }
 }

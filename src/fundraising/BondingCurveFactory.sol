@@ -27,6 +27,7 @@ error BondingCurveFactory__ZeroAddress();
 error BondingCurveFactory__AmmNotEnabled();
 error BondingCurveFactory__OnlyProjectOwner();
 error BondingCurveFactory__TransferFailed();
+error BondingCurveFactory__InvalidSeedAmount();
 
 /**
  * @title BondingCurveFactory
@@ -69,7 +70,7 @@ contract BondingCurveFactory is Ownable {
     event LiquidityMigrated(
         bytes32 indexed projectId,
         address indexed ammAddress,
-        bytes32 poolId,
+        bytes32 indexed poolId,
         uint256 collateralAmount,
         uint256 projectTokenAmount
     );
@@ -136,6 +137,8 @@ contract BondingCurveFactory is Ownable {
      * This determines the initial price in the AMM.
      */
     function migrateToAmm(bytes32 projectId, uint256 projectTokenAmountToSeed) external {
+        if (projectTokenAmountToSeed == 0) revert BondingCurveFactory__InvalidSeedAmount();
+
         AmmConfig memory config = ammConfigs[projectId];
         if (!config.enabled) revert BondingCurveFactory__AmmNotEnabled();
 

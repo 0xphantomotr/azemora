@@ -20,6 +20,7 @@ error ProjectBondingCurve__WithdrawalTooSoon();
 error ProjectBondingCurve__VestingNotStarted();
 error ProjectBondingCurve__NothingToClaim();
 error ProjectBondingCurve__TransferFailed();
+error ProjectBondingCurve__Unauthorized();
 
 /**
  * @title ProjectBondingCurve
@@ -44,6 +45,9 @@ contract ProjectBondingCurve is
     ProjectToken internal _projectToken;
     IERC20 public collateralToken;
 
+    // The factory contract that deployed this curve, with special permissions for migration.
+    address public liquidityMigrator;
+
     // Bonding Curve Parameters
     uint256 public slope; // Determines the price steepness (price = slope * supply)
 
@@ -62,6 +66,13 @@ contract ProjectBondingCurve is
 
     uint256 private constant PERCENTAGE_DENOMINATOR = 10000;
     uint256 private constant WAD = 1e18; // For fixed-point math scaling
+
+    modifier onlyOwnerOrMigrator() {
+        if (msg.sender != owner() && msg.sender != liquidityMigrator) {
+            revert ProjectBondingCurve__Unauthorized();
+        }
+        _;
+    }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -89,6 +100,15 @@ contract ProjectBondingCurve is
         address _projectOwner,
         bytes calldata strategyInitializationData
     ) external override initializer {
+        __ProjectBondingCurve_init(_projectTokenAddress, _collateralToken, _projectOwner, strategyInitializationData);
+    }
+
+    function __ProjectBondingCurve_init(
+        address _projectTokenAddress,
+        address _collateralToken,
+        address _projectOwner,
+        bytes calldata strategyInitializationData
+    ) internal onlyInitializing {
         __Ownable_init(_projectOwner);
         __ReentrancyGuard_init();
 
@@ -101,6 +121,7 @@ contract ProjectBondingCurve is
             uint256 _withdrawalFrequency
         ) = abi.decode(strategyInitializationData, (uint256, uint256, uint256, uint256, uint256, uint256));
 
+        liquidityMigrator = msg.sender;
         _projectToken = ProjectToken(_projectTokenAddress);
         collateralToken = IERC20(_collateralToken);
         slope = _slope;
@@ -217,7 +238,7 @@ contract ProjectBondingCurve is
         external
         override
         nonReentrant
-        onlyOwner
+        onlyOwnerOrMigrator
     {
         if (collateralToken.balanceOf(address(this)) < collateralAmount) {
             revert ProjectBondingCurve__InsufficientBalance();
