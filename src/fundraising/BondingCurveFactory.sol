@@ -7,20 +7,40 @@ import "./interfaces/IBondingCurveStrategy.sol";
 import "./BondingCurveStrategyRegistry.sol";
 import "../core/ProjectRegistry.sol";
 import "./ProjectToken.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "./interfaces/IBalancerVault.sol";
+
+// --- Structs ---
+struct BondingCurveParams {
+    bytes32 projectId;
+    bytes32 strategyId;
+    string tokenName;
+    string tokenSymbol;
+    bytes strategyInitializationData;
+    bytes ammConfigData;
+}
 
 // --- Custom Errors ---
 error BondingCurveFactory__NotVerifiedProject();
 error BondingCurveFactory__ZeroAddress();
+error BondingCurveFactory__AmmNotEnabled();
+error BondingCurveFactory__OnlyProjectOwner();
+error BondingCurveFactory__TransferFailed();
 
 /**
  * @title BondingCurveFactory
- * @author Azemora Team
+ * @author Genci Mehmeti
  * @dev This is the single, authoritative entry point for creating new project fundraisers.
  * It acts as a security checkpoint by ensuring projects are verified in the ProjectRegistry,
  * and then deploys a standardized, gas-efficient bonding curve contract for them based on
- * a selected, DAO-approved strategy.
+ * a selected, DAO-approved strategy. It also orchestrates the post-fundraise
+ * migration of liquidity to a decentralized exchange.
  */
 contract BondingCurveFactory is Ownable {
+    using SafeERC20 for IERC20;
+    using SafeERC20 for ProjectToken;
+
     IProjectRegistry public immutable projectRegistry;
     BondingCurveStrategyRegistry public immutable strategyRegistry;
     address public immutable collateralToken;
@@ -28,12 +48,30 @@ contract BondingCurveFactory is Ownable {
     // Mapping from a project's ID to its deployed bonding curve contract address
     mapping(bytes32 => address) public getBondingCurve;
 
+    struct AmmConfig {
+        bool enabled;
+        uint16 liquidityPercentageBps; // Percentage of raised collateral to seed AMM with. 10000 = 100%
+        address balancerVault;
+        bytes32 poolId;
+    }
+
+    // Mapping from a project's ID to its AMM migration settings
+    mapping(bytes32 => AmmConfig) public ammConfigs;
+
     event BondingCurveCreated(
         bytes32 indexed projectId,
         address indexed projectOwner,
         address bondingCurveAddress,
         address tokenAddress,
         bytes32 strategyId
+    );
+
+    event LiquidityMigrated(
+        bytes32 indexed projectId,
+        address indexed ammAddress,
+        bytes32 poolId,
+        uint256 collateralAmount,
+        uint256 projectTokenAmount
     );
 
     constructor(address _registryAddress, address _strategyRegistryAddress, address _collateralToken)
@@ -50,50 +88,155 @@ contract BondingCurveFactory is Ownable {
 
     /**
      * @notice Creates and configures a new bonding curve fundraiser for a verified project.
-     * @dev The caller (project creator) becomes the owner of the new bonding curve contract.
-     * @param projectId The unique ID of the project in the ProjectRegistry.
-     * @param strategyId The ID of the desired bonding curve strategy from the registry.
-     * @param tokenName The name for the new project-specific token.
-     * @param tokenSymbol The symbol for the new project-specific token.
-     * @param strategyInitializationData The abi-encoded initialization data specific to the chosen strategy.
+     * @param params A struct containing all the parameters for creating the bonding curve.
      * @return The address of the newly created ProjectBondingCurve contract.
      */
-    function createBondingCurve(
-        bytes32 projectId,
-        bytes32 strategyId,
-        string memory tokenName,
-        string memory tokenSymbol,
-        bytes calldata strategyInitializationData
-    ) external returns (address) {
+    function createBondingCurve(BondingCurveParams calldata params) external returns (address) {
         // --- CRITICAL SECURITY CHECK ---
-        if (!projectRegistry.isProjectActive(projectId)) {
+        if (!projectRegistry.isProjectActive(params.projectId)) {
             revert BondingCurveFactory__NotVerifiedProject();
         }
 
         // 1. Get the strategy implementation from the DAO-controlled registry.
-        address implementation = strategyRegistry.getActiveStrategy(strategyId);
+        address implementation = strategyRegistry.getActiveStrategy(params.strategyId);
 
-        // 2. Deploy the Project-Specific Token with the factory as a temporary owner.
-        ProjectToken projectToken = new ProjectToken(tokenName, tokenSymbol, address(this));
-
-        // 3. Deploy the Bonding Curve using a gas-efficient minimal proxy.
-        address curveClone = Clones.clone(implementation);
-
-        // 4. Transfer ownership of the token to its bonding curve contract BEFORE initializing.
-        projectToken.transferOwnership(curveClone);
-
-        // 5. Initialize the curve using the standardized interface.
-        IBondingCurveStrategy(curveClone).initialize(
-            address(projectToken),
-            collateralToken,
-            msg.sender, // The project creator becomes the owner of the curve
-            strategyInitializationData
+        // 2. Delegate deployment to a helper function to manage stack depth.
+        address curveClone = _deployCurveAndToken(
+            implementation, params.tokenName, params.tokenSymbol, msg.sender, params.strategyInitializationData
         );
 
-        // 6. Record the new fundraiser and emit an event.
-        getBondingCurve[projectId] = curveClone;
-        emit BondingCurveCreated(projectId, msg.sender, curveClone, address(projectToken), strategyId);
+        // 3. Decode and store AMM configuration if enabled.
+        (bool enableAmm, uint16 liquidityBps, address vault, bytes32 poolId) =
+            abi.decode(params.ammConfigData, (bool, uint16, address, bytes32));
+        if (enableAmm) {
+            ammConfigs[params.projectId] =
+                AmmConfig({enabled: true, liquidityPercentageBps: liquidityBps, balancerVault: vault, poolId: poolId});
+        }
+
+        // 4. Record the new fundraiser and emit an event.
+        getBondingCurve[params.projectId] = curveClone;
+        emit BondingCurveCreated(
+            params.projectId,
+            msg.sender,
+            curveClone,
+            IBondingCurveStrategy(curveClone).projectToken(),
+            params.strategyId
+        );
 
         return curveClone;
+    }
+
+    /**
+     * @notice Migrates a percentage of the raised funds from a bonding curve to an AMM pool.
+     * @dev This function can only be called once by the project owner after fundraising.
+     * It pulls the specified assets from the bonding curve and seeds a new liquidity pool.
+     * This function trusts the AMM router to handle the funds correctly.
+     * @param projectId The unique ID of the project.
+     * @param projectTokenAmountToSeed The amount of project tokens to seed the pool with.
+     * This determines the initial price in the AMM.
+     */
+    function migrateToAmm(bytes32 projectId, uint256 projectTokenAmountToSeed) external {
+        AmmConfig memory config = ammConfigs[projectId];
+        if (!config.enabled) revert BondingCurveFactory__AmmNotEnabled();
+
+        address curveAddress = getBondingCurve[projectId];
+        IBondingCurveStrategy curve = IBondingCurveStrategy(curveAddress);
+
+        address projectOwner = curve.owner();
+        if (projectOwner != msg.sender) revert BondingCurveFactory__OnlyProjectOwner();
+
+        // 1. Calculate the collateral amount to transfer based on the config percentage
+        uint256 collateralBalance = IERC20(collateralToken).balanceOf(curveAddress);
+        uint256 collateralToSeed = (collateralBalance * config.liquidityPercentageBps) / 10000;
+
+        // 2. Pull assets from the curve to this factory contract.
+        curve.releaseLiquidity(collateralToSeed, projectTokenAmountToSeed);
+
+        // 3. Add liquidity by calling the internal helper function
+        _addLiquidityToBalancer(config, projectOwner, collateralToSeed, projectTokenAmountToSeed, curve.projectToken());
+
+        // 4. Disable future migrations and emit event.
+        delete ammConfigs[projectId];
+        emit LiquidityMigrated(
+            projectId, config.balancerVault, config.poolId, collateralToSeed, projectTokenAmountToSeed
+        );
+    }
+
+    /**
+     * @dev Internal helper to deploy the token and bonding curve.
+     * Encapsulated to manage stack depth.
+     */
+    function _deployCurveAndToken(
+        address implementation,
+        string memory tokenName,
+        string memory tokenSymbol,
+        address projectOwner,
+        bytes calldata strategyInitializationData
+    ) internal returns (address) {
+        // 1. Deploy the Project-Specific Token with the factory as a temporary owner.
+        ProjectToken projectToken = new ProjectToken(tokenName, tokenSymbol, address(this));
+
+        // 2. Deploy the Bonding Curve using a gas-efficient minimal proxy.
+        address curveClone = Clones.clone(implementation);
+
+        // 3. Transfer ownership of the token to its bonding curve contract BEFORE initializing.
+        projectToken.transferOwnership(curveClone);
+
+        // 4. Initialize the curve using the standardized interface.
+        IBondingCurveStrategy(curveClone).initialize(
+            address(projectToken), collateralToken, projectOwner, strategyInitializationData
+        );
+
+        return curveClone;
+    }
+
+    /**
+     * @dev Internal helper to add liquidity to a Balancer pool.
+     * Encapsulated to manage stack depth.
+     */
+    function _addLiquidityToBalancer(
+        AmmConfig memory config,
+        address projectOwner,
+        uint256 collateralToSeed,
+        uint256 projectTokenAmountToSeed,
+        address projectTokenAddress
+    ) internal {
+        // Balancer requires assets to be sorted by address.
+        address tokenA = collateralToken < projectTokenAddress ? collateralToken : projectTokenAddress;
+        address tokenB = collateralToken < projectTokenAddress ? projectTokenAddress : collateralToken;
+
+        uint256 amountA = tokenA == collateralToken ? collateralToSeed : projectTokenAmountToSeed;
+        uint256 amountB = tokenB == collateralToken ? collateralToSeed : projectTokenAmountToSeed;
+
+        // Approve the Balancer Vault to spend the tokens held by this factory.
+        IERC20(tokenA).approve(config.balancerVault, amountA);
+        IERC20(tokenB).approve(config.balancerVault, amountB);
+
+        // Construct the JoinPoolRequest.
+        address[] memory assets = new address[](2);
+        assets[0] = tokenA;
+        assets[1] = tokenB;
+
+        uint256[] memory maxAmountsIn = new uint256[](2);
+        maxAmountsIn[0] = amountA;
+        maxAmountsIn[1] = amountB;
+
+        // For initial liquidity, the userData is abi.encode(0, amountsIn). `0` is the `INIT` action.
+        bytes memory userData = abi.encode(uint256(0), maxAmountsIn);
+
+        IBalancerVault.JoinPoolRequest memory request = IBalancerVault.JoinPoolRequest({
+            assets: assets,
+            maxAmountsIn: maxAmountsIn,
+            userData: userData,
+            fromInternalBalance: false
+        });
+
+        // Join the Balancer pool.
+        IBalancerVault(config.balancerVault).joinPool(
+            config.poolId,
+            address(this), // The factory sends the tokens
+            projectOwner, // The project owner receives the BPT (LP tokens)
+            request
+        );
     }
 }

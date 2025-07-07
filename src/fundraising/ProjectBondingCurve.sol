@@ -23,7 +23,7 @@ error ProjectBondingCurve__TransferFailed();
 
 /**
  * @title ProjectBondingCurve
- * @author Azemora Team
+ * @author Genci Mehmeti
  * @dev This is the dedicated, project-specific contract that manages the entire market
  * for a single project's token. It holds collateral, mints/burns project tokens based
  * on a linear bonding curve, and enforces vesting and fund withdrawal safeguards.
@@ -41,7 +41,7 @@ contract ProjectBondingCurve is
     // --- State Variables ---
 
     // Core Contracts
-    ProjectToken public projectToken;
+    ProjectToken internal _projectToken;
     IERC20 public collateralToken;
 
     // Bonding Curve Parameters
@@ -68,13 +68,23 @@ contract ProjectBondingCurve is
         _disableInitializers();
     }
 
+    // --- Overrides to resolve inheritance conflicts ---
+
+    function owner() public view virtual override(OwnableUpgradeable, IBondingCurveStrategy) returns (address) {
+        return OwnableUpgradeable.owner();
+    }
+
+    function projectToken() public view virtual override returns (address) {
+        return address(_projectToken);
+    }
+
     /**
      * @notice Initializes the bonding curve contract.
      * @dev This is called only once by the BondingCurveFactory immediately after deployment.
      * It decodes the strategy-specific parameters to configure the curve.
      */
     function initialize(
-        address _projectToken,
+        address _projectTokenAddress,
         address _collateralToken,
         address _projectOwner,
         bytes calldata strategyInitializationData
@@ -91,7 +101,7 @@ contract ProjectBondingCurve is
             uint256 _withdrawalFrequency
         ) = abi.decode(strategyInitializationData, (uint256, uint256, uint256, uint256, uint256, uint256));
 
-        projectToken = ProjectToken(_projectToken);
+        _projectToken = ProjectToken(_projectTokenAddress);
         collateralToken = IERC20(_collateralToken);
         slope = _slope;
         lastWithdrawalTimestamp = block.timestamp;
@@ -104,7 +114,7 @@ contract ProjectBondingCurve is
             vestingStartTime = block.timestamp;
             vestingCliff = block.timestamp + _vestingCliffSeconds;
             vestingDuration = _vestingDurationSeconds;
-            projectToken.mint(address(this), _teamAllocation);
+            _projectToken.mint(address(this), _teamAllocation);
         }
     }
 
@@ -117,7 +127,7 @@ contract ProjectBondingCurve is
         if (cost > maxCollateralToSpend) revert ProjectBondingCurve__SlippageExceeded();
 
         collateralAvailableForWithdrawal += cost;
-        projectToken.mint(msg.sender, amountToBuy);
+        _projectToken.mint(msg.sender, amountToBuy);
 
         if (!collateralToken.transferFrom(msg.sender, address(this), cost)) {
             revert ProjectBondingCurve__TransferFailed();
@@ -138,7 +148,7 @@ contract ProjectBondingCurve is
         uint256 proceeds = _calculateSellProceeds(amountToSell);
         if (proceeds < minCollateralToReceive) revert ProjectBondingCurve__SlippageExceeded();
 
-        projectToken.burnFrom(msg.sender, amountToSell);
+        _projectToken.burnFrom(msg.sender, amountToSell);
 
         if (!collateralToken.transfer(msg.sender, proceeds)) {
             revert ProjectBondingCurve__TransferFailed();
@@ -190,16 +200,44 @@ contract ProjectBondingCurve is
 
         teamTokensClaimed += claimableAmount;
 
-        if (!projectToken.transfer(owner(), claimableAmount)) {
+        if (!_projectToken.transfer(owner(), claimableAmount)) {
             revert ProjectBondingCurve__TransferFailed();
         }
         return claimableAmount;
     }
 
+    /**
+     * @notice Releases a specified amount of collateral and project tokens for AMM seeding.
+     * @dev This is a privileged function intended to be called by the `BondingCurveFactory`.
+     * It is protected by the `onlyOwner` modifier.
+     * @param collateralAmount The amount of the collateral token to release.
+     * @param projectTokenAmount The amount of the project token to release.
+     */
+    function releaseLiquidity(uint256 collateralAmount, uint256 projectTokenAmount)
+        external
+        override
+        nonReentrant
+        onlyOwner
+    {
+        if (collateralToken.balanceOf(address(this)) < collateralAmount) {
+            revert ProjectBondingCurve__InsufficientBalance();
+        }
+        if (_projectToken.balanceOf(address(this)) < projectTokenAmount) {
+            revert ProjectBondingCurve__InsufficientBalance();
+        }
+
+        if (!collateralToken.transfer(msg.sender, collateralAmount)) {
+            revert ProjectBondingCurve__TransferFailed();
+        }
+        if (!_projectToken.transfer(msg.sender, projectTokenAmount)) {
+            revert ProjectBondingCurve__TransferFailed();
+        }
+    }
+
     // --- Internal Math Functions ---
 
     function _calculateBuyCost(uint256 amountToBuy) internal view returns (uint256) {
-        uint256 s1 = projectToken.totalSupply() - teamAllocation;
+        uint256 s1 = _projectToken.totalSupply() - teamAllocation;
         uint256 s2 = s1 + amountToBuy;
         // cost = integral of (slope * s)ds from s1 to s2
         // cost = slope/2 * (s2^2 - s1^2)
@@ -208,7 +246,7 @@ contract ProjectBondingCurve is
     }
 
     function _calculateSellProceeds(uint256 amountToSell) internal view returns (uint256) {
-        uint256 currentSupply = projectToken.totalSupply() - teamAllocation;
+        uint256 currentSupply = _projectToken.totalSupply() - teamAllocation;
         if (amountToSell > currentSupply) revert ProjectBondingCurve__InsufficientBalance();
         uint256 s1 = currentSupply;
         uint256 s2 = s1 - amountToSell;

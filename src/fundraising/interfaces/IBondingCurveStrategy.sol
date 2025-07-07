@@ -21,4 +21,27 @@ interface IBondingCurveStrategy {
         address projectOwner,
         bytes calldata strategyInitializationData
     ) external;
+
+    /**
+     * @notice Releases a specified amount of collateral and project tokens from the bonding curve.
+     * @dev This function is intended to be called by a trusted factory or manager contract
+     * to seed a liquidity pool on a decentralized exchange.
+     * It is the responsibility of the bonding curve implementation to ensure that only
+     * an authorized address (e.g., its owner, which is the factory) can call this.
+     * @param collateralAmount The amount of the collateral token to release.
+     * @param projectTokenAmount The amount of the project token to release.
+     */
+    function releaseLiquidity(uint256 collateralAmount, uint256 projectTokenAmount) external;
+
+    /**
+     * @notice Returns the owner of the bonding curve.
+     * @return The address of the owner.
+     */
+    function owner() external view returns (address);
+
+    /**
+     * @notice Returns the project token associated with the bonding curve.
+     * @return The address of the project token.
+     */
+    function projectToken() external view returns (address);
 }

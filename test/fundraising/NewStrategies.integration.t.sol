@@ -75,9 +75,16 @@ contract NewStrategiesIntegrationTest is Test {
 
         // 3. Create the Bonding Curve via the Factory
         vm.prank(projectOwner);
-        address curveAddress = factory.createBondingCurve(
-            projectId, EXPONENTIAL_STRATEGY_ID, "Exponential Token", "EXPO", strategyInitializationData
-        );
+        bytes memory ammConfigData = abi.encode(false, 0, address(0), bytes32(0));
+        BondingCurveParams memory params = BondingCurveParams({
+            projectId: projectId,
+            strategyId: EXPONENTIAL_STRATEGY_ID,
+            tokenName: "Exponential Token",
+            tokenSymbol: "EXPO",
+            strategyInitializationData: strategyInitializationData,
+            ammConfigData: ammConfigData
+        });
+        address curveAddress = factory.createBondingCurve(params);
         assertTrue(curveAddress != address(0));
 
         // 4. Interact with the deployed curve
@@ -91,7 +98,9 @@ contract NewStrategiesIntegrationTest is Test {
         vm.stopPrank();
 
         assertEq(actualCost, expectedCost, "Buy cost should be correct on deployed exponential curve");
-        assertEq(deployedCurve.projectToken().balanceOf(user1), amountToBuy, "User should receive project tokens");
+        assertEq(
+            IERC20(deployedCurve.projectToken()).balanceOf(user1), amountToBuy, "User should receive project tokens"
+        );
     }
 
     function test_ExponentialCurve_VestingAndWithdrawal() public {
@@ -108,10 +117,18 @@ contract NewStrategiesIntegrationTest is Test {
             WITHDRAWAL_FREQUENCY
         );
         vm.prank(projectOwner);
-        address curveAddress =
-            factory.createBondingCurve(projectId, EXPONENTIAL_STRATEGY_ID, "Vesting Token", "VEST", initData);
+        bytes memory ammConfigData = abi.encode(false, 0, address(0), bytes32(0));
+        BondingCurveParams memory params = BondingCurveParams({
+            projectId: projectId,
+            strategyId: EXPONENTIAL_STRATEGY_ID,
+            tokenName: "Vesting Token",
+            tokenSymbol: "VEST",
+            strategyInitializationData: initData,
+            ammConfigData: ammConfigData
+        });
+        address curveAddress = factory.createBondingCurve(params);
         ExponentialCurve deployedCurve = ExponentialCurve(payable(curveAddress));
-        ProjectToken projectToken = deployedCurve.projectToken();
+        ProjectToken projectToken = ProjectToken(deployedCurve.projectToken());
         uint256 ownerInitialCollateral = collateralToken.balanceOf(projectOwner);
 
         // 2. Test Vesting: Cannot claim before cliff
@@ -159,8 +176,16 @@ contract NewStrategiesIntegrationTest is Test {
         projectRegistry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
         bytes memory initData = abi.encode(1, 0, 0, 0, 10000, 0); // No team allocation, 100% withdrawal
         vm.prank(projectOwner);
-        address curveAddress =
-            factory.createBondingCurve(projectId, EXPONENTIAL_STRATEGY_ID, "Overflow", "OVER", initData);
+        bytes memory ammConfigData = abi.encode(false, 0, address(0), bytes32(0));
+        BondingCurveParams memory params = BondingCurveParams({
+            projectId: projectId,
+            strategyId: EXPONENTIAL_STRATEGY_ID,
+            tokenName: "Overflow",
+            tokenSymbol: "OVER",
+            strategyInitializationData: initData,
+            ammConfigData: ammConfigData
+        });
+        address curveAddress = factory.createBondingCurve(params);
         ExponentialCurve deployedCurve = ExponentialCurve(payable(curveAddress));
 
         // 2. Attempt a buy that will cause the s2^3 calculation to overflow uint256

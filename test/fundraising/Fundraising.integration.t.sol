@@ -7,7 +7,9 @@ import {
     ProjectBondingCurve, ProjectBondingCurve__WithdrawalTooSoon
 } from "../../src/fundraising/ProjectBondingCurve.sol";
 import {
-    BondingCurveFactory, BondingCurveFactory__NotVerifiedProject
+    BondingCurveFactory,
+    BondingCurveParams,
+    BondingCurveFactory__NotVerifiedProject
 } from "../../src/fundraising/BondingCurveFactory.sol";
 import {ProjectToken} from "../../src/fundraising/ProjectToken.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -101,22 +103,26 @@ contract FundraisingIntegrationTest is Test {
         // 1. Alice (Project Owner) Creates a Bonding Curve
         // =================================================================
         vm.startPrank(alice);
-        ProjectBondingCurve bondingCurve = ProjectBondingCurve(
-            factory.createBondingCurve(
-                projectId,
-                LINEAR_CURVE_V1,
-                TOKEN_NAME,
-                TOKEN_SYMBOL,
-                abi.encode(
-                    SLOPE,
-                    TEAM_ALLOCATION,
-                    VESTING_CLIFF_SECONDS,
-                    VESTING_DURATION_SECONDS,
-                    MAX_WITHDRAWAL_PERCENTAGE,
-                    WITHDRAWAL_FREQUENCY_SECONDS
-                )
-            )
+        bytes memory strategyInitData = abi.encode(
+            SLOPE,
+            TEAM_ALLOCATION,
+            VESTING_CLIFF_SECONDS,
+            VESTING_DURATION_SECONDS,
+            MAX_WITHDRAWAL_PERCENTAGE,
+            WITHDRAWAL_FREQUENCY_SECONDS
         );
+        bytes memory ammConfigData = abi.encode(false, 0, address(0), bytes32(0));
+
+        BondingCurveParams memory params = BondingCurveParams({
+            projectId: projectId,
+            strategyId: LINEAR_CURVE_V1,
+            tokenName: TOKEN_NAME,
+            tokenSymbol: TOKEN_SYMBOL,
+            strategyInitializationData: strategyInitData,
+            ammConfigData: ammConfigData
+        });
+
+        ProjectBondingCurve bondingCurve = ProjectBondingCurve(factory.createBondingCurve(params));
         vm.stopPrank();
 
         projectToken = ProjectToken(bondingCurve.projectToken());
@@ -198,20 +204,25 @@ contract FundraisingIntegrationTest is Test {
 
         // Expect revert because the project is not active
         vm.expectRevert(BondingCurveFactory__NotVerifiedProject.selector);
-        factory.createBondingCurve(
-            unverifiedProjectId,
-            LINEAR_CURVE_V1,
-            "Unverified Token",
-            "UT",
-            abi.encode(
-                SLOPE,
-                TEAM_ALLOCATION,
-                VESTING_CLIFF_SECONDS,
-                VESTING_DURATION_SECONDS,
-                MAX_WITHDRAWAL_PERCENTAGE,
-                WITHDRAWAL_FREQUENCY_SECONDS
-            )
+        bytes memory strategyInitData = abi.encode(
+            SLOPE,
+            TEAM_ALLOCATION,
+            VESTING_CLIFF_SECONDS,
+            VESTING_DURATION_SECONDS,
+            MAX_WITHDRAWAL_PERCENTAGE,
+            WITHDRAWAL_FREQUENCY_SECONDS
         );
+        bytes memory ammConfigData = abi.encode(false, 0, address(0), bytes32(0));
+
+        BondingCurveParams memory params = BondingCurveParams({
+            projectId: unverifiedProjectId,
+            strategyId: LINEAR_CURVE_V1,
+            tokenName: "Unverified Token",
+            tokenSymbol: "UT",
+            strategyInitializationData: strategyInitData,
+            ammConfigData: ammConfigData
+        });
+        factory.createBondingCurve(params);
         vm.stopPrank();
     }
 }

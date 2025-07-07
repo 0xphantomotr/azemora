@@ -24,7 +24,7 @@ error ExponentialCurve__OverflowRisk();
 
 /**
  * @title ExponentialCurve
- * @author Azemora Team
+ * @author Genci Mehmeti
  * @dev This contract implements an exponential-like (super-linear) bonding curve, where price = k * supply^2.
  * The token price accelerates as more tokens are minted, making it suitable for high-growth projects.
  * It's a strategy meant to be deployed by the BondingCurveFactory.
@@ -41,7 +41,7 @@ contract ExponentialCurve is
     // --- State Variables ---
 
     // Core Contracts
-    ProjectToken public projectToken;
+    ProjectToken internal _projectToken;
     IERC20 public collateralToken;
 
     // Bonding Curve Parameters
@@ -68,12 +68,22 @@ contract ExponentialCurve is
         _disableInitializers();
     }
 
+    // --- Overrides to resolve inheritance conflicts ---
+
+    function owner() public view virtual override(OwnableUpgradeable, IBondingCurveStrategy) returns (address) {
+        return OwnableUpgradeable.owner();
+    }
+
+    function projectToken() public view virtual override returns (address) {
+        return address(_projectToken);
+    }
+
     /**
      * @notice Initializes the exponential curve contract.
      * @dev Called by the BondingCurveFactory. Decodes strategy-specific parameters.
      */
     function initialize(
-        address _projectToken,
+        address _projectTokenAddress,
         address _collateralToken,
         address _projectOwner,
         bytes calldata strategyInitializationData
@@ -90,7 +100,7 @@ contract ExponentialCurve is
             uint256 _withdrawalFrequency
         ) = abi.decode(strategyInitializationData, (uint256, uint256, uint256, uint256, uint256, uint256));
 
-        projectToken = ProjectToken(_projectToken);
+        _projectToken = ProjectToken(_projectTokenAddress);
         collateralToken = IERC20(_collateralToken);
         priceCoefficient = _priceCoefficient;
         lastWithdrawalTimestamp = block.timestamp;
@@ -102,7 +112,7 @@ contract ExponentialCurve is
             vestingStartTime = block.timestamp;
             vestingCliff = block.timestamp + _vestingCliffSeconds;
             vestingDuration = _vestingDurationSeconds;
-            projectToken.mint(address(this), _teamAllocation);
+            _projectToken.mint(address(this), _teamAllocation);
         }
     }
 
@@ -115,7 +125,7 @@ contract ExponentialCurve is
         if (cost > maxCollateralToSpend) revert ExponentialCurve__SlippageExceeded();
 
         collateralAvailableForWithdrawal += cost;
-        projectToken.mint(msg.sender, amountToBuy);
+        _projectToken.mint(msg.sender, amountToBuy);
 
         collateralToken.safeTransferFrom(msg.sender, address(this), cost);
 
@@ -134,7 +144,7 @@ contract ExponentialCurve is
         uint256 proceeds = _calculateSellProceeds(amountToSell);
         if (proceeds < minCollateralToReceive) revert ExponentialCurve__SlippageExceeded();
 
-        projectToken.burnFrom(msg.sender, amountToSell);
+        _projectToken.burnFrom(msg.sender, amountToSell);
 
         collateralToken.safeTransfer(msg.sender, proceeds);
 
@@ -182,14 +192,38 @@ contract ExponentialCurve is
 
         teamTokensClaimed += claimableAmount;
 
-        projectToken.transfer(owner(), claimableAmount);
+        _projectToken.transfer(owner(), claimableAmount);
         return claimableAmount;
+    }
+
+    /**
+     * @notice Releases a specified amount of collateral and project tokens for AMM seeding.
+     * @dev This is a privileged function intended to be called by the `BondingCurveFactory`.
+     * It is protected by the `onlyOwner` modifier.
+     * @param collateralAmount The amount of the collateral token to release.
+     * @param projectTokenAmount The amount of the project token to release.
+     */
+    function releaseLiquidity(uint256 collateralAmount, uint256 projectTokenAmount)
+        external
+        override
+        nonReentrant
+        onlyOwner
+    {
+        if (collateralToken.balanceOf(address(this)) < collateralAmount) {
+            revert ExponentialCurve__InsufficientBalance();
+        }
+        if (_projectToken.balanceOf(address(this)) < projectTokenAmount) {
+            revert ExponentialCurve__InsufficientBalance();
+        }
+
+        collateralToken.safeTransfer(msg.sender, collateralAmount);
+        _projectToken.transfer(msg.sender, projectTokenAmount);
     }
 
     // --- Internal Math Functions ---
 
     function _calculateBuyCost(uint256 amountToBuy) internal view returns (uint256) {
-        uint256 s1 = projectToken.totalSupply() - teamAllocation;
+        uint256 s1 = _projectToken.totalSupply() - teamAllocation;
         uint256 s2 = s1 + amountToBuy;
         // cost = integral of (k * s^2)ds from s1 to s2
         // cost = k/3 * (s2^3 - s1^3)
@@ -202,7 +236,7 @@ contract ExponentialCurve is
     }
 
     function _calculateSellProceeds(uint256 amountToSell) internal view returns (uint256) {
-        uint256 currentSupply = projectToken.totalSupply() - teamAllocation;
+        uint256 currentSupply = _projectToken.totalSupply() - teamAllocation;
         if (amountToSell > currentSupply) revert ExponentialCurve__InsufficientBalance();
         uint256 s1 = currentSupply;
         uint256 s2 = s1 - amountToSell;

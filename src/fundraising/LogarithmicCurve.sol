@@ -20,7 +20,7 @@ error LogarithmicCurve__NotImplemented();
 
 /**
  * @title LogarithmicCurve
- * @author Azemora Team
+ * @author Genci Mehmeti
  * @dev This contract implements a logarithmic-like bonding curve where price = k / (S_max - supply).
  * The token price is low at the beginning and rises asymptotically towards infinity as it approaches a maximum supply.
  * This heavily incentivizes early investment. It is a strategy meant to be deployed by the BondingCurveFactory.
@@ -35,7 +35,7 @@ contract LogarithmicCurve is
     using SafeERC20 for IERC20;
 
     // --- State Variables ---
-    ProjectToken public projectToken;
+    ProjectToken internal _projectToken;
     IERC20 public collateralToken;
 
     // Bonding Curve Parameters
@@ -50,16 +50,16 @@ contract LogarithmicCurve is
     }
 
     function initialize(
-        address _projectToken,
+        address _projectTokenAddress,
         address _collateralToken,
         address _projectOwner,
         bytes calldata strategyInitializationData
-    ) external initializer {
-        __LogarithmicCurve_init(_projectToken, _collateralToken, _projectOwner, strategyInitializationData);
+    ) external override initializer {
+        __LogarithmicCurve_init(_projectTokenAddress, _collateralToken, _projectOwner, strategyInitializationData);
     }
 
     function __LogarithmicCurve_init(
-        address _projectToken,
+        address _projectTokenAddress,
         address _collateralToken,
         address _projectOwner,
         bytes calldata strategyInitializationData
@@ -71,7 +71,7 @@ contract LogarithmicCurve is
 
         if (_priceCoefficient == 0 || _maxSupply == 0) revert LogarithmicCurve__InvalidParameter();
 
-        projectToken = ProjectToken(_projectToken);
+        _projectToken = ProjectToken(_projectTokenAddress);
         collateralToken = IERC20(_collateralToken);
         priceCoefficient = UD60x18.wrap(_priceCoefficient);
         maxSupply = UD60x18.wrap(_maxSupply);
@@ -82,7 +82,7 @@ contract LogarithmicCurve is
         uint256 cost = _calculateBuyCost(amountToBuy);
         if (cost > maxCollateralToSpend) revert LogarithmicCurve__SlippageExceeded();
 
-        projectToken.mint(msg.sender, amountToBuy);
+        _projectToken.mint(msg.sender, amountToBuy);
         collateralToken.safeTransferFrom(msg.sender, address(this), cost);
 
         emit Buy(msg.sender, cost, amountToBuy);
@@ -99,7 +99,7 @@ contract LogarithmicCurve is
         uint256 proceeds = _calculateSellProceeds(amountToSell);
         if (proceeds < minCollateralToReceive) revert LogarithmicCurve__SlippageExceeded();
 
-        projectToken.burnFrom(msg.sender, amountToSell);
+        _projectToken.burnFrom(msg.sender, amountToSell);
         collateralToken.safeTransfer(msg.sender, proceeds);
 
         emit Sell(msg.sender, amountToSell, proceeds);
@@ -122,10 +122,34 @@ contract LogarithmicCurve is
         return amount;
     }
 
+    /**
+     * @notice Releases a specified amount of collateral and project tokens for AMM seeding.
+     * @dev This is a privileged function intended to be called by the `BondingCurveFactory`.
+     * It is protected by the `onlyOwner` modifier.
+     * @param collateralAmount The amount of the collateral token to release.
+     * @param projectTokenAmount The amount of the project token to release.
+     */
+    function releaseLiquidity(uint256 collateralAmount, uint256 projectTokenAmount)
+        external
+        override
+        nonReentrant
+        onlyOwner
+    {
+        if (collateralToken.balanceOf(address(this)) < collateralAmount) {
+            revert LogarithmicCurve__InvalidParameter(); // Reusing error for simplicity
+        }
+        if (_projectToken.balanceOf(address(this)) < projectTokenAmount) {
+            revert LogarithmicCurve__InvalidParameter(); // Reusing error for simplicity
+        }
+
+        collateralToken.safeTransfer(msg.sender, collateralAmount);
+        _projectToken.transfer(msg.sender, projectTokenAmount);
+    }
+
     // --- Internal Math ---
 
     function _calculateBuyCost(uint256 amountToBuy) internal view returns (uint256) {
-        uint256 s1_uint = projectToken.totalSupply();
+        uint256 s1_uint = _projectToken.totalSupply();
         uint256 s2_uint = s1_uint + amountToBuy;
         // The prb-math ln() function requires an input >= 1e18.
         // Therefore, (maxSupply - newSupply) must be at least 1e18.
@@ -144,7 +168,7 @@ contract LogarithmicCurve is
     }
 
     function _calculateSellProceeds(uint256 amountToSell) internal view returns (uint256) {
-        uint256 s1_uint = projectToken.totalSupply();
+        uint256 s1_uint = _projectToken.totalSupply();
         // The check for amountToSell > s1_uint is implicitly handled by `burnFrom`, which will revert.
         UD60x18 s1 = UD60x18.wrap(s1_uint);
         UD60x18 s2 = UD60x18.wrap(s1_uint - amountToSell);
@@ -155,5 +179,15 @@ contract LogarithmicCurve is
         UD60x18 ln_diff = ln1.sub(ln2);
 
         return priceCoefficient.mul(ln_diff).unwrap();
+    }
+
+    // --- Overrides to resolve inheritance conflicts ---
+
+    function owner() public view virtual override(OwnableUpgradeable, IBondingCurveStrategy) returns (address) {
+        return OwnableUpgradeable.owner();
+    }
+
+    function projectToken() public view virtual override returns (address) {
+        return address(_projectToken);
     }
 }

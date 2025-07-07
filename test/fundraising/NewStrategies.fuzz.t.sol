@@ -70,11 +70,20 @@ contract ExponentialCurveFuzzTest is FuzzTestBase {
         );
 
         // Deploy the curve via the factory to get the proxy
-        address curveAddress = factory.createBondingCurve(PROJECT_ID, strategyId, "Fuzz", "FUZ", initData);
+        bytes memory ammConfigData = abi.encode(false, 0, address(0), bytes32(0));
+        BondingCurveParams memory params = BondingCurveParams({
+            projectId: PROJECT_ID,
+            strategyId: strategyId,
+            tokenName: "Fuzz",
+            tokenSymbol: "FUZ",
+            strategyInitializationData: initData,
+            ammConfigData: ammConfigData
+        });
+        address curveAddress = factory.createBondingCurve(params);
 
         // Point our test variables to the deployed proxy and its token
         curve = ExponentialCurve(payable(curveAddress));
-        projectToken = curve.projectToken();
+        projectToken = ProjectToken(curve.projectToken());
 
         // Fuzzer approves the curve proxy to move its tokens
         vm.prank(fuzzer);
@@ -158,11 +167,20 @@ contract LogarithmicCurveFuzzTest is FuzzTestBase {
         );
 
         // Deploy the curve via the factory to get the proxy
-        address curveAddress = factory.createBondingCurve(PROJECT_ID, strategyId, "Fuzz", "FUZ", initData);
+        bytes memory ammConfigData = abi.encode(false, 0, address(0), bytes32(0));
+        BondingCurveParams memory params = BondingCurveParams({
+            projectId: PROJECT_ID,
+            strategyId: strategyId,
+            tokenName: "Fuzz",
+            tokenSymbol: "FUZ",
+            strategyInitializationData: initData,
+            ammConfigData: ammConfigData
+        });
+        address curveAddress = factory.createBondingCurve(params);
 
         // Point our test variables to the deployed proxy and its token
         curve = LogarithmicCurve(payable(curveAddress));
-        projectToken = curve.projectToken();
+        projectToken = ProjectToken(curve.projectToken());
 
         // Fuzzer approves the curve proxy to move its tokens
         vm.prank(fuzzer);
