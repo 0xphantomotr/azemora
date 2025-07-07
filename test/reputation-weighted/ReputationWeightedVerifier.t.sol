@@ -40,6 +40,9 @@ contract MockArbitrationCouncil is IArbitrationCouncil {
 }
 
 contract ReputationWeightedVerifierTest is Test {
+    // --- Events to mirror for testing ---
+    event TaskFinalized(bytes32 indexed taskId, bool finalOutcome, uint256 quantitativeOutcome);
+
     // --- Constants ---
     uint256 internal constant VOTING_PERIOD = 3 days;
     uint256 internal constant APPROVAL_THRESHOLD_BPS = 5001;
@@ -217,6 +220,11 @@ contract ReputationWeightedVerifierTest is Test {
             address(dMRVManager),
             abi.encodeWithSelector(dMRVManager.fulfillVerification.selector, projectId, claimId, expectedData)
         );
+
+        // We also expect the new event signature
+        vm.expectEmit(true, true, true, false);
+        emit TaskFinalized(taskId, true, 100);
+
         verifierModule.finalizeVerification(taskId);
 
         TaskStatus finalStatus = verifierModule.getTaskStatus(taskId);

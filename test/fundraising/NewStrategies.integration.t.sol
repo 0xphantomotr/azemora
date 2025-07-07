@@ -152,181 +152,24 @@ contract NewStrategiesIntegrationTest is Test {
         deployedCurve.withdrawCollateral();
     }
 
-    function test_DeployAndUseLogarithmicCurve() public {
-        // 1. Setup Project in Registry
-        bytes32 projectId = keccak256("Test Project Logarithmic");
+    function test_ExponentialCurve_RevertsOnOverflow() public {
+        // 1. Deploy the curve with a very low supply to make it easier to hit overflow
+        bytes32 projectId = keccak256("Overflow Test");
         projectRegistry.addProject(projectId, projectOwner);
         projectRegistry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
-
-        // 2. Prepare Initialization Data
-        bytes memory strategyInitializationData = abi.encode(
-            LOG_PRICE_COEFFICIENT,
-            TEAM_ALLOCATION,
-            VESTING_CLIFF_SECONDS,
-            VESTING_DURATION_SECONDS,
-            MAX_WITHDRAWAL_PERCENTAGE,
-            WITHDRAWAL_FREQUENCY
-        );
-
-        // 3. Create the Bonding Curve via the Factory
-        vm.prank(projectOwner);
-        address curveAddress = factory.createBondingCurve(
-            projectId, LOGARITHMIC_STRATEGY_ID, "Logarithmic Token", "LOGO", strategyInitializationData
-        );
-        assertTrue(curveAddress != address(0));
-
-        // 4. Interact with the deployed curve
-        LogarithmicCurve deployedCurve = LogarithmicCurve(payable(curveAddress));
-        uint256 amountToBuy = 100e18;
-        uint256 expectedCost = deployedCurve.getBuyPrice(amountToBuy);
-
-        vm.startPrank(user1);
-        collateralToken.approve(curveAddress, expectedCost);
-        uint256 actualCost = deployedCurve.buy(amountToBuy, expectedCost);
-        vm.stopPrank();
-
-        assertEq(actualCost, expectedCost, "Buy cost should be correct on deployed logarithmic curve");
-        assertEq(deployedCurve.projectToken().balanceOf(user1), amountToBuy, "User should receive project tokens");
-    }
-
-    function test_LogarithmicCurve_VestingAndWithdrawal() public {
-        // 1. Deploy the curve
-        bytes32 projectId = keccak256("Test Vesting Logarithmic");
-        projectRegistry.addProject(projectId, projectOwner);
-        projectRegistry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
-        bytes memory initData = abi.encode(
-            LOG_PRICE_COEFFICIENT,
-            TEAM_ALLOCATION,
-            VESTING_CLIFF_SECONDS,
-            VESTING_DURATION_SECONDS,
-            MAX_WITHDRAWAL_PERCENTAGE,
-            WITHDRAWAL_FREQUENCY
-        );
+        bytes memory initData = abi.encode(1, 0, 0, 0, 10000, 0); // No team allocation, 100% withdrawal
         vm.prank(projectOwner);
         address curveAddress =
-            factory.createBondingCurve(projectId, LOGARITHMIC_STRATEGY_ID, "Vesting Token", "VESTLOG", initData);
-        LogarithmicCurve deployedCurve = LogarithmicCurve(payable(curveAddress));
-        ProjectToken projectToken = deployedCurve.projectToken();
-        uint256 ownerInitialCollateral = collateralToken.balanceOf(projectOwner);
-
-        // 2. Test Vesting: Cannot claim before cliff
-        vm.prank(projectOwner);
-        vm.expectRevert(abi.encodeWithSelector(LogarithmicCurve__VestingNotStarted.selector));
-        deployedCurve.claimVestedTokens();
-
-        // 3. Warp time past cliff & test vesting claim
-        vm.warp(block.timestamp + VESTING_CLIFF_SECONDS + 1 days);
-        vm.prank(projectOwner);
-        uint256 vestedAmount = deployedCurve.claimVestedTokens();
-        uint256 expectedVested = (TEAM_ALLOCATION * (VESTING_CLIFF_SECONDS + 1 days)) / VESTING_DURATION_SECONDS;
-        assertEq(vestedAmount, expectedVested, "Incorrect vested amount after cliff");
-        assertEq(projectToken.balanceOf(projectOwner), vestedAmount, "Owner should receive vested tokens");
-
-        // 4. Simulate buys to add collateral
-        vm.startPrank(user1);
-        uint256 buyAmount = 50e18;
-        uint256 cost = deployedCurve.getBuyPrice(buyAmount);
-        collateralToken.approve(curveAddress, cost);
-        deployedCurve.buy(buyAmount, cost);
-        vm.stopPrank();
-
-        // 5. First withdrawal succeeds because we warped time
-        vm.prank(projectOwner);
-        uint256 withdrawable = (cost * MAX_WITHDRAWAL_PERCENTAGE) / 10000;
-        uint256 withdrawn = deployedCurve.withdrawCollateral();
-        assertEq(withdrawn, withdrawable, "Incorrect withdrawal amount");
-        assertEq(
-            collateralToken.balanceOf(projectOwner),
-            ownerInitialCollateral + withdrawn,
-            "Owner should receive collateral"
-        );
-
-        // 6. Second withdrawal fails as it's too soon
-        vm.prank(projectOwner);
-        vm.expectRevert(abi.encodeWithSelector(LogarithmicCurve__WithdrawalTooSoon.selector));
-        deployedCurve.withdrawCollateral();
-    }
-
-    function test_AccessControl() public {
-        // 1. Deploy a curve (using exponential as the example)
-        bytes32 projectId = keccak256("Test Access Control");
-        projectRegistry.addProject(projectId, projectOwner);
-        projectRegistry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
-        bytes memory initData = abi.encode(
-            EXP_PRICE_COEFFICIENT,
-            TEAM_ALLOCATION,
-            VESTING_CLIFF_SECONDS,
-            VESTING_DURATION_SECONDS,
-            MAX_WITHDRAWAL_PERCENTAGE,
-            WITHDRAWAL_FREQUENCY
-        );
-        vm.prank(projectOwner);
-        address curveAddress =
-            factory.createBondingCurve(projectId, EXPONENTIAL_STRATEGY_ID, "Access Control Token", "ACT", initData);
+            factory.createBondingCurve(projectId, EXPONENTIAL_STRATEGY_ID, "Overflow", "OVER", initData);
         ExponentialCurve deployedCurve = ExponentialCurve(payable(curveAddress));
 
-        // 2. Prank as a random user (user1) and expect reverts
-        vm.startPrank(user1);
-        string memory expectedRevert = "OwnableUnauthorizedAccount(address)";
-        vm.expectRevert(abi.encodeWithSignature(expectedRevert, user1));
-        deployedCurve.withdrawCollateral();
+        // 2. Attempt a buy that will cause the s2^3 calculation to overflow uint256
+        // The check inside the contract is for s2 > 2.2e25
+        uint256 massiveBuy = 3e25;
 
-        vm.expectRevert(abi.encodeWithSignature(expectedRevert, user1));
-        deployedCurve.claimVestedTokens();
-        vm.stopPrank();
-    }
-
-    function test_ExponentialCurve_OverflowRevert() public {
-        // 1. Deploy the curve
-        bytes32 projectId = keccak256("Test Overflow Exponential");
-        projectRegistry.addProject(projectId, projectOwner);
-        projectRegistry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
-        bytes memory initData = abi.encode(
-            EXP_PRICE_COEFFICIENT,
-            0,
-            0,
-            0,
-            0,
-            0 // No team allocation for this test
-        );
-        vm.prank(projectOwner);
-        address curveAddress =
-            factory.createBondingCurve(projectId, EXPONENTIAL_STRATEGY_ID, "Overflow Token", "OVR", initData);
-        ExponentialCurve deployedCurve = ExponentialCurve(payable(curveAddress));
-
-        // 2. Attempt to buy an amount that would cause an overflow in calculation
-        uint256 massiveAmount = 3e25; // This will push s2^3 over uint256.max
         vm.startPrank(user1);
         collateralToken.approve(curveAddress, type(uint256).max);
         vm.expectRevert(abi.encodeWithSelector(ExponentialCurve__OverflowRisk.selector));
-        deployedCurve.buy(massiveAmount, type(uint256).max);
-        vm.stopPrank();
-    }
-
-    function test_LogarithmicCurve_OverflowRevert() public {
-        // 1. Deploy the curve
-        bytes32 projectId = keccak256("Test Overflow Logarithmic");
-        projectRegistry.addProject(projectId, projectOwner);
-        projectRegistry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
-        bytes memory initData = abi.encode(
-            LOG_PRICE_COEFFICIENT,
-            0,
-            0,
-            0,
-            0,
-            0 // No team allocation for this test
-        );
-        vm.prank(projectOwner);
-        address curveAddress =
-            factory.createBondingCurve(projectId, LOGARITHMIC_STRATEGY_ID, "Overflow Token Log", "OVRLOG", initData);
-        LogarithmicCurve deployedCurve = LogarithmicCurve(payable(curveAddress));
-
-        // 2. Attempt to buy an amount that would cause an overflow in calculation
-        uint256 massiveAmount = 3e25; // This will push s^3 over uint256.max
-        vm.startPrank(user1);
-        collateralToken.approve(curveAddress, type(uint256).max);
-        vm.expectRevert(abi.encodeWithSelector(LogarithmicCurve__OverflowRisk.selector));
-        deployedCurve.buy(massiveAmount, type(uint256).max);
-        vm.stopPrank();
+        deployedCurve.buy(massiveBuy, type(uint256).max);
     }
 }

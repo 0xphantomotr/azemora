@@ -93,7 +93,7 @@ contract ReputationWeightedVerifier is
     event Voted(bytes32 indexed taskId, address indexed voter, Vote vote, uint256 weight);
     event TaskResolutionProposed(bytes32 indexed taskId, bool provisionalOutcome, uint256 challengeDeadline);
     event TaskChallenged(bytes32 indexed taskId, address indexed challenger);
-    event TaskFinalized(bytes32 indexed taskId, bool finalOutcome);
+    event TaskFinalized(bytes32 indexed taskId, bool finalOutcome, uint256 quantitativeOutcome);
     event TaskOverturned(bytes32 indexed taskId);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -199,7 +199,7 @@ contract ReputationWeightedVerifier is
         bytes memory data = abi.encode(quantitativeOutcome, wasArbitrated, arbitrationDisputeId, task.evidenceURI);
         dMRVManager.fulfillVerification(task.projectId, task.claimId, data);
 
-        emit TaskFinalized(taskId, task.outcome);
+        emit TaskFinalized(taskId, task.outcome, quantitativeOutcome);
     }
 
     /**
@@ -224,7 +224,7 @@ contract ReputationWeightedVerifier is
         bytes memory data = abi.encode(finalAmount, true, taskId, task.evidenceURI);
         dMRVManager.fulfillVerification(task.projectId, task.claimId, data);
 
-        emit TaskFinalized(taskId, task.outcome);
+        emit TaskFinalized(taskId, task.outcome, finalAmount);
     }
 
     function reverseVerification(bytes32 claimId) external override onlyRole(ARBITRATION_COUNCIL_ROLE) {

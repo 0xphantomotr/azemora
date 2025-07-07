@@ -9,25 +9,21 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "./interfaces/IBondingCurveStrategy.sol";
+import {UD60x18} from "@prb/math/src/UD60x18.sol";
 
 // --- Custom Errors ---
 error LogarithmicCurve__ZeroAddress();
 error LogarithmicCurve__InvalidParameter();
 error LogarithmicCurve__SlippageExceeded();
-error LogarithmicCurve__InsufficientBalance();
-error LogarithmicCurve__WithdrawalLimitExceeded();
-error LogarithmicCurve__WithdrawalTooSoon();
-error LogarithmicCurve__VestingNotStarted();
-error LogarithmicCurve__NothingToClaim();
-error LogarithmicCurve__TransferFailed();
-error LogarithmicCurve__OverflowRisk();
+error LogarithmicCurve__SupplyCapReached();
+error LogarithmicCurve__NotImplemented();
 
 /**
  * @title LogarithmicCurve
  * @author Azemora Team
- * @dev This contract implements a logarithmic-like (sub-linear) bonding curve, using a square root function
- * where price is proportional to sqrt(supply). The token price increases at a decreasing rate,
- * encouraging wider initial distribution. It is a strategy meant to be deployed by the BondingCurveFactory.
+ * @dev This contract implements a logarithmic-like bonding curve where price = k / (S_max - supply).
+ * The token price is low at the beginning and rises asymptotically towards infinity as it approaches a maximum supply.
+ * This heavily incentivizes early investment. It is a strategy meant to be deployed by the BondingCurveFactory.
  */
 contract LogarithmicCurve is
     Initializable,
@@ -39,30 +35,14 @@ contract LogarithmicCurve is
     using SafeERC20 for IERC20;
 
     // --- State Variables ---
-
     ProjectToken public projectToken;
     IERC20 public collateralToken;
 
-    uint256 public priceCoefficient; // 'k' in the formula price = k * sqrt(supply)
+    // Bonding Curve Parameters
+    UD60x18 public priceCoefficient; // 'k' in the formula
+    UD60x18 public maxSupply; // 'S_max' in the formula
 
-    // Team Vesting Parameters
-    uint256 public teamAllocation;
-    uint256 public vestingCliff;
-    uint256 public vestingDuration;
-    uint256 public vestingStartTime;
-    uint256 public teamTokensClaimed;
-
-    // Withdrawal Safeguards
-    uint256 public maxWithdrawalPercentage;
-    uint256 public withdrawalFrequency;
-    uint256 public lastWithdrawalTimestamp;
-    uint256 public collateralAvailableForWithdrawal;
-
-    uint256 private constant PERCENTAGE_DENOMINATOR = 10000;
-    uint256 private constant WAD = 1e18;
-    // For sqrt math, s is 18 decimals. s^3 is 54 decimals. sqrt(s^3) is 27 decimals.
-    // So we normalize by 10^27.
-    uint256 private constant WAD_POW_1_5 = 1e27;
+    uint256 private constant WAD = 1e18; // For fixed-point math scaling
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -74,46 +54,35 @@ contract LogarithmicCurve is
         address _collateralToken,
         address _projectOwner,
         bytes calldata strategyInitializationData
-    ) external override initializer {
+    ) external initializer {
+        __LogarithmicCurve_init(_projectToken, _collateralToken, _projectOwner, strategyInitializationData);
+    }
+
+    function __LogarithmicCurve_init(
+        address _projectToken,
+        address _collateralToken,
+        address _projectOwner,
+        bytes calldata strategyInitializationData
+    ) internal onlyInitializing {
         __Ownable_init(_projectOwner);
         __ReentrancyGuard_init();
 
-        (
-            uint256 _priceCoefficient,
-            uint256 _teamAllocation,
-            uint256 _vestingCliffSeconds,
-            uint256 _vestingDurationSeconds,
-            uint256 _maxWithdrawalPercentage,
-            uint256 _withdrawalFrequency
-        ) = abi.decode(strategyInitializationData, (uint256, uint256, uint256, uint256, uint256, uint256));
+        (uint256 _priceCoefficient, uint256 _maxSupply) = abi.decode(strategyInitializationData, (uint256, uint256));
+
+        if (_priceCoefficient == 0 || _maxSupply == 0) revert LogarithmicCurve__InvalidParameter();
 
         projectToken = ProjectToken(_projectToken);
         collateralToken = IERC20(_collateralToken);
-        priceCoefficient = _priceCoefficient;
-        lastWithdrawalTimestamp = block.timestamp;
-        maxWithdrawalPercentage = _maxWithdrawalPercentage;
-        withdrawalFrequency = _withdrawalFrequency;
-
-        teamAllocation = _teamAllocation;
-        if (_teamAllocation > 0) {
-            vestingStartTime = block.timestamp;
-            vestingCliff = block.timestamp + _vestingCliffSeconds;
-            vestingDuration = _vestingDurationSeconds;
-            projectToken.mint(address(this), _teamAllocation);
-        }
+        priceCoefficient = UD60x18.wrap(_priceCoefficient);
+        maxSupply = UD60x18.wrap(_maxSupply);
     }
-
-    // --- User-Facing Functions ---
 
     function buy(uint256 amountToBuy, uint256 maxCollateralToSpend) external override nonReentrant returns (uint256) {
         if (amountToBuy == 0) revert LogarithmicCurve__InvalidParameter();
-
         uint256 cost = _calculateBuyCost(amountToBuy);
         if (cost > maxCollateralToSpend) revert LogarithmicCurve__SlippageExceeded();
 
-        collateralAvailableForWithdrawal += cost;
         projectToken.mint(msg.sender, amountToBuy);
-
         collateralToken.safeTransferFrom(msg.sender, address(this), cost);
 
         emit Buy(msg.sender, cost, amountToBuy);
@@ -127,19 +96,15 @@ contract LogarithmicCurve is
         returns (uint256)
     {
         if (amountToSell == 0) revert LogarithmicCurve__InvalidParameter();
-
         uint256 proceeds = _calculateSellProceeds(amountToSell);
         if (proceeds < minCollateralToReceive) revert LogarithmicCurve__SlippageExceeded();
 
         projectToken.burnFrom(msg.sender, amountToSell);
-
         collateralToken.safeTransfer(msg.sender, proceeds);
 
         emit Sell(msg.sender, amountToSell, proceeds);
         return proceeds;
     }
-
-    // --- Price Calculation Views ---
 
     function getBuyPrice(uint256 amountToBuy) external view override returns (uint256) {
         return _calculateBuyCost(amountToBuy);
@@ -149,101 +114,46 @@ contract LogarithmicCurve is
         return _calculateSellProceeds(amountToSell);
     }
 
-    // --- Project Owner Functions ---
-
-    function withdrawCollateral() external override nonReentrant onlyOwner returns (uint256) {
-        if (block.timestamp < lastWithdrawalTimestamp + withdrawalFrequency) {
-            revert LogarithmicCurve__WithdrawalTooSoon();
+    function withdrawCollateral() external override onlyOwner returns (uint256) {
+        uint256 amount = collateralToken.balanceOf(address(this));
+        if (amount > 0) {
+            collateralToken.safeTransfer(owner(), amount);
         }
-
-        uint256 withdrawableAmount =
-            (collateralAvailableForWithdrawal * maxWithdrawalPercentage) / PERCENTAGE_DENOMINATOR;
-        if (withdrawableAmount == 0) revert LogarithmicCurve__WithdrawalLimitExceeded();
-
-        lastWithdrawalTimestamp = block.timestamp;
-        collateralAvailableForWithdrawal = 0;
-
-        collateralToken.safeTransfer(owner(), withdrawableAmount);
-
-        emit Withdrawal(owner(), withdrawableAmount);
-        return withdrawableAmount;
+        return amount;
     }
 
-    function claimVestedTokens() external nonReentrant onlyOwner returns (uint256) {
-        if (block.timestamp < vestingCliff) revert LogarithmicCurve__VestingNotStarted();
-
-        uint256 vestedAmount = _calculateVestedAmount();
-        uint256 claimableAmount = vestedAmount - teamTokensClaimed;
-
-        if (claimableAmount == 0) revert LogarithmicCurve__NothingToClaim();
-
-        teamTokensClaimed += claimableAmount;
-
-        projectToken.transfer(owner(), claimableAmount);
-        return claimableAmount;
-    }
-
-    // --- Internal Math Functions ---
+    // --- Internal Math ---
 
     function _calculateBuyCost(uint256 amountToBuy) internal view returns (uint256) {
-        uint256 s1 = projectToken.totalSupply() - teamAllocation;
-        uint256 s2 = s1 + amountToBuy;
-        // cost = integral of (k * s^(1/2))ds from s1 to s2
-        // cost = k * 2/3 * (s2^(3/2) - s1^(3/2))
-        // s^(3/2) is calculated as sqrt(s^3) to maintain precision with integer math.
-        if (s2 > 2.2e25) revert LogarithmicCurve__OverflowRisk(); // s^3 must be < uint256.max
+        uint256 s1_uint = projectToken.totalSupply();
+        uint256 s2_uint = s1_uint + amountToBuy;
+        // The prb-math ln() function requires an input >= 1e18.
+        // Therefore, (maxSupply - newSupply) must be at least 1e18.
+        if (s2_uint > maxSupply.unwrap() - 1e18) revert LogarithmicCurve__SupplyCapReached();
 
-        uint256 s2_pow_3_2 = _sqrt(s2 * s2 * s2);
-        uint256 s1_pow_3_2 = _sqrt(s1 * s1 * s1);
-        uint256 diff = s2_pow_3_2 - s1_pow_3_2;
+        UD60x18 s1 = UD60x18.wrap(s1_uint);
+        UD60x18 s2 = UD60x18.wrap(s2_uint);
 
-        // The result is normalized by WAD_POW_1_5 because s^(3/2) has 27 decimal places.
-        return (priceCoefficient * 2 * diff) / 3 / WAD_POW_1_5;
+        // cost = integral of k/(S_max - s)ds from s1 to s2
+        // cost = k * (ln(S_max - s1) - ln(S_max - s2))
+        UD60x18 ln1 = (maxSupply.sub(s1)).ln();
+        UD60x18 ln2 = (maxSupply.sub(s2)).ln();
+        UD60x18 ln_diff = ln1.sub(ln2);
+
+        return priceCoefficient.mul(ln_diff).unwrap();
     }
 
     function _calculateSellProceeds(uint256 amountToSell) internal view returns (uint256) {
-        uint256 currentSupply = projectToken.totalSupply() - teamAllocation;
-        if (amountToSell > currentSupply) revert LogarithmicCurve__InsufficientBalance();
-        uint256 s1 = currentSupply;
-        uint256 s2 = s1 - amountToSell;
-        // proceeds = k * 2/3 * (s1^(3/2) - s2^(3/2))
-        if (s1 > 2.2e25) revert LogarithmicCurve__OverflowRisk();
+        uint256 s1_uint = projectToken.totalSupply();
+        // The check for amountToSell > s1_uint is implicitly handled by `burnFrom`, which will revert.
+        UD60x18 s1 = UD60x18.wrap(s1_uint);
+        UD60x18 s2 = UD60x18.wrap(s1_uint - amountToSell);
 
-        uint256 s1_pow_3_2 = _sqrt(s1 * s1 * s1);
-        uint256 s2_pow_3_2 = _sqrt(s2 * s2 * s2);
-        uint256 diff = s1_pow_3_2 - s2_pow_3_2;
+        // proceeds = k * (ln(S_max - s2) - ln(S_max - s1))
+        UD60x18 ln1 = (maxSupply.sub(s2)).ln();
+        UD60x18 ln2 = (maxSupply.sub(s1)).ln();
+        UD60x18 ln_diff = ln1.sub(ln2);
 
-        return (priceCoefficient * 2 * diff) / 3 / WAD_POW_1_5;
-    }
-
-    function _calculateVestedAmount() internal view returns (uint256) {
-        if (block.timestamp < vestingStartTime) return 0;
-
-        uint256 vestingEnd = vestingStartTime + vestingDuration;
-        if (block.timestamp >= vestingEnd) {
-            return teamAllocation;
-        }
-
-        if (block.timestamp < vestingCliff) {
-            return 0;
-        }
-
-        return (teamAllocation * (block.timestamp - vestingStartTime)) / vestingDuration;
-    }
-
-    /**
-     * @dev A simple Babylonian method for calculating the integer square root.
-     */
-    function _sqrt(uint256 y) internal pure returns (uint256 z) {
-        if (y > 3) {
-            z = y;
-            uint256 x = y / 2 + 1;
-            while (x < z) {
-                z = x;
-                x = (y / x + x) / 2;
-            }
-        } else if (y != 0) {
-            z = 1;
-        }
+        return priceCoefficient.mul(ln_diff).unwrap();
     }
 }
