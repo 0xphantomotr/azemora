@@ -146,8 +146,7 @@ contract StakingManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
         if (sharesToUnstake == 0) revert StakingManager__ZeroAmount();
         if (sharesOf[msg.sender] < sharesToUnstake) revert StakingManager__InsufficientStakedAmount();
 
-        sharesOf[msg.sender] -= sharesToUnstake;
-        totalShares -= sharesToUnstake; // Remove from reward-earning shares immediately
+        sharesOf[msg.sender] -= sharesToUnstake; // Remove from reward-earning shares immediately
 
         unstakeRequests[msg.sender].shares += sharesToUnstake;
         unstakeRequests[msg.sender].releaseTime = block.timestamp + unstakingCooldown;
@@ -162,6 +161,8 @@ contract StakingManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
 
         uint256 sharesToWithdraw = request.shares;
         uint256 tokensToWithdraw = sharesToTokens(sharesToWithdraw);
+
+        totalShares -= sharesToWithdraw; // Decrease total shares *after* calculating token value
 
         delete unstakeRequests[msg.sender];
 

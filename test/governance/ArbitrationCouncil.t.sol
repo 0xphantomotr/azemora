@@ -9,9 +9,82 @@ import {ArbitrationCouncil, ArbitrationCouncil__NotCouncilMember} from "../../sr
 
 // Mocks & Interfaces
 import {MockERC20} from "../mocks/MockERC20.sol";
+import {MockStakingManager} from "../mocks/MockStakingManager.sol";
 import {VRFCoordinatorV2Mock} from "@chainlink/contracts/src/v0.8/vrf/mocks/VRFCoordinatorV2Mock.sol";
 import {IVerifierManager} from "../../src/reputation-weighted/interfaces/IVerifierManager.sol";
 import {IReputationWeightedVerifier} from "../../src/reputation-weighted/interfaces/IReputationWeightedVerifier.sol";
+
+// --- Embedded Test Library for Merkle Proofs ---
+library MerkleTest {
+    function getRoot(bytes32[] memory leaves) internal pure returns (bytes32) {
+        if (leaves.length == 0) {
+            return bytes32(0);
+        }
+        bytes32[] memory nodes = leaves;
+        while (nodes.length > 1) {
+            bytes32[] memory newNodes = new bytes32[]((nodes.length + 1) / 2);
+            for (uint256 i = 0; i < newNodes.length; i++) {
+                uint256 j = i * 2;
+                bytes32 left = nodes[j];
+                bytes32 right = (j + 1 < nodes.length) ? nodes[j + 1] : left;
+                if (left < right) {
+                    newNodes[i] = keccak256(abi.encodePacked(left, right));
+                } else {
+                    newNodes[i] = keccak256(abi.encodePacked(right, left));
+                }
+            }
+            nodes = newNodes;
+        }
+        return nodes[0];
+    }
+
+    function getProof(bytes32[] memory leaves, uint256 leafIndex) internal pure returns (bytes32[] memory) {
+        uint256 numLayers = 0;
+        uint256 n = leaves.length;
+        if (n == 0) return new bytes32[](0);
+        while (n > 1) {
+            numLayers++;
+            n = (n + 1) / 2;
+        }
+
+        bytes32[] memory proof = new bytes32[](numLayers);
+        bytes32[] memory currentLayer = leaves;
+
+        for (uint256 i = 0; i < numLayers; i++) {
+            uint256 siblingIndex;
+            if (leafIndex % 2 == 0) {
+                siblingIndex = leafIndex + 1;
+            } else {
+                siblingIndex = leafIndex - 1;
+            }
+
+            if (siblingIndex < currentLayer.length) {
+                proof[i] = currentLayer[siblingIndex];
+            } else {
+                proof[i] = currentLayer[leafIndex];
+            }
+
+            bytes32[] memory nextLayer = new bytes32[]((currentLayer.length + 1) / 2);
+            for (uint256 j = 0; j < nextLayer.length; j++) {
+                uint256 leftIndex = j * 2;
+                uint256 rightIndex = leftIndex + 1;
+
+                bytes32 left = currentLayer[leftIndex];
+                bytes32 right = (rightIndex < currentLayer.length) ? currentLayer[rightIndex] : left;
+
+                if (left < right) {
+                    nextLayer[j] = keccak256(abi.encodePacked(left, right));
+                } else {
+                    nextLayer[j] = keccak256(abi.encodePacked(right, left));
+                }
+            }
+            currentLayer = nextLayer;
+            leafIndex /= 2;
+        }
+
+        return proof;
+    }
+}
 
 // Mock for VerifierManager to control reputation scores
 contract MockVerifierManager is IVerifierManager {
@@ -65,6 +138,7 @@ contract ArbitrationCouncilTest is Test {
     MockVerifierManager internal verifierManager;
     MockReputationWeightedVerifier internal repWeightedVerifier;
     VRFCoordinatorV2Mock internal vrfCoordinator;
+    MockStakingManager internal stakingManager;
 
     // --- Users ---
     address internal admin;
@@ -72,6 +146,8 @@ contract ArbitrationCouncilTest is Test {
     address internal member1;
     address internal member2;
     address internal member3;
+    address internal victim1;
+    address internal victim2;
 
     // --- Constants ---
     uint256 internal constant CHALLENGE_STAKE_AMOUNT = 50e18;
@@ -83,6 +159,8 @@ contract ArbitrationCouncilTest is Test {
         member1 = makeAddr("member1");
         member2 = makeAddr("member2");
         member3 = makeAddr("member3");
+        victim1 = makeAddr("victim1");
+        victim2 = makeAddr("victim2");
 
         vm.startPrank(admin);
 
@@ -91,6 +169,7 @@ contract ArbitrationCouncilTest is Test {
         vrfCoordinator = new VRFCoordinatorV2Mock(0, 0);
         verifierManager = new MockVerifierManager();
         repWeightedVerifier = new MockReputationWeightedVerifier();
+        stakingManager = new MockStakingManager();
 
         // --- Deploy and Initialize ArbitrationCouncil ---
         council = ArbitrationCouncil(
@@ -120,6 +199,8 @@ contract ArbitrationCouncilTest is Test {
         council.setVotingPeriod(1 days);
         council.setChallengeStakeAmount(CHALLENGE_STAKE_AMOUNT);
         council.grantRole(council.VERIFIER_CONTRACT_ROLE(), address(this));
+        council.setFraudThreshold(50); // Outcome < 50 is fraud
+        council.setStakingManager(address(stakingManager));
 
         vrfCoordinator.createSubscription();
         vrfCoordinator.fundSubscription(1, 100 ether);
@@ -211,6 +292,83 @@ contract ArbitrationCouncilTest is Test {
         assertEq(
             repWeightedVerifier.lastFinalAmount(), expectedOutcome, "Verifier was not notified with correct amount"
         );
+    }
+
+    // --- Compensation Tests ---
+
+    // Helper function to set up a fraudulent dispute for compensation tests
+    function _setupFraudulentDispute() internal returns (bytes32 merkleRoot, bytes32[] memory proof1) {
+        // 1. Create and select council for a new dispute
+        vm.prank(challenger);
+        aztToken.approve(address(council), CHALLENGE_STAKE_AMOUNT);
+        vm.prank(address(this));
+        council.createDispute(CLAIM_ID, challenger, address(repWeightedVerifier));
+
+        uint256 vrfRequestId = 1;
+        uint256[] memory randomWords = new uint256[](3);
+        randomWords[0] = 0;
+        randomWords[1] = 1;
+        randomWords[2] = 2;
+        vrfCoordinator.fulfillRandomWordsWithOverride(vrfRequestId, address(council), randomWords);
+
+        // 2. Council votes to confirm fraud (outcome < 50)
+        vm.prank(member1);
+        council.vote(CLAIM_ID, 10);
+        vm.prank(member2);
+        council.vote(CLAIM_ID, 20);
+
+        // 3. Prepare Merkle tree for compensation
+        bytes32[] memory leaves = new bytes32[](2);
+        leaves[0] = keccak256(abi.encodePacked(victim1, uint256(10e18)));
+        leaves[1] = keccak256(abi.encodePacked(victim2, uint256(20e18)));
+
+        merkleRoot = MerkleTest.getRoot(leaves);
+        proof1 = MerkleTest.getProof(leaves, 0);
+
+        // 4. Resolve the dispute as fraudulent and set the merkle root
+        vm.warp(block.timestamp + 2 days);
+        council.resolveDispute(CLAIM_ID, merkleRoot);
+
+        // 5. Fund the council with slashed tokens
+        aztToken.mint(address(council), 100e18);
+    }
+
+    function test_claimCompensation_succeeds_with_valid_proof() public {
+        (bytes32 merkleRoot, bytes32[] memory proof) = _setupFraudulentDispute();
+
+        uint256 claimAmount = 10e18;
+        uint256 initialBalance = aztToken.balanceOf(victim1);
+
+        vm.prank(victim1);
+        council.claimCompensation(CLAIM_ID, victim1, claimAmount, proof);
+
+        uint256 finalBalance = aztToken.balanceOf(victim1);
+        assertEq(finalBalance - initialBalance, claimAmount, "Victim should receive correct compensation amount");
+    }
+
+    function test_revert_if_claim_twice() public {
+        (bytes32 merkleRoot, bytes32[] memory proof) = _setupFraudulentDispute();
+        uint256 claimAmount = 10e18;
+
+        // First claim succeeds
+        vm.prank(victim1);
+        council.claimCompensation(CLAIM_ID, victim1, claimAmount, proof);
+
+        // Second claim reverts
+        vm.prank(victim1);
+        vm.expectRevert("Already claimed");
+        council.claimCompensation(CLAIM_ID, victim1, claimAmount, proof);
+    }
+
+    function test_revert_if_invalid_proof() public {
+        (bytes32 merkleRoot, bytes32[] memory proof) = _setupFraudulentDispute();
+
+        // Use correct amount but for the wrong victim
+        uint256 claimAmount = 20e18; // victim2's amount
+
+        vm.prank(victim1); // victim1 tries to claim
+        vm.expectRevert("Invalid merkle proof");
+        council.claimCompensation(CLAIM_ID, victim1, claimAmount, proof);
     }
 
     /// @notice Tests that the vote function reverts if called by an address that is not part of the selected council.
