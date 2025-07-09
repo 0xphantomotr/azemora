@@ -9,6 +9,12 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../reputation-weighted/interfaces/IReputationWeightedVerifier.sol";
 import "../reputation-weighted/interfaces/IVerifierManager.sol";
 import "@chainlink/contracts/src/v0.8/vrf/interfaces/VRFCoordinatorV2Interface.sol";
+import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+
+// --- Interfaces ---
+interface IStakingManager {
+    function slash(uint256 slashAmount, address compensationTarget) external;
+}
 
 // --- Custom Errors ---
 error ArbitrationCouncil__InvalidDisputeStatus(bytes32 claimId, ArbitrationCouncil.DisputeStatus requiredStatus);
@@ -23,6 +29,7 @@ error ArbitrationCouncil__TransferFailed();
 error ArbitrationCouncil__DisputeAlreadyExists(bytes32 claimId);
 error ArbitrationCouncil__RequestIdNotFound();
 error ArbitrationCouncil__NotEnoughVerifiers();
+error ArbitrationCouncil__FraudNotConfirmed();
 
 // --- Upgradeable VRF Consumer ---
 
@@ -100,11 +107,13 @@ contract ArbitrationCouncil is
     // --- State Variables ---
     IERC20 public azeToken;
     IVerifierManager public verifierManager;
+    IStakingManager public stakingManager;
     address public treasury;
 
     uint256 public challengeStakeAmount;
     uint256 public votingPeriod;
     uint256 public councilSize;
+    uint256 public fraudThreshold; // e.g., 50 for 50%. If outcome < threshold, it's fraud.
 
     // Chainlink VRF variables
     VRFCoordinatorV2Interface public COORDINATOR;
@@ -115,6 +124,8 @@ contract ArbitrationCouncil is
 
     mapping(bytes32 => Dispute) public disputes;
     mapping(uint256 => VrfRequest) public vrfRequests;
+    mapping(bytes32 => bytes32) public disputeMerkleRoots;
+    mapping(bytes32 => mapping(address => bool)) public hasClaimed;
 
     uint256[38] private __gap;
 
@@ -123,8 +134,9 @@ contract ArbitrationCouncil is
         bytes32 indexed claimId, address indexed challenger, address indexed defendant, uint256 vrfRequestId
     );
     event Voted(bytes32 indexed claimId, address indexed voter, uint256 votedAmount, uint256 weight);
-    event DisputeResolved(bytes32 indexed claimId, uint256 finalAmount);
+    event DisputeResolved(bytes32 indexed claimId, uint256 finalAmount, bytes32 merkleRoot);
     event CouncilSelected(bytes32 indexed claimId, address[] councilMembers);
+    event CompensationClaimed(bytes32 indexed claimId, address indexed user, uint256 amount);
 
     constructor() {
         _disableInitializers();
@@ -165,6 +177,15 @@ contract ArbitrationCouncil is
         s_keyHash = _keyHash;
         s_requestConfirmations = _requestConfirmations;
         s_callbackGasLimit = _callbackGasLimit;
+    }
+
+    function setStakingManager(address _stakingManager) external onlyRole(COUNCIL_ADMIN_ROLE) {
+        if (_stakingManager == address(0)) revert ArbitrationCouncil__ZeroAddress();
+        stakingManager = IStakingManager(_stakingManager);
+    }
+
+    function setFraudThreshold(uint256 _threshold) external onlyRole(COUNCIL_ADMIN_ROLE) {
+        fraudThreshold = _threshold;
     }
 
     function createDispute(bytes32 claimId, address challenger, address defendant)
@@ -289,40 +310,63 @@ contract ArbitrationCouncil is
         emit Voted(claimId, msg.sender, votedAmount, reputation);
     }
 
-    /**
-     * @notice Resolves a dispute after the voting period has ended.
-     * @dev Calculates the final weighted-average outcome based on council votes and reputation.
-     * The function sets the dispute status to 'Resolved', stores the outcome,
-     * returns the challenger's stake, and notifies the verifier contract of the result.
-     * It can be called by anyone, but only after the voting deadline has passed.
-     * @param claimId The ID of the dispute to resolve.
-     */
-    function resolveDispute(bytes32 claimId) public nonReentrant {
+    function resolveDispute(bytes32 claimId, bytes32 merkleRoot) external nonReentrant {
         Dispute storage dispute = disputes[claimId];
         if (dispute.status != DisputeStatus.Voting) {
             revert ArbitrationCouncil__InvalidDisputeStatus(claimId, DisputeStatus.Voting);
         }
         if (block.timestamp <= dispute.votingDeadline) revert ArbitrationCouncil__VotingPeriodNotOver();
 
-        dispute.status = DisputeStatus.Resolved;
-
-        uint256 finalAmount = 0;
+        uint256 finalOutcome = 0;
         if (dispute.totalReputationWeight > 0) {
-            finalAmount = dispute.totalWeightedVotes / dispute.totalReputationWeight;
+            finalOutcome = dispute.totalWeightedVotes / dispute.totalReputationWeight;
         }
 
-        dispute.quantitativeOutcome = finalAmount;
+        dispute.quantitativeOutcome = finalOutcome;
+        dispute.status = DisputeStatus.Resolved;
 
-        // For now, we assume the challenger always wins if a challenge occurs and is resolved.
-        // The stake is returned to the challenger. A future iteration could make this logic
-        // more nuanced based on how much `finalAmount` deviates from an original claim.
-        if (!azeToken.transfer(dispute.challenger, challengeStakeAmount)) {
+        // If the final outcome is below the fraud threshold, slash the stake.
+        if (finalOutcome < fraudThreshold) {
+            // The amount to slash could be the challenger's stake or another defined value.
+            // For now, we'll use the challenger's stake as the slash amount.
+            stakingManager.slash(challengeStakeAmount, address(this));
+            disputeMerkleRoots[claimId] = merkleRoot;
+        } else {
+            // Return stake to the defendant (project) if not fraudulent
+            if (!azeToken.transfer(dispute.defendant, challengeStakeAmount)) {
+                revert ArbitrationCouncil__TransferFailed();
+            }
+        }
+
+        // Notify the originating verifier module of the final outcome.
+        IReputationWeightedVerifier(dispute.defendant).processArbitrationResult(claimId, finalOutcome);
+
+        emit DisputeResolved(claimId, finalOutcome, merkleRoot);
+    }
+
+    function claimCompensation(bytes32 claimId, address recipient, uint256 amount, bytes32[] calldata merkleProof)
+        external
+        nonReentrant
+    {
+        if (disputes[claimId].status != DisputeStatus.Resolved) {
+            revert ArbitrationCouncil__InvalidDisputeStatus(claimId, DisputeStatus.Resolved);
+        }
+
+        if (hasClaimed[claimId][recipient]) revert("Already claimed");
+
+        bytes32 merkleRoot = disputeMerkleRoots[claimId];
+        if (merkleRoot == bytes32(0)) revert("No merkle root for this dispute");
+
+        bytes32 leaf = keccak256(abi.encodePacked(recipient, amount));
+
+        if (!MerkleProof.verify(merkleProof, merkleRoot, leaf)) revert("Invalid merkle proof");
+
+        hasClaimed[claimId][recipient] = true;
+        if (!azeToken.transfer(recipient, amount)) {
             revert ArbitrationCouncil__TransferFailed();
         }
 
-        IReputationWeightedVerifier(dispute.defendant).processArbitrationResult(claimId, finalAmount);
-
-        emit DisputeResolved(claimId, finalAmount);
+        emit CompensationClaimed(claimId, recipient, amount);
     }
 
     // --- Private Helper Functions ---

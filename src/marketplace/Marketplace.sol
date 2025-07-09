@@ -10,6 +10,10 @@ import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 
 // --- Custom Interfaces to avoid import issues ---
 
+interface IStakingManager {
+    function notifyRewardAmount(uint256 reward, uint256 duration) external;
+}
+
 interface IERC165Upgradeable {
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }
@@ -106,8 +110,10 @@ contract Marketplace is
     // --- State ---
     IERC1155Upgradeable public creditContract;
     IERC20Upgradeable public paymentToken;
+    IStakingManager public stakingManager;
     address public treasury;
     uint256 public feeBps; // Fee in basis points (e.g., 250 = 2.5%)
+    uint256 public stakingFeeBps; // Pct of the fee that goes to stakers (e.g., 5000 = 50%)
 
     struct Listing {
         uint256 id;
@@ -169,6 +175,38 @@ contract Marketplace is
         _roles.push(DEFAULT_ADMIN_ROLE);
         _roles.push(PAUSER_ROLE);
     }
+
+    // --- Admin Functions ---
+    /**
+     * @notice Sets the address of the treasury contract.
+     * @param _treasury The address of the new treasury.
+     */
+    function setTreasury(address _treasury) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (_treasury == address(0)) revert Marketplace__TreasuryAddressZero();
+        treasury = _treasury;
+        emit TreasuryUpdated(_treasury);
+    }
+
+    /**
+     * @notice Sets the marketplace fee.
+     * @param _feeBps The new fee in basis points (1-10000).
+     */
+    function setFee(uint256 _feeBps) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (_feeBps > 10000) revert Marketplace__FeeTooHigh();
+        feeBps = _feeBps;
+        emit FeeUpdated(_feeBps);
+    }
+
+    function setStakingManager(address _stakingManager) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        stakingManager = IStakingManager(_stakingManager);
+    }
+
+    function setStakingFeeBps(uint256 _stakingFeeBps) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (_stakingFeeBps > 10000) revert Marketplace__FeeTooHigh();
+        stakingFeeBps = _stakingFeeBps;
+    }
+
+    // --- Core Functions ---
 
     /**
      * @notice Lists a specified amount of an ERC1155 token for sale.
@@ -247,6 +285,10 @@ contract Marketplace is
         uint256 fee = (totalPrice * feeBps_) / 10000;
         uint256 sellerProceeds = totalPrice - fee;
 
+        // --- Calculate Fee Split ---
+        uint256 stakingFee = (fee * stakingFeeBps) / 10000;
+        uint256 treasuryFee = fee - stakingFee;
+
         // --- EFFECTS ---
         listing.amount = uint96(listing_.amount - amountToBuy);
         if (listing.amount == 0) {
@@ -258,20 +300,26 @@ contract Marketplace is
         }
 
         // --- INTERACTIONS ---
-        // Transfer payment from buyer to seller and fee recipient
-        if (sellerProceeds > 0) {
-            if (!paymentToken_.transferFrom(_msgSender(), listing_.seller, sellerProceeds)) {
-                revert Marketplace__TransferFailed();
-            }
+        // Transfer funds
+        if (!paymentToken_.transferFrom(_msgSender(), listing_.seller, sellerProceeds)) {
+            revert Marketplace__TransferFailed();
         }
-        if (fee > 0) {
-            if (!paymentToken_.transferFrom(_msgSender(), treasury, fee)) {
+        if (treasuryFee > 0) {
+            if (!paymentToken_.transferFrom(_msgSender(), treasury, treasuryFee)) {
                 revert Marketplace__TransferFailed();
             }
-            emit FeePaid(treasury, fee);
+            emit FeePaid(treasury, treasuryFee);
+        }
+        if (stakingFee > 0 && address(stakingManager) != address(0)) {
+            if (!paymentToken_.transferFrom(_msgSender(), address(stakingManager), stakingFee)) {
+                revert Marketplace__TransferFailed();
+            }
+            // Notify the staking manager of the new rewards, to be distributed over e.g., 7 days
+            stakingManager.notifyRewardAmount(stakingFee, 7 days);
+            emit FeePaid(address(stakingManager), stakingFee);
         }
 
-        // Transfer the purchased tokens to the buyer
+        // Transfer NFT
         creditContract.safeTransferFrom(address(this), _msgSender(), listing_.tokenId, amountToBuy, "");
     }
 
@@ -461,34 +509,6 @@ contract Marketplace is
 
         listing.pricePerUnit = uint128(newPricePerUnit);
         emit ListingPriceUpdated(listingId, newPricePerUnit);
-    }
-
-    /**
-     * @notice Sets the address of the treasury contract that receives platform fees.
-     * @dev Can only be called by an address with the `DEFAULT_ADMIN_ROLE`.
-     * It is recommended this be the Timelock contract in a DAO context.
-     * Emits a `TreasuryUpdated` event.
-     * @param newTreasury The address of the new treasury.
-     */
-    function setTreasury(address newTreasury) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (newTreasury == address(0)) revert Marketplace__TreasuryAddressZero();
-        treasury = newTreasury;
-        emit TreasuryUpdated(newTreasury);
-    }
-
-    /**
-     * @notice Sets the platform fee in basis points.
-     * @dev Can only be called by an address with the `DEFAULT_ADMIN_ROLE`.
-     * For example, a value of 250 corresponds to a 2.5% fee.
-     * Emits a `FeeUpdated` event.
-     * @param newFeeBps The new fee in basis points.
-     */
-    function setFee(uint256 newFeeBps) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        // A sanity check to prevent accidentally setting an enormous fee.
-        // 10000 bps = 100%
-        if (newFeeBps > 10000) revert Marketplace__FeeTooHigh();
-        feeBps = newFeeBps;
-        emit FeeUpdated(newFeeBps);
     }
 
     /**

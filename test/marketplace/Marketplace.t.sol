@@ -52,6 +52,15 @@ contract MockERC20 {
     }
 }
 
+// Mock for StakingManager to receive rewards
+contract MockStakingManager {
+    event RewardNotified(uint256 amount, uint256 duration);
+
+    function notifyRewardAmount(uint256 amount, uint256 duration) external {
+        emit RewardNotified(amount, duration);
+    }
+}
+
 contract MarketplaceTest is Test {
     // Core contracts
     ProjectRegistry registry;
@@ -60,6 +69,7 @@ contract MarketplaceTest is Test {
 
     // Mock payment token
     MockERC20 paymentToken;
+    MockStakingManager stakingManager;
 
     // Users
     address admin = address(0xA11CE);
@@ -81,6 +91,9 @@ contract MarketplaceTest is Test {
         paymentToken = new MockERC20("Mock Payment", "MPAY", 18);
         vm.prank(address(this)); // Mint from test contract itself
         paymentToken.mint(buyer, 1_000_000 * 1e18); // 1M USDC
+
+        // Deploy mock staking manager
+        stakingManager = new MockStakingManager();
 
         vm.startPrank(admin);
 
@@ -114,6 +127,8 @@ contract MarketplaceTest is Test {
         marketplace = Marketplace(address(marketplaceProxy));
         marketplace.setTreasury(treasury);
         marketplace.setFee(250); // Set a 2.5% fee
+        marketplace.setStakingManager(address(stakingManager));
+        marketplace.setStakingFeeBps(5000); // 50% of the fee goes to stakers
 
         vm.stopPrank();
 
@@ -168,11 +183,14 @@ contract MarketplaceTest is Test {
         uint256 amountToBuy = 50;
         uint256 pricePerUnit = 5 * 1e6;
         uint256 totalPrice = amountToBuy * pricePerUnit;
-        uint256 fee = (totalPrice * 250) / 10000;
-        uint256 sellerProceeds = totalPrice - fee;
+        uint256 totalFee = (totalPrice * marketplace.feeBps()) / 10000;
+        uint256 stakingFee = (totalFee * marketplace.stakingFeeBps()) / 10000;
+        uint256 treasuryFee = totalFee - stakingFee;
+        uint256 sellerProceeds = totalPrice - totalFee;
 
         uint256 sellerInitialPaymentBalance = paymentToken.balanceOf(seller);
         uint256 treasuryInitialBalance = paymentToken.balanceOf(treasury);
+        uint256 stakingManagerInitialBalance = paymentToken.balanceOf(address(stakingManager));
 
         vm.prank(buyer);
         paymentToken.approve(address(marketplace), totalPrice);
@@ -186,7 +204,8 @@ contract MarketplaceTest is Test {
 
         // Check payment balances
         assertEq(paymentToken.balanceOf(seller), sellerInitialPaymentBalance + sellerProceeds);
-        assertEq(paymentToken.balanceOf(treasury), treasuryInitialBalance + fee);
+        assertEq(paymentToken.balanceOf(treasury), treasuryInitialBalance + treasuryFee);
+        assertEq(paymentToken.balanceOf(address(stakingManager)), stakingManagerInitialBalance + stakingFee);
 
         // Check listing state
         Marketplace.Listing memory listing = marketplace.getListing(listingId);
@@ -391,14 +410,22 @@ contract MarketplaceTest is Test {
     function test_EmitFeePaidEvent() public {
         uint256 listingId = _list();
         uint256 amountToBuy = 50;
-        uint256 totalPrice = amountToBuy * 5 * 1e6;
-        uint256 fee = (totalPrice * 250) / 10000;
+        uint256 pricePerUnit = 5 * 1e6;
+        uint256 totalPrice = amountToBuy * pricePerUnit;
+        uint256 totalFee = (totalPrice * marketplace.feeBps()) / 10000;
+        uint256 stakingFee = (totalFee * marketplace.stakingFeeBps()) / 10000;
+        uint256 treasuryFee = totalFee - stakingFee;
 
         vm.prank(buyer);
         paymentToken.approve(address(marketplace), totalPrice);
 
+        // We expect two FeePaid events in a specific order.
+        // First the treasury fee.
         vm.expectEmit(true, true, true, true);
-        emit Marketplace.FeePaid(treasury, fee);
+        emit Marketplace.FeePaid(treasury, treasuryFee);
+        // Then the staking fee.
+        vm.expectEmit(true, true, true, true);
+        emit Marketplace.FeePaid(address(stakingManager), stakingFee);
 
         vm.prank(buyer);
         marketplace.buy(listingId, amountToBuy);

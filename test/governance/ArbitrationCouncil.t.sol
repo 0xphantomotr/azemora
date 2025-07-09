@@ -182,7 +182,11 @@ contract ArbitrationCouncilTest is Test {
 
         // 4. Resolve the dispute after the voting period
         vm.warp(block.timestamp + 2 days);
-        council.resolveDispute(CLAIM_ID);
+        council.resolveDispute(CLAIM_ID, bytes32(0));
+
+        // In a real system, a keeper would call back to the originating verifier. We simulate that here.
+        (,,,,,, uint256 finalOutcome,) = council.disputes(CLAIM_ID);
+        repWeightedVerifier.processArbitrationResult(CLAIM_ID, finalOutcome);
 
         // 5. Verify the final outcome
         // Expected = ((70 * 100) + (85 * 200) + (95 * 300)) / (100 + 200 + 300)

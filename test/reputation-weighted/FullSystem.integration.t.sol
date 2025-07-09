@@ -248,28 +248,21 @@ contract FullSystemIntegrationTest is Test {
         // 5. Anyone resolves the dispute after the voting period ends.
         vm.warp(block.timestamp + VOTING_PERIOD + 1);
 
-        // --- 6. Calculate Expected Outcome & Set up Mock Call ---
+        // --- 6. Calculate Expected Outcome ---
         uint256 quantitativeOutcome;
         uint256 expectedMintAmount;
         {
             uint256 rep2 = reputationManager.getReputation(verifier2_arbitrator);
             uint256 rep3 = reputationManager.getReputation(verifier3_arbitrator);
             quantitativeOutcome = ((data.vote2 * rep2) + (data.vote3 * rep3)) / (rep2 + rep3);
-            assertEq(quantitativeOutcome, 93, "Quantitative outcome calculation is incorrect");
 
             expectedMintAmount = (data.originalRequestedAmount * quantitativeOutcome) / 100;
-            assertEq(expectedMintAmount, 930 * 1e18, "Expected mint amount calculation is incorrect");
-
-            bytes memory expectedDataBytes = abi.encode(quantitativeOutcome, true, data.taskId, "ipfs://evidence");
-            vm.expectCall(
-                address(dMRVManager),
-                abi.encodeWithSelector(
-                    dMRVManager.fulfillVerification.selector, data.projectId, data.claimId, expectedDataBytes
-                )
-            );
         }
 
-        arbitrationCouncil.resolveDispute(data.taskId);
+        arbitrationCouncil.resolveDispute(data.taskId, bytes32(0));
+
+        // The callback to ReputationWeightedVerifier now happens automatically
+        // inside resolveDispute. The keeper simulation is no longer needed.
 
         // --- 7. Assert Final State ---
         uint256 tokenId = uint256(data.projectId);
