@@ -14,6 +14,14 @@ interface IMethodologyRegistry {
     function isMethodologyValid(bytes32 methodologyId) external view returns (bool);
 
     /**
+     * @notice Gets the implementation address for a given methodology.
+     * @dev Called by dMRVManager to get the trusted address of a verifier module.
+     * @param methodologyId The ID of the methodology.
+     * @return The implementation address of the verifier module.
+     */
+    function getModuleAddress(bytes32 methodologyId) external view returns (address);
+
+    /**
      * @notice Retrieves the full data for a given methodology.
      * @dev This is the public getter for the `methodologies` mapping.
      * @param methodologyId The ID of the methodology to retrieve.

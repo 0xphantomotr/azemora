@@ -56,11 +56,13 @@ contract DMRVManagerUncovered is Test {
             address(
                 new ERC1967Proxy(
                     address(new DMRVManager()),
-                    abi.encodeCall(DMRVManager.initializeDMRVManager, (address(registry), address(credit)))
+                    abi.encodeCall(
+                        DMRVManager.initializeDMRVManager,
+                        (address(registry), address(credit), address(methodologyRegistry))
+                    )
                 )
             )
         );
-        dMRVManager.setMethodologyRegistry(address(methodologyRegistry));
 
         // --- Role Setup ---
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), address(dMRVManager));
@@ -90,7 +92,7 @@ contract DMRVManagerUncovered is Test {
         vm.prank(admin);
         methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
         methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+        dMRVManager.addVerifierModule(MOCK_MODULE_TYPE);
 
         bytes32 claimId = keccak256("claim-double-fulfill");
         uint256 requestedAmount = 100e18;
@@ -113,7 +115,7 @@ contract DMRVManagerUncovered is Test {
         vm.prank(admin);
         methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
         methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+        dMRVManager.addVerifierModule(MOCK_MODULE_TYPE);
 
         bytes32 claimId = keccak256("claim-get-module");
         uint256 requestedAmount = 100e18;
@@ -172,8 +174,7 @@ contract DMRVManagerUncovered is Test {
     function test_GetRoles() public view {
         bytes32[] memory roles = dMRVManager.getRoles(admin);
         // Admin gets DEFAULT_ADMIN_ROLE, PAUSER_ROLE, REVERSER_ROLE, and MODULE_ADMIN_ROLE
-        // There is a bug where one role is bytes32(0), so we expect 3 unique roles
-        assertEq(roles.length, 3, "Admin should have 3 roles due to role collision bug");
+        assertEq(roles.length, 4, "Admin should have 4 roles");
 
         bytes32[] memory emptyRoles = dMRVManager.getRoles(user);
         assertEq(emptyRoles.length, 0);
@@ -195,14 +196,13 @@ contract DMRVManagerUncovered is Test {
         vm.prank(admin);
         methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
         methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+        dMRVManager.addVerifierModule(MOCK_MODULE_TYPE);
 
         // Request verification
         vm.prank(projectOwner);
         dMRVManager.requestVerification(localProjectId, claimId, evidenceURI, requestedAmount, MOCK_MODULE_TYPE);
 
         // Fulfill verification
-        uint256 mintAmount = 50 * 1e18;
         string memory credentialCID = "ipfs://final-cid-alpha-1";
         bytes memory data = abi.encode(50, false, bytes32(0), credentialCID); // 50% outcome
 
@@ -217,9 +217,7 @@ contract DMRVManagerUncovered is Test {
     }
 
     function test_fulfill_reverts_if_claim_not_found() public {
-        bytes32 localProjectId = keccak256("p1");
         bytes32 claimId = keccak256("c1");
-        uint256 requestedAmount = 100e18;
 
         // DONT request verification, so claim is not found
         // dMRVManager.requestVerification(localProjectId, claimId, "ipfs://evidence.json", requestedAmount, MOCK_MODULE_TYPE);
@@ -228,7 +226,7 @@ contract DMRVManagerUncovered is Test {
 
         vm.prank(address(mockModule));
         vm.expectRevert(DMRVManager__ClaimNotFoundOrAlreadyFulfilled.selector);
-        dMRVManager.fulfillVerification(localProjectId, claimId, data);
+        dMRVManager.fulfillVerification(projectId, claimId, data);
     }
 
     function test_fulfill_reverts_if_already_fulfilled() public {
@@ -236,7 +234,7 @@ contract DMRVManagerUncovered is Test {
         vm.prank(admin);
         methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
         methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+        dMRVManager.addVerifierModule(MOCK_MODULE_TYPE);
 
         bytes32 claimId = keccak256("c1");
         uint256 requestedAmount = 100e18;
@@ -257,40 +255,36 @@ contract DMRVManagerUncovered is Test {
     }
 
     function test_register_module_reverts_if_not_admin() public {
-        vm.prank(projectOwner); // Not admin
-        vm.expectRevert(); // Basic revert as it checks for role
-        dMRVManager.registerVerifierModule(keccak256("new module"), address(0x456));
-    }
-
-    function test_register_module_reverts_on_zero_address() public {
-        bytes32 moduleType = keccak256("new module");
-        // --- FIX: Add and approve a valid methodology first ---
+        // ARRANGE: A methodology must be valid *before* we can test the access control on adding it.
+        // This makes the test more specific and robust by isolating the access control check.
         vm.prank(admin);
-        methodologyRegistry.addMethodology(moduleType, address(0x123), "uri", bytes32(0));
-        methodologyRegistry.approveMethodology(moduleType);
+        methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
+        methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
 
-        vm.prank(admin);
-        vm.expectRevert(DMRVManager__ZeroAddress.selector);
-        dMRVManager.registerVerifierModule(moduleType, address(0));
+        // --- Defensive Check ---
+        // Explicitly ensure the test condition is correct: projectOwner should NOT have the admin role.
+        bytes32 moduleAdminRole = dMRVManager.MODULE_ADMIN_ROLE();
+        assertFalse(
+            dMRVManager.hasRole(moduleAdminRole, projectOwner),
+            "Pre-condition failed: projectOwner should not have MODULE_ADMIN_ROLE"
+        );
+
+        // ACT & ASSERT: Now, try to add the *valid* module as a non-admin.
+        // The only reason this should fail is the access control check.
+        vm.prank(projectOwner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)")), projectOwner, moduleAdminRole
+            )
+        );
+        dMRVManager.addVerifierModule(MOCK_MODULE_TYPE);
     }
 
     function test_register_reverts_if_methodology_not_valid() public {
         bytes32 invalidMethodology = keccak256("invalid");
         vm.prank(admin);
         vm.expectRevert(DMRVManager__MethodologyNotValid.selector);
-        dMRVManager.registerVerifierModule(invalidMethodology, address(0x123));
-    }
-
-    function test_set_methodology_reverts_if_not_admin() public {
-        vm.prank(projectOwner);
-        vm.expectRevert(); // Basic revert
-        dMRVManager.setMethodologyRegistry(address(0x789));
-    }
-
-    function test_set_methodology_reverts_on_zero_address() public {
-        vm.prank(admin);
-        vm.expectRevert(DMRVManager__ZeroAddress.selector);
-        dMRVManager.setMethodologyRegistry(address(0));
+        dMRVManager.addVerifierModule(invalidMethodology);
     }
 
     function test_requestVerification_reverts_when_paused() public {

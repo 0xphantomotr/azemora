@@ -129,6 +129,19 @@ contract MethodologyRegistry is Initializable, AccessControlUpgradeable, UUPSUpg
     }
 
     /**
+     * @notice Gets the implementation address for a given methodology.
+     * @dev This function is called by the dMRVManager to get the trusted address of a verifier module.
+     * It reverts if the methodology does not exist.
+     * @param methodologyId The ID of the methodology.
+     * @return The implementation address of the verifier module.
+     */
+    function getModuleAddress(bytes32 methodologyId) external view returns (address) {
+        address moduleAddress = methodologies[methodologyId].moduleImplementationAddress;
+        if (moduleAddress == address(0)) revert MethodologyRegistry__MethodologyNotFound();
+        return moduleAddress;
+    }
+
+    /**
      * @notice A view function to check if a module is valid for registration.
      * @dev The dMRVManager will call this function.
      * @param methodologyId The ID to check.

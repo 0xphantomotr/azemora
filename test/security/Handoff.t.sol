@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import "../../src/core/ProjectRegistry.sol";
 import "../../src/core/dMRVManager.sol";
 import "../../src/core/DynamicImpactCredit.sol";
+import "../../src/core/MethodologyRegistry.sol";
 import "../../src/marketplace/Marketplace.sol";
 import "../../src/governance/Treasury.sol";
 import "../../src/governance/AzemoraTimelockController.sol";
@@ -20,6 +21,7 @@ contract HandoffTest is Test {
     ProjectRegistry public registry;
     DMRVManager public dmrvManager;
     DynamicImpactCredit public credit;
+    MethodologyRegistry public methodologyRegistry;
     Marketplace public marketplace;
     Treasury public treasury;
     AzemoraTimelockController public timelock;
@@ -61,19 +63,26 @@ contract HandoffTest is Test {
             abi.encodeCall(DynamicImpactCredit.initializeDynamicImpactCredit, (address(registry), "ipfs://"));
         credit = DynamicImpactCredit(address(new ERC1967Proxy(address(creditImpl), creditInit)));
 
-        // 4. Deploy DMRVManager
+        // 4. Deploy MethodologyRegistry
+        MethodologyRegistry methodologyRegistryImpl = new MethodologyRegistry();
+        bytes memory methodologyRegistryInit = abi.encodeCall(MethodologyRegistry.initialize, (deployer));
+        methodologyRegistry =
+            MethodologyRegistry(address(new ERC1967Proxy(address(methodologyRegistryImpl), methodologyRegistryInit)));
+
+        // 5. Deploy DMRVManager
         DMRVManager dmrvManagerImpl = new DMRVManager();
-        bytes memory dmrvManagerInit =
-            abi.encodeCall(DMRVManager.initializeDMRVManager, (address(registry), address(credit)));
+        bytes memory dmrvManagerInit = abi.encodeCall(
+            DMRVManager.initializeDMRVManager, (address(registry), address(credit), address(methodologyRegistry))
+        );
         dmrvManager = DMRVManager(address(new ERC1967Proxy(address(dmrvManagerImpl), dmrvManagerInit)));
 
-        // 5. Deploy Marketplace
+        // 6. Deploy Marketplace
         MockERC20ForHandoff paymentToken = new MockERC20ForHandoff();
         Marketplace marketplaceImpl = new Marketplace();
         bytes memory marketplaceInit = abi.encodeCall(Marketplace.initialize, (address(credit), address(paymentToken)));
         marketplace = Marketplace(address(new ERC1967Proxy(address(marketplaceImpl), marketplaceInit)));
 
-        // 6. Deploy Treasury
+        // 7. Deploy Treasury
         Treasury treasuryImpl = new Treasury();
         bytes memory treasuryInit = abi.encodeCall(Treasury.initialize, (deployer));
         treasury = Treasury(payable(address(new ERC1967Proxy(address(treasuryImpl), treasuryInit))));
@@ -92,6 +101,7 @@ contract HandoffTest is Test {
         // The deployer, who currently holds the admin role, grants it to the Timelock.
         registry.grantRole(ADMIN_ROLE, timelockAddress);
         dmrvManager.grantRole(ADMIN_ROLE, timelockAddress);
+        methodologyRegistry.grantRole(ADMIN_ROLE, timelockAddress);
         credit.grantRole(ADMIN_ROLE, timelockAddress);
         marketplace.grantRole(ADMIN_ROLE, timelockAddress);
 
@@ -102,6 +112,7 @@ contract HandoffTest is Test {
         // This is the critical step. The deployer gives up its power permanently.
         registry.renounceRole(ADMIN_ROLE, deployer);
         dmrvManager.renounceRole(ADMIN_ROLE, deployer);
+        methodologyRegistry.renounceRole(ADMIN_ROLE, deployer);
         credit.renounceRole(ADMIN_ROLE, deployer);
         marketplace.renounceRole(ADMIN_ROLE, deployer);
 
@@ -113,6 +124,9 @@ contract HandoffTest is Test {
         // Assert that the deployer EOA no longer has admin power over any contract.
         assertFalse(registry.hasRole(ADMIN_ROLE, deployer), "Deployer MUST NOT have admin on Registry");
         assertFalse(dmrvManager.hasRole(ADMIN_ROLE, deployer), "Deployer MUST NOT have admin on DMRVManager");
+        assertFalse(
+            methodologyRegistry.hasRole(ADMIN_ROLE, deployer), "Deployer MUST NOT have admin on MethodologyRegistry"
+        );
         assertFalse(credit.hasRole(ADMIN_ROLE, deployer), "Deployer MUST NOT have admin on Credit Contract");
         assertFalse(marketplace.hasRole(ADMIN_ROLE, deployer), "Deployer MUST NOT have admin on Marketplace");
         assertFalse(timelock.hasRole(timelockAdminRole, deployer), "Deployer MUST NOT have admin on Timelock");
@@ -120,6 +134,9 @@ contract HandoffTest is Test {
         // Assert that the Timelock IS NOW the sole admin/owner.
         assertTrue(registry.hasRole(ADMIN_ROLE, timelockAddress), "Timelock MUST have admin on Registry");
         assertTrue(dmrvManager.hasRole(ADMIN_ROLE, timelockAddress), "Timelock MUST have admin on DMRVManager");
+        assertTrue(
+            methodologyRegistry.hasRole(ADMIN_ROLE, timelockAddress), "Timelock MUST have admin on MethodologyRegistry"
+        );
         assertTrue(credit.hasRole(ADMIN_ROLE, timelockAddress), "Timelock MUST have admin on Credit Contract");
         assertTrue(marketplace.hasRole(ADMIN_ROLE, timelockAddress), "Timelock MUST have admin on Marketplace");
         assertEq(treasury.owner(), timelockAddress, "Timelock MUST be the owner of the Treasury");

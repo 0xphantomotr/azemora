@@ -9,6 +9,7 @@ import "../../src/core/dMRVManager.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
+import {MethodologyRegistry} from "../../src/core/MethodologyRegistry.sol";
 
 // A V2 contract for testing that includes a new function and a new event
 contract DynamicImpactCreditExtendedV2 is DynamicImpactCredit {
@@ -45,6 +46,7 @@ contract DynamicImpactCreditComplexTest is Test {
     DynamicImpactCredit credit;
     ProjectRegistry registry;
     DMRVManager dmrvManager;
+    MethodologyRegistry methodologyRegistry;
     address admin = address(0xA11CE);
     address verifier = address(0xC1E4);
 
@@ -86,10 +88,20 @@ contract DynamicImpactCreditComplexTest is Test {
             )
         );
 
+        // Deploy MethodologyRegistry
+        methodologyRegistry = MethodologyRegistry(
+            address(
+                new ERC1967Proxy(
+                    address(new MethodologyRegistry()), abi.encodeCall(MethodologyRegistry.initialize, (admin))
+                )
+            )
+        );
+
         // Deploy dMRVManager
         DMRVManager dmrvManagerImpl = new DMRVManager();
-        bytes memory dmrvInitData =
-            abi.encodeCall(DMRVManager.initializeDMRVManager, (address(registry), address(credit)));
+        bytes memory dmrvInitData = abi.encodeCall(
+            DMRVManager.initializeDMRVManager, (address(registry), address(credit), address(methodologyRegistry))
+        );
         ERC1967Proxy dmrvManagerProxy = new ERC1967Proxy(address(dmrvManagerImpl), dmrvInitData);
         dmrvManager = DMRVManager(address(dmrvManagerProxy));
 

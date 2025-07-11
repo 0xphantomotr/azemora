@@ -104,6 +104,37 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
     }
 
     /**
+     * @notice Mints batches of impact credits for multiple verified projects.
+     * @dev Can only be called by an address with `DMRV_MANAGER_ROLE`.
+     * The length of `projectIds`, `amounts`, and `credentialCIDs` arrays must be the same.
+     * @param to The address to receive the new credits.
+     * @param projectIds The array of project IDs, used to derive the `tokenIds`.
+     * @param amounts The array of quantities of credits to mint for each project.
+     * @param credentialCIDs The array of new credential CIDs for each batch.
+     */
+    function batchMintCredits(
+        address to,
+        bytes32[] calldata projectIds,
+        uint256[] calldata amounts,
+        string[] calldata credentialCIDs
+    ) external onlyRole(DMRV_MANAGER_ROLE()) whenNotPaused {
+        uint256 len = projectIds.length;
+        if (len != amounts.length || len != credentialCIDs.length) {
+            revert DynamicImpactCredit__LengthMismatch();
+        }
+
+        for (uint256 i = 0; i < len; i++) {
+            if (!projectRegistry.isProjectActive(projectIds[i])) {
+                revert DynamicImpactCredit__ProjectNotActive();
+            }
+            uint256 tokenId = uint256(projectIds[i]);
+            _mint(to, tokenId, amounts[i], "");
+            _credentialCIDs[tokenId].push(credentialCIDs[i]);
+            emit URI(credentialCIDs[i], tokenId);
+        }
+    }
+
+    /**
      * @notice Burns credits from an account.
      * @dev Can only be called by an address with `BURNER_ROLE`. This is used by the system
      * to reverse fraudulent credit minting events.
@@ -256,37 +287,5 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
         returns (bool)
     {
         return super.supportsInterface(interfaceId);
-    }
-
-    /**
-     * @notice Mints multiple batches of impact credits.
-     * @dev A gas-efficient alternative to `mintCredits` for minting credits for multiple projects
-     * at once. Can only be called by an address with `DMRV_MANAGER_ROLE`. All projects must be active.
-     * @param to The address to receive all the new credits.
-     * @param ids An array of project IDs.
-     * @param amounts An array of amounts to mint for each corresponding project ID.
-     * @param cids An array of initial credential CIDs for each corresponding project ID.
-     */
-    function batchMintCredits(
-        address to,
-        bytes32[] calldata ids,
-        uint256[] calldata amounts,
-        string[] calldata cids // 1-to-1 with ids
-    ) external onlyRole(DMRV_MANAGER_ROLE()) whenNotPaused {
-        uint256 idsLength = ids.length;
-        if (idsLength != amounts.length || idsLength != cids.length) revert DynamicImpactCredit__LengthMismatch();
-
-        uint256[] memory tokenIds = new uint256[](idsLength);
-        for (uint256 i = 0; i < idsLength; i++) {
-            bytes32 projectId = ids[i];
-            if (!projectRegistry.isProjectActive(projectId)) revert DynamicImpactCredit__ProjectNotActive();
-            uint256 tokenId = uint256(projectId);
-            tokenIds[i] = tokenId;
-
-            _credentialCIDs[tokenId].push(cids[i]);
-            emit URI(cids[i], tokenId);
-        }
-
-        _mintBatch(to, tokenIds, amounts, "");
     }
 }

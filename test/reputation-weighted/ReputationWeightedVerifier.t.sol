@@ -132,12 +132,12 @@ contract ReputationWeightedVerifierTest is Test {
                 new ERC1967Proxy(
                     address(new DMRVManager()),
                     abi.encodeCall(
-                        DMRVManager.initializeDMRVManager, (address(projectRegistry), address(creditContract))
+                        DMRVManager.initializeDMRVManager,
+                        (address(projectRegistry), address(creditContract), address(methodologyRegistry))
                     )
                 )
             )
         );
-        dMRVManager.setMethodologyRegistry(address(methodologyRegistry));
 
         // --- 4. Deploy the main module under test ---
         verifierModule = ReputationWeightedVerifier(
@@ -169,7 +169,7 @@ contract ReputationWeightedVerifierTest is Test {
 
         methodologyRegistry.addMethodology(MODULE_TYPE, address(verifierModule), "ipfs://", bytes32(0));
         methodologyRegistry.approveMethodology(MODULE_TYPE);
-        dMRVManager.registerVerifierModule(MODULE_TYPE, address(verifierModule));
+        dMRVManager.addVerifierModule(MODULE_TYPE);
         projectRegistry.registerProject(projectId, "ipfs://project");
         projectRegistry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
         vm.stopPrank();

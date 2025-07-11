@@ -46,15 +46,17 @@ contract DMRVManager is
     bytes32 public constant MODULE_ADMIN_ROLE = keccak256("MODULE_ADMIN_ROLE");
     bytes32 public constant REVERSER_ROLE = keccak256("REVERSER_ROLE");
 
+    bytes32[] private _roles;
+
     // --- State variables ---
     IProjectRegistry public projectRegistry;
     DynamicImpactCredit public creditContract;
     IMethodologyRegistry public methodologyRegistry;
 
-    // Mapping from a module type identifier to its deployed contract address
+    // Mapping from a methodologyId identifier to its deployed contract address
     mapping(bytes32 => address) public verifierModules;
-    // Mapping from a specific claim ID to the module type that is handling it
-    mapping(bytes32 => bytes32) private _claimToModuleType;
+    // Mapping from a specific claim ID to the methodologyId that is handling it
+    mapping(bytes32 => bytes32) private _claimToMethodologyId;
     // Stores the details of an active verification request.
     mapping(bytes32 => Verification) public verifications;
     // Records of fulfilled verifications to enable reversals.
@@ -117,9 +119,13 @@ contract DMRVManager is
     /**
      * @notice Initializes the contract with dependent contract addresses.
      * @dev Sets up roles and contract dependencies. The deployer is granted `DEFAULT_ADMIN_ROLE`,
-     * `MODULE_ADMIN_ROLE`, and `PAUSER_ROLE`.
+     * `MODULE_ADMIN_ROLE`, and `PAUSER_ROLE`. The MethodologyRegistry is set at initialization
+     * and cannot be changed, ensuring a permanent, trusted link.
      */
-    function initializeDMRVManager(address _registryAddress, address _creditAddress) public initializer {
+    function initializeDMRVManager(address _registryAddress, address _creditAddress, address _methodologyRegistry)
+        public
+        initializer
+    {
         __AccessControl_init();
         __Pausable_init();
         __ReentrancyGuard_init();
@@ -127,31 +133,65 @@ contract DMRVManager is
         _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
         _grantRole(PAUSER_ROLE, _msgSender());
         _grantRole(MODULE_ADMIN_ROLE, _msgSender());
-        _grantRole(REVERSER_ROLE, _msgSender()); // Initially granted to deployer
+        _grantRole(REVERSER_ROLE, _msgSender());
+
+        _roles.push(PAUSER_ROLE);
+        _roles.push(MODULE_ADMIN_ROLE);
+        _roles.push(REVERSER_ROLE);
+
+        if (_registryAddress == address(0) || _creditAddress == address(0) || _methodologyRegistry == address(0)) {
+            revert DMRVManager__ZeroAddress();
+        }
 
         projectRegistry = IProjectRegistry(_registryAddress);
         creditContract = DynamicImpactCredit(_creditAddress);
-    }
-
-    /**
-     * @notice Sets the address for the MethodologyRegistry.
-     * @dev Can only be called once by an address with the `DEFAULT_ADMIN_ROLE`.
-     * @param _methodologyRegistry The address of the deployed MethodologyRegistry contract.
-     */
-    function setMethodologyRegistry(address _methodologyRegistry) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (_methodologyRegistry == address(0)) revert DMRVManager__ZeroAddress();
         methodologyRegistry = IMethodologyRegistry(_methodologyRegistry);
     }
 
     /**
+     * @notice Adds a new verifier module to the manager.
+     * @dev This is the new, safe way to register modules. It can only be called by a `MODULE_ADMIN_ROLE`.
+     * It fetches the module's address directly from the `MethodologyRegistry`, but only if the
+     * methodology has been approved by the DAO and is not deprecated. This enforces the governance process.
+     * @param methodologyId The unique ID of the DAO-approved methodology to add.
+     */
+    function addVerifierModule(bytes32 methodologyId) external onlyRole(MODULE_ADMIN_ROLE) {
+        if (!methodologyRegistry.isMethodologyValid(methodologyId)) {
+            revert DMRVManager__MethodologyNotValid();
+        }
+        if (verifierModules[methodologyId] != address(0)) {
+            revert DMRVManager__ModuleAlreadyRegistered(methodologyId);
+        }
+
+        address moduleAddress = methodologyRegistry.getModuleAddress(methodologyId);
+        verifierModules[methodologyId] = moduleAddress;
+
+        emit VerifierModuleRegistered(methodologyId, moduleAddress);
+    }
+
+    /**
+     * @notice Removes a verifier module from the manager.
+     * @dev This prevents the module from being used for any new verification requests.
+     * This is a sensitive action that can only be performed by a `MODULE_ADMIN_ROLE`.
+     * @param methodologyId The ID of the module to remove.
+     */
+    function removeModule(bytes32 methodologyId) external onlyRole(MODULE_ADMIN_ROLE) {
+        address moduleAddress = verifierModules[methodologyId];
+        if (moduleAddress == address(0)) revert DMRVManager__ModuleNotRegistered();
+
+        delete verifierModules[methodologyId];
+        emit VerifierModuleRemoved(methodologyId);
+    }
+
+    /**
      * @notice Initiates a verification request by delegating it to a registered verifier module.
-     * @dev The project must be in the `Active` state. The specified `moduleType` must correspond
+     * @dev The project must be in the `Active` state. The specified `methodologyId` must correspond
      * to a registered and trusted verifier module contract.
      * @param projectId The unique identifier of the project to verify.
      * @param claimId A unique identifier for the specific claim being verified.
      * @param evidenceURI A URI pointing to off-chain evidence related to the claim.
      * @param amount The number of impact credits being requested for this claim.
-     * @param moduleType The type of verification module to use (e.g., "REPUTATION_WEIGHTED_V1").
+     * @param methodologyId The type of verification module to use (e.g., "REPUTATION_WEIGHTED_V1").
      * @return taskId A unique ID for the task, returned from the verifier module.
      */
     function requestVerification(
@@ -159,17 +199,17 @@ contract DMRVManager is
         bytes32 claimId,
         string calldata evidenceURI,
         uint256 amount,
-        bytes32 moduleType
+        bytes32 methodologyId
     ) external nonReentrant whenNotPaused returns (bytes32 taskId) {
         if (!projectRegistry.isProjectActive(projectId)) revert DMRVManager__ProjectNotActive();
 
-        address moduleAddress = verifierModules[moduleType];
+        address moduleAddress = verifierModules[methodologyId];
         if (moduleAddress == address(0)) revert DMRVManager__ModuleNotRegistered();
 
-        _claimToModuleType[claimId] = moduleType;
+        _claimToMethodologyId[claimId] = methodologyId;
         verifications[claimId] = Verification({projectId: projectId, evidenceURI: evidenceURI, amount: amount});
 
-        emit VerificationDelegated(claimId, projectId, moduleType, moduleAddress, amount);
+        emit VerificationDelegated(claimId, projectId, methodologyId, moduleAddress, amount);
 
         taskId = IVerifierModule(moduleAddress).startVerificationTask(projectId, claimId, evidenceURI);
     }
@@ -184,11 +224,11 @@ contract DMRVManager is
      * @param data The raw, encoded verification data from the module.
      */
     function fulfillVerification(bytes32 projectId, bytes32 claimId, bytes calldata data) external whenNotPaused {
-        bytes32 moduleType = _claimToModuleType[claimId];
-        if (moduleType == bytes32(0)) revert DMRVManager__ClaimNotFoundOrAlreadyFulfilled();
+        bytes32 methodologyId = _claimToMethodologyId[claimId];
+        if (methodologyId == bytes32(0)) revert DMRVManager__ClaimNotFoundOrAlreadyFulfilled();
         if (verifications[claimId].amount == 0) revert DMRVManager__ClaimNotFoundOrAlreadyFulfilled();
 
-        address expectedModule = verifierModules[moduleType];
+        address expectedModule = verifierModules[methodologyId];
 
         if (expectedModule == address(0)) revert DMRVManager__ModuleNotRegistered();
         if (msg.sender != expectedModule) revert DMRVManager__CallerNotRegisteredModule();
@@ -201,7 +241,7 @@ contract DMRVManager is
         Verification memory request = verifications[claimId];
 
         // Clean up state BEFORE processing to prevent re-fulfillment (checks-effects-interactions)
-        delete _claimToModuleType[claimId];
+        delete _claimToMethodologyId[claimId];
         delete verifications[claimId];
 
         // Calculate the proportional amount of credits to mint
@@ -210,7 +250,7 @@ contract DMRVManager is
         // Act based on the verification data
         processVerification(projectId, claimId, amountToMint, vData);
 
-        emit VerificationFulfilled(claimId, projectId, moduleType, vData.quantitativeOutcome, amountToMint);
+        emit VerificationFulfilled(claimId, projectId, methodologyId, vData.quantitativeOutcome, amountToMint);
     }
 
     /**
@@ -249,9 +289,10 @@ contract DMRVManager is
     /**
      * @notice Returns the module type handling a specific claim.
      * @param claimId The ID of the claim.
+     * @return The methodology ID (module type) handling the claim.
      */
     function getModuleForClaim(bytes32 claimId) external view returns (bytes32) {
-        return _claimToModuleType[claimId];
+        return _claimToMethodologyId[claimId];
     }
 
     /**
@@ -274,84 +315,33 @@ contract DMRVManager is
     }
 
     /**
-     * @notice Admin function to manually submit verification data, bypassing the oracle.
-     * @dev This is a privileged function for `DEFAULT_ADMIN_ROLE` holders. It is intended for
-     * testing, emergency interventions, or manual data entry. It directly calls the internal
-     * processing logic. Emits an `AdminVerificationSubmitted` event.
-     * @param projectId The project identifier.
-     * @param creditAmount Amount of credits to mint (can be 0).
-     * @param credentialCID The new credential CID to set.
-     * @param updateMetadataOnly If true, only updates metadata without minting.
+     * @notice Allows an admin to submit a verification result directly, bypassing the module system.
+     * @dev This is a privileged function for administrative corrections or manual overrides.
+     * Can only be called by an address with the `DEFAULT_ADMIN_ROLE`.
+     * @param projectId The ID of the project to verify.
+     * @param creditAmount The amount of credits to mint.
+     * @param credentialCID The CID for the verifiable credential.
+     * @param updateMetadataOnly If true, no credits are minted, only the metadata is updated.
      */
     function adminSubmitVerification(
         bytes32 projectId,
         uint256 creditAmount,
         string calldata credentialCID,
         bool updateMetadataOnly
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant whenNotPaused {
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         if (!projectRegistry.isProjectActive(projectId)) revert DMRVManager__ProjectNotActive();
 
-        VerificationData memory vData = VerificationData({
-            quantitativeOutcome: 0, // Not needed for admin functions
-            wasArbitrated: false,
-            arbitrationDisputeId: bytes32(0), // Not needed for admin functions
-            credentialCID: credentialCID
-        });
-
-        // Admin submissions are not reversible as they don't have a standard claimId.
-        processVerification(projectId, bytes32(0), creditAmount, vData);
+        if (updateMetadataOnly) {
+            creditContract.updateCredentialCID(projectId, credentialCID);
+        } else if (creditAmount > 0) {
+            try projectRegistry.getProject(projectId) returns (IProjectRegistry.Project memory project) {
+                creditContract.mintCredits(project.owner, projectId, creditAmount, credentialCID);
+                emit CreditsMinted(projectId, project.owner, creditAmount);
+            } catch {
+                emit MissingProjectError(projectId);
+            }
+        }
         emit AdminVerificationSubmitted(projectId, creditAmount, credentialCID, updateMetadataOnly);
-    }
-
-    /**
-     * @notice Registers a verifier module that has been approved in the MethodologyRegistry.
-     * @dev The caller must have the `MODULE_ADMIN_ROLE`. This function enforces that only
-     * methodologies that are valid (approved and not deprecated) in the `MethodologyRegistry`
-     * can be registered. This is a critical security gate.
-     * @param moduleType The unique identifier for the methodology (e.g., "REPUTATION_WEIGHTED_V1").
-     * @param moduleAddress The deployed address of the verifier module contract.
-     */
-    function registerVerifierModule(bytes32 moduleType, address moduleAddress) external onlyRole(MODULE_ADMIN_ROLE) {
-        if (moduleAddress == address(0)) revert DMRVManager__ZeroAddress();
-        if (methodologyRegistry == IMethodologyRegistry(address(0))) revert DMRVManager__RegistryNotSet();
-        if (!methodologyRegistry.isMethodologyValid(moduleType)) revert DMRVManager__MethodologyNotValid();
-
-        if (verifierModules[moduleType] != address(0)) revert DMRVManager__ModuleAlreadyRegistered(moduleType);
-
-        verifierModules[moduleType] = moduleAddress;
-        emit VerifierModuleRegistered(moduleType, moduleAddress);
-    }
-
-    /**
-     * @notice Removes a verifier module from the manager.
-     * @dev The caller must have the `MODULE_ADMIN_ROLE`. This prevents the module
-     * from being used for any new verification requests.
-     * @param moduleType The unique identifier for the module to remove.
-     */
-    function removeVerifierModule(bytes32 moduleType) external onlyRole(MODULE_ADMIN_ROLE) {
-        if (verifierModules[moduleType] == address(0)) revert DMRVManager__ModuleNotRegistered();
-
-        delete verifierModules[moduleType];
-        emit VerifierModuleRemoved(moduleType);
-    }
-
-    /**
-     * @notice Pauses all state-changing functions in the contract.
-     * @dev Can only be called by an address with the `PAUSER_ROLE`.
-     * This is a critical safety feature to halt activity in case of an emergency.
-     * Emits a `Paused` event.
-     */
-    function pause() external onlyRole(PAUSER_ROLE) {
-        _pause();
-    }
-
-    /**
-     * @notice Lifts the pause on the contract, resuming normal operations.
-     * @dev Can only be called by an address with the `PAUSER_ROLE`.
-     * Emits an `Unpaused` event.
-     */
-    function unpause() external onlyRole(PAUSER_ROLE) {
-        _unpause();
     }
 
     /**
@@ -388,15 +378,12 @@ contract DMRVManager is
      * @return A list of role identifiers held by the account.
      */
     function getRoles(address account) external view returns (bytes32[] memory) {
-        bytes32[] memory allRoles = new bytes32[](3);
-        allRoles[0] = DEFAULT_ADMIN_ROLE;
-        allRoles[1] = PAUSER_ROLE;
-        allRoles[2] = MODULE_ADMIN_ROLE;
-
-        uint256 rolesLength = allRoles.length;
         uint256 count = 0;
-        for (uint256 i = 0; i < rolesLength; i++) {
-            if (hasRole(allRoles[i], account)) {
+        if (hasRole(DEFAULT_ADMIN_ROLE, account)) {
+            count++;
+        }
+        for (uint256 i = 0; i < _roles.length; i++) {
+            if (hasRole(_roles[i], account)) {
                 count++;
             }
         }
@@ -407,13 +394,33 @@ contract DMRVManager is
 
         bytes32[] memory roles = new bytes32[](count);
         uint256 index = 0;
-        for (uint256 i = 0; i < rolesLength; i++) {
-            if (hasRole(allRoles[i], account)) {
-                roles[index++] = allRoles[i];
-                // Optimization: stop looping once all roles have been found.
+        if (hasRole(DEFAULT_ADMIN_ROLE, account)) {
+            roles[index++] = DEFAULT_ADMIN_ROLE;
+        }
+        for (uint256 i = 0; i < _roles.length; i++) {
+            if (hasRole(_roles[i], account)) {
+                roles[index++] = _roles[i];
                 if (index == count) break;
             }
         }
         return roles;
+    }
+
+    /**
+     * @notice Pauses all state-changing functions in the contract.
+     * @dev Can only be called by an address with the `PAUSER_ROLE`.
+     * Emits a `Paused` event.
+     */
+    function pause() external onlyRole(PAUSER_ROLE) {
+        _pause();
+    }
+
+    /**
+     * @notice Lifts the pause on the contract, resuming normal operations.
+     * @dev Can only be called by an address with the `PAUSER_ROLE`.
+     * Emits an `Unpaused` event.
+     */
+    function unpause() external onlyRole(PAUSER_ROLE) {
+        _unpause();
     }
 }

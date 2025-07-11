@@ -111,7 +111,8 @@ contract FullSystemIntegrationTest is Test {
                 new ERC1967Proxy(
                     address(new DMRVManager()),
                     abi.encodeCall(
-                        dMRVManager.initializeDMRVManager, (address(projectRegistry), address(creditContract))
+                        dMRVManager.initializeDMRVManager,
+                        (address(projectRegistry), address(creditContract), address(methodologyRegistry))
                     )
                 )
             )
@@ -158,7 +159,6 @@ contract FullSystemIntegrationTest is Test {
         vrfCoordinator.addConsumer(VRF_SUB_ID, address(arbitrationCouncil));
         creditContract.grantRole(creditContract.DMRV_MANAGER_ROLE(), address(dMRVManager));
         creditContract.grantRole(creditContract.BURNER_ROLE(), address(dMRVManager));
-        dMRVManager.setMethodologyRegistry(address(methodologyRegistry));
         dMRVManager.grantRole(dMRVManager.REVERSER_ROLE(), address(repWeightedVerifier));
         arbitrationCouncil.grantRole(arbitrationCouncil.VERIFIER_CONTRACT_ROLE(), address(repWeightedVerifier));
         verifierManager.grantRole(verifierManager.SLASHER_ROLE(), address(repWeightedVerifier));
@@ -167,7 +167,7 @@ contract FullSystemIntegrationTest is Test {
             REP_WEIGHTED_MODULE_TYPE, address(repWeightedVerifier), "ipfs://rep", bytes32(0)
         );
         methodologyRegistry.approveMethodology(REP_WEIGHTED_MODULE_TYPE);
-        dMRVManager.registerVerifierModule(REP_WEIGHTED_MODULE_TYPE, address(repWeightedVerifier));
+        dMRVManager.addVerifierModule(REP_WEIGHTED_MODULE_TYPE);
 
         // 6. Setup user states
         aztToken.mint(verifier1, INITIAL_MINT_AMOUNT);

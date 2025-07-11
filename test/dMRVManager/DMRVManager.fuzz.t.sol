@@ -52,10 +52,10 @@ contract DMRVManagerFuzzTest is Test {
 
         // 4. Deploy DMRVManager
         DMRVManager dMRVManagerImpl = new DMRVManager();
-        bytes memory dMRVManagerInitData =
-            abi.encodeCall(DMRVManager.initializeDMRVManager, (address(registry), address(credit)));
+        bytes memory dMRVManagerInitData = abi.encodeCall(
+            DMRVManager.initializeDMRVManager, (address(registry), address(credit), address(methodologyRegistry))
+        );
         dMRVManager = DMRVManager(address(new ERC1967Proxy(address(dMRVManagerImpl), dMRVManagerInitData)));
-        dMRVManager.setMethodologyRegistry(address(methodologyRegistry));
 
         // 5. Deploy and register mock module via the new flow
         mockModule = new MockVerifierModule();
@@ -66,7 +66,7 @@ contract DMRVManagerFuzzTest is Test {
             bytes32(0) // schemaHash - providing a null value for the test
         );
         methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+        dMRVManager.addVerifierModule(MOCK_MODULE_TYPE);
 
         // 6. Set up roles
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), address(dMRVManager));

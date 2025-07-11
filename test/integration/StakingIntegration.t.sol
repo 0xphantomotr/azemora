@@ -10,6 +10,7 @@ import "../../src/core/ProjectRegistry.sol";
 import "../../src/core/dMRVManager.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
+import {MethodologyRegistry} from "../../src/core/MethodologyRegistry.sol";
 
 contract StakingIntegrationTest is Test {
     // Contracts
@@ -19,6 +20,7 @@ contract StakingIntegrationTest is Test {
     DynamicImpactCredit credit;
     ProjectRegistry registry;
     DMRVManager dmrvManager;
+    MethodologyRegistry methodologyRegistry;
 
     // Actors
     address admin = makeAddr("admin");
@@ -39,6 +41,15 @@ contract StakingIntegrationTest is Test {
             address(new ERC1967Proxy(address(registryImpl), abi.encodeCall(ProjectRegistry.initialize, ())))
         );
 
+        MethodologyRegistry methodologyRegistryImpl = new MethodologyRegistry();
+        methodologyRegistry = MethodologyRegistry(
+            address(
+                new ERC1967Proxy(
+                    address(methodologyRegistryImpl), abi.encodeCall(MethodologyRegistry.initialize, (admin))
+                )
+            )
+        );
+
         DynamicImpactCredit creditImpl = new DynamicImpactCredit();
         credit = DynamicImpactCredit(
             address(
@@ -54,7 +65,10 @@ contract StakingIntegrationTest is Test {
             address(
                 new ERC1967Proxy(
                     address(dmrvManagerImpl),
-                    abi.encodeCall(DMRVManager.initializeDMRVManager, (address(registry), address(credit)))
+                    abi.encodeCall(
+                        DMRVManager.initializeDMRVManager,
+                        (address(registry), address(credit), address(methodologyRegistry))
+                    )
                 )
             )
         );
@@ -78,6 +92,7 @@ contract StakingIntegrationTest is Test {
 
         // Grant Roles for Minting and Ownership Transfer
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), address(dmrvManager));
+        credit.grantRole(credit.METADATA_UPDATER_ROLE(), admin);
         registry.grantRole(registry.VERIFIER_ROLE(), admin);
         dmrvManager.grantRole(dmrvManager.DEFAULT_ADMIN_ROLE(), admin);
 

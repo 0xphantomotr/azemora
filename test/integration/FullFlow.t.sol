@@ -15,6 +15,7 @@ import "../../src/core/Bonding.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "forge-std/console.sol";
 import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
+import {MethodologyRegistry} from "../../src/core/MethodologyRegistry.sol";
 
 // Mock is no longer needed
 // contract MockERC20ForFlowTest { ... }
@@ -26,6 +27,7 @@ contract FullFlowTest is Test {
     DMRVManager dmrvManager;
     DynamicImpactCredit credit;
     Marketplace marketplace;
+    MethodologyRegistry methodologyRegistry;
     // Governance
     AzemoraToken govToken;
     AzemoraGovernor governor;
@@ -105,6 +107,16 @@ contract FullFlowTest is Test {
             address(new ERC1967Proxy(address(registryImpl), abi.encodeCall(ProjectRegistry.initialize, ())))
         );
 
+        MethodologyRegistry methodologyRegistryImpl = new MethodologyRegistry();
+        methodologyRegistry = MethodologyRegistry(
+            address(
+                new ERC1967Proxy(
+                    address(methodologyRegistryImpl),
+                    abi.encodeCall(MethodologyRegistry.initialize, (address(timelock)))
+                )
+            )
+        );
+
         DynamicImpactCredit creditImpl = new DynamicImpactCredit();
         credit = DynamicImpactCredit(
             address(
@@ -120,7 +132,10 @@ contract FullFlowTest is Test {
             address(
                 new ERC1967Proxy(
                     address(dmrvManagerImpl),
-                    abi.encodeCall(DMRVManager.initializeDMRVManager, (address(registry), address(credit)))
+                    abi.encodeCall(
+                        DMRVManager.initializeDMRVManager,
+                        (address(registry), address(credit), address(methodologyRegistry))
+                    )
                 )
             )
         );

@@ -77,13 +77,13 @@ contract DMRVManagerTest is Test {
             address(
                 new ERC1967Proxy(
                     address(new DMRVManager()),
-                    abi.encodeCall(DMRVManager.initializeDMRVManager, (address(registry), address(credit)))
+                    abi.encodeCall(
+                        DMRVManager.initializeDMRVManager,
+                        (address(registry), address(credit), address(methodologyRegistry))
+                    )
                 )
             )
         );
-        // Link dMRVManager to the MethodologyRegistry.
-        // The caller (this) is admin on dMRVManager by default from its initializer.
-        dMRVManager.setMethodologyRegistry(address(methodologyRegistry));
 
         // --- Mock Module Setup ---
         mockModule = new MockVerifierModule();
@@ -121,9 +121,9 @@ contract DMRVManagerTest is Test {
         vm.prank(admin);
         methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
 
-        // 3. Anyone can now sync it to the dMRVManager
-        vm.prank(admin); // Note: can be called by any address
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+        // 3. Module Admin syncs it to the dMRVManager
+        vm.prank(admin); // Note: must have MODULE_ADMIN_ROLE
+        dMRVManager.addVerifierModule(MOCK_MODULE_TYPE);
 
         assertEq(dMRVManager.verifierModules(MOCK_MODULE_TYPE), address(mockModule));
     }
@@ -133,10 +133,10 @@ contract DMRVManagerTest is Test {
         vm.prank(admin);
         methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
 
-        // 2. Attempt to register fails
+        // 2. Attempt to register fails because isMethodologyValid returns false
         vm.prank(admin);
         vm.expectRevert(DMRVManager__MethodologyNotValid.selector);
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+        dMRVManager.addVerifierModule(MOCK_MODULE_TYPE);
     }
 
     function test_RegisterVerifierModule_RevertsIfAlreadyRegistered() public {
@@ -145,12 +145,12 @@ contract DMRVManagerTest is Test {
         methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
         methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
         vm.prank(admin);
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+        dMRVManager.addVerifierModule(MOCK_MODULE_TYPE);
 
         // Attempt to register again
         vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(DMRVManager__ModuleAlreadyRegistered.selector, MOCK_MODULE_TYPE));
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+        dMRVManager.addVerifierModule(MOCK_MODULE_TYPE);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -162,7 +162,7 @@ contract DMRVManagerTest is Test {
         vm.prank(admin);
         methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
         methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+        dMRVManager.addVerifierModule(MOCK_MODULE_TYPE);
 
         // Delegate as user
         vm.prank(user);
@@ -194,7 +194,7 @@ contract DMRVManagerTest is Test {
         vm.prank(admin);
         methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
         methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+        dMRVManager.addVerifierModule(MOCK_MODULE_TYPE);
 
         // Attempt to delegate
         vm.prank(user);
@@ -215,7 +215,7 @@ contract DMRVManagerTest is Test {
         vm.prank(admin);
         methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
         methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+        dMRVManager.addVerifierModule(MOCK_MODULE_TYPE);
 
         // Attempt to delegate
         vm.prank(user);
@@ -231,7 +231,7 @@ contract DMRVManagerTest is Test {
         vm.prank(admin);
         methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
         methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+        dMRVManager.addVerifierModule(MOCK_MODULE_TYPE);
 
         bytes32 claimId = keccak256("claim-123");
         uint256 requestedAmount = 100e18;
@@ -257,7 +257,7 @@ contract DMRVManagerTest is Test {
         vm.prank(admin);
         methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
         methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+        dMRVManager.addVerifierModule(MOCK_MODULE_TYPE);
 
         bytes32 claimId = keccak256("claim-partial");
         uint256 requestedAmount = 100e18;
@@ -281,7 +281,7 @@ contract DMRVManagerTest is Test {
         vm.prank(admin);
         methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
         methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+        dMRVManager.addVerifierModule(MOCK_MODULE_TYPE);
 
         // 2. Request verification to create a valid claim
         bytes32 claimId = keccak256("claim-123");
@@ -305,7 +305,7 @@ contract DMRVManagerTest is Test {
         vm.prank(admin);
         methodologyRegistry.addMethodology(MOCK_MODULE_TYPE, address(mockModule), "ipfs://mock", bytes32(0));
         methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
-        dMRVManager.registerVerifierModule(MOCK_MODULE_TYPE, address(mockModule));
+        dMRVManager.addVerifierModule(MOCK_MODULE_TYPE);
 
         // 2. Request verification for a baseline amount
         vm.prank(user);

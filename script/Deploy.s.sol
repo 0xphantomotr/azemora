@@ -10,6 +10,7 @@ import {DynamicImpactCredit} from "../src/core/DynamicImpactCredit.sol";
 import {Marketplace} from "../src/marketplace/Marketplace.sol";
 import {DeploymentAddresses} from "./utils/DeploymentAddresses.sol";
 import {AzemoraToken} from "../src/token/AzemoraToken.sol";
+import {MethodologyRegistry} from "../src/core/MethodologyRegistry.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 contract Deploy is Script {
@@ -28,8 +29,9 @@ contract Deploy is Script {
 
         // --- Deployment Sequence ---
         ProjectRegistry projectRegistry = _deployProjectRegistry();
+        MethodologyRegistry methodologyRegistry = _deployMethodologyRegistry();
         DynamicImpactCredit dynamicImpactCredit = _deployDynamicImpactCredit(projectRegistry);
-        DMRVManager dMRVManager = _deployDMRVManager(projectRegistry, dynamicImpactCredit);
+        DMRVManager dMRVManager = _deployDMRVManager(projectRegistry, dynamicImpactCredit, methodologyRegistry);
         Marketplace marketplace = _deployMarketplace(dynamicImpactCredit, AzemoraToken(payable(paymentTokenAddress)));
 
         // --- Post-Deployment Configuration ---
@@ -43,6 +45,7 @@ contract Deploy is Script {
                 dMRVManager: address(dMRVManager),
                 dynamicImpactCredit: address(dynamicImpactCredit),
                 marketplace: address(marketplace),
+                methodologyRegistry: address(methodologyRegistry),
                 paymentToken: paymentTokenAddress
             })
         );
@@ -56,6 +59,7 @@ contract Deploy is Script {
                 dMRVManager: address(dMRVManager),
                 dynamicImpactCredit: address(dynamicImpactCredit),
                 marketplace: address(marketplace),
+                methodologyRegistry: address(methodologyRegistry),
                 paymentToken: paymentTokenAddress,
                 deploymentAddresses: address(deploymentAddresses)
             })
@@ -72,6 +76,14 @@ contract Deploy is Script {
         return ProjectRegistry(payable(address(proxy)));
     }
 
+    function _deployMethodologyRegistry() internal returns (MethodologyRegistry) {
+        console.log("Deploying MethodologyRegistry...");
+        MethodologyRegistry impl = new MethodologyRegistry();
+        bytes memory initData = abi.encodeCall(MethodologyRegistry.initialize, (msg.sender));
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
+        return MethodologyRegistry(payable(address(proxy)));
+    }
+
     function _deployDynamicImpactCredit(ProjectRegistry registry) internal returns (DynamicImpactCredit) {
         console.log("Deploying DynamicImpactCredit...");
         DynamicImpactCredit impl = new DynamicImpactCredit();
@@ -83,10 +95,16 @@ contract Deploy is Script {
         return DynamicImpactCredit(payable(address(proxy)));
     }
 
-    function _deployDMRVManager(ProjectRegistry registry, DynamicImpactCredit credit) internal returns (DMRVManager) {
+    function _deployDMRVManager(
+        ProjectRegistry registry,
+        DynamicImpactCredit credit,
+        MethodologyRegistry methodologyRegistry
+    ) internal returns (DMRVManager) {
         console.log("Deploying DMRVManager...");
         DMRVManager impl = new DMRVManager();
-        bytes memory initData = abi.encodeCall(DMRVManager.initializeDMRVManager, (address(registry), address(credit)));
+        bytes memory initData = abi.encodeCall(
+            DMRVManager.initializeDMRVManager, (address(registry), address(credit), address(methodologyRegistry))
+        );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         return DMRVManager(payable(address(proxy)));
     }
@@ -117,6 +135,7 @@ contract Deploy is Script {
         address dMRVManager;
         address dynamicImpactCredit;
         address marketplace;
+        address methodologyRegistry;
         address paymentToken;
     }
 
@@ -129,6 +148,7 @@ contract Deploy is Script {
         vm.serializeAddress(runName, "DMRVManager", addrs.dMRVManager);
         vm.serializeAddress(runName, "DynamicImpactCredit", addrs.dynamicImpactCredit);
         vm.serializeAddress(runName, "Marketplace", addrs.marketplace);
+        vm.serializeAddress(runName, "MethodologyRegistry", addrs.methodologyRegistry);
         vm.serializeAddress(runName, "PaymentToken", addrs.paymentToken);
         vm.serializeAddress(runName, "DeploymentAddresses", address(deploymentAddresses));
         return deploymentAddresses;
@@ -139,6 +159,7 @@ contract Deploy is Script {
         address dMRVManager;
         address dynamicImpactCredit;
         address marketplace;
+        address methodologyRegistry;
         address paymentToken;
         address deploymentAddresses;
     }
@@ -149,6 +170,7 @@ contract Deploy is Script {
         console.log("DMRVManager (Proxy): ", addrs.dMRVManager);
         console.log("DynamicImpactCredit (Proxy): ", addrs.dynamicImpactCredit);
         console.log("Marketplace (Proxy): ", addrs.marketplace);
+        console.log("MethodologyRegistry (Proxy): ", addrs.methodologyRegistry);
         console.log("PaymentToken (AzemoraToken): ", addrs.paymentToken);
         console.log("DeploymentAddresses: ", addrs.deploymentAddresses);
     }
