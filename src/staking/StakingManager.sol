@@ -44,6 +44,7 @@ contract StakingManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
     uint256 public rewardRate;
     uint256 public lastUpdateTime;
     uint256 public rewardPerShareStored;
+    uint256 public periodFinish;
     mapping(address => uint256) public userRewardPerSharePaid;
     mapping(address => uint256) public rewards;
 
@@ -94,27 +95,35 @@ contract StakingManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
     // --- View Functions ---
 
     function sharesToTokens(uint256 _shares) public view returns (uint256) {
-        uint256 totalBalance = stakingToken.balanceOf(address(this)) - totalRewardsUnclaimed();
         if (totalShares == 0) return 0;
-        return (_shares * totalBalance) / totalShares;
+        uint256 totalStakedCapital = stakingToken.balanceOf(address(this)) - totalRewardsInPool();
+        return (_shares * totalStakedCapital) / totalShares;
     }
 
     function tokensToShares(uint256 _tokens) public view returns (uint256) {
-        uint256 totalBalance = stakingToken.balanceOf(address(this)) - totalRewardsUnclaimed();
-        if (totalBalance == 0 || totalShares == 0) return _tokens;
-        return (_tokens * totalShares) / totalBalance;
+        if (totalShares == 0) {
+            return _tokens; // 1 token = 1 share for initial stake
+        }
+        uint256 totalStakedCapital = stakingToken.balanceOf(address(this)) - totalRewardsInPool();
+        if (totalStakedCapital == 0) {
+            return _tokens; // Avoid division by zero if all capital is rewards
+        }
+        return (_tokens * totalShares) / totalStakedCapital;
     }
 
-    function totalRewardsUnclaimed() internal view returns (uint256) {
-        uint256 timeSinceUpdate = block.timestamp > lastUpdateTime ? block.timestamp - lastUpdateTime : 0;
-        return rewardRate * timeSinceUpdate;
+    function totalRewardsInPool() public view returns (uint256) {
+        if (block.timestamp >= periodFinish) {
+            return 0;
+        }
+        return (periodFinish - block.timestamp) * rewardRate;
     }
 
     function rewardPerShare() public view returns (uint256) {
         if (totalShares == 0) {
             return rewardPerShareStored;
         }
-        uint256 timeSinceUpdate = block.timestamp > lastUpdateTime ? block.timestamp - lastUpdateTime : 0;
+        uint256 timePoint = block.timestamp < periodFinish ? block.timestamp : periodFinish;
+        uint256 timeSinceUpdate = timePoint > lastUpdateTime ? timePoint - lastUpdateTime : 0;
         return rewardPerShareStored + (rewardRate * timeSinceUpdate * 1e18) / totalShares;
     }
 
@@ -148,16 +157,25 @@ contract StakingManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
     }
 
     function _stake(address staker, uint256 amount) private {
-        if (amount == 0) revert StakingManager__ZeroAmount();
-
+        // Share calculation must happen BEFORE the transfer changes the contract's balance
         uint256 sharesToMint = tokensToShares(amount);
-
-        totalShares += sharesToMint;
-        sharesOf[staker] += sharesToMint;
 
         if (!stakingToken.transferFrom(staker, address(this), amount)) {
             revert StakingManager__TransferFailed();
         }
+
+        totalShares += sharesToMint;
+        sharesOf[staker] += sharesToMint;
+
+        emit Staked(staker, amount, sharesToMint);
+    }
+
+    function _addStake(address staker, uint256 amount) private {
+        // This function is for compounding, where the tokens are already in the contract.
+        // We still calculate shares based on the current state.
+        uint256 sharesToMint = tokensToShares(amount);
+        totalShares += sharesToMint;
+        sharesOf[staker] += sharesToMint;
         emit Staked(staker, amount, sharesToMint);
     }
 
@@ -189,6 +207,14 @@ contract StakingManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
             revert StakingManager__TransferFailed();
         }
         emit Withdrawn(msg.sender, tokensToWithdraw, sharesToWithdraw);
+    }
+
+    function compound() external nonReentrant updateReward(msg.sender) {
+        uint256 reward = rewards[msg.sender];
+        if (reward > 0) {
+            rewards[msg.sender] = 0;
+            _addStake(msg.sender, reward);
+        }
     }
 
     function claimReward() external nonReentrant updateReward(msg.sender) {
@@ -226,10 +252,10 @@ contract StakingManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
     {
         if (duration == 0) revert StakingManager__InvalidDuration();
 
-        if (block.timestamp >= lastUpdateTime + duration) {
+        if (block.timestamp >= periodFinish) {
             rewardRate = reward / duration;
         } else {
-            uint256 remaining = lastUpdateTime + duration - block.timestamp;
+            uint256 remaining = periodFinish - block.timestamp;
             uint256 leftover = remaining * rewardRate;
             rewardRate = (reward + leftover) / duration;
         }
@@ -239,6 +265,7 @@ contract StakingManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
         }
 
         lastUpdateTime = block.timestamp;
+        periodFinish = block.timestamp + duration;
         emit RewardAdded(reward);
         emit RewardRateUpdated(rewardRate);
     }

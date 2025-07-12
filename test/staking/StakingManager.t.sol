@@ -42,6 +42,7 @@ contract StakingManagerTest is Test {
         // We need to transfer some tokens to our users.
         aztToken.transfer(user1, 1000 * 1e18);
         aztToken.transfer(user2, 1000 * 1e18);
+        aztToken.transfer(rewardAdmin, 1000 * 1e18);
 
         vm.startPrank(admin);
 
@@ -110,6 +111,47 @@ contract StakingManagerTest is Test {
         // 4. Assert that the stake was successful
         assertEq(stakingManager.sharesOf(user1), stakeAmount, "User should have staked shares after stakeWithPermit");
         assertEq(aztToken.balanceOf(address(stakingManager)), stakeAmount, "StakingManager should have the tokens");
+    }
+
+    function test_compound_reinvests_rewards() public {
+        // 1. Setup: User stakes and rewards are added to the pool
+        uint256 initialStake = 100 * 1e18;
+        _stake(user1, initialStake);
+
+        uint256 rewardAmount = 10 * 1e18;
+        vm.startPrank(rewardAdmin);
+        aztToken.approve(address(stakingManager), rewardAmount);
+        stakingManager.notifyRewardAmount(rewardAmount, 100 seconds); // 10 tokens over 100 seconds
+        vm.stopPrank();
+
+        // 2. Action: Advance time to accrue rewards, then compound
+        vm.warp(block.timestamp + 10 seconds);
+
+        uint256 rewardsEarned = stakingManager.earned(user1);
+        assertTrue(rewardsEarned > 0, "User should have earned rewards");
+
+        uint256 sharesBefore = stakingManager.sharesOf(user1);
+        uint256 contractBalanceBefore = aztToken.balanceOf(address(stakingManager));
+
+        vm.prank(user1);
+        stakingManager.compound();
+
+        // 3. Assertions
+        uint256 sharesAfter = stakingManager.sharesOf(user1);
+        uint256 contractBalanceAfter = aztToken.balanceOf(address(stakingManager));
+
+        assertTrue(sharesAfter > sharesBefore, "Shares should increase after compounding");
+        assertEq(stakingManager.earned(user1), 0, "Pending rewards should be zero after compounding");
+        assertEq(contractBalanceAfter, contractBalanceBefore, "No tokens should leave the contract on compound");
+
+        // 4. Verify the value of the new shares
+        uint256 tokenValueAfter = stakingManager.sharesToTokens(sharesAfter);
+        assertApproxEqAbs(
+            tokenValueAfter,
+            initialStake + rewardsEarned,
+            1,
+            "Token value of shares should equal initial stake + compounded rewards"
+        );
     }
 
     /// @notice Tests that the slash function correctly devalues all shares proportionally.
