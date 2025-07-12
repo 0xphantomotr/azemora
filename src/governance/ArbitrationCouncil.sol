@@ -325,14 +325,32 @@ contract ArbitrationCouncil is
         dispute.quantitativeOutcome = finalOutcome;
         dispute.status = DisputeStatus.Resolved;
 
-        // If the final outcome is below the fraud threshold, slash the stake.
+        // If the final outcome is below the fraud threshold, the challenge was successful.
         if (finalOutcome < fraudThreshold) {
-            // The amount to slash could be the challenger's stake or another defined value.
-            // For now, we'll use the challenger's stake as the slash amount.
-            stakingManager.slash(challengeStakeAmount, address(this));
+            // The amount to slash is the defendant's stake from the verifier manager.
+            uint256 slashAmount = verifierManager.getVerifierStake(dispute.defendant);
+            if (slashAmount == 0) revert ArbitrationCouncil__FraudNotConfirmed();
+
+            uint256 bountyAmount = (slashAmount * 10) / 100; // 10% bounty
+
+            // 1. Return the challenger's original stake.
+            if (!azeToken.transfer(dispute.challenger, challengeStakeAmount)) {
+                revert ArbitrationCouncil__TransferFailed();
+            }
+
+            // 2. Slash the defendant's stake, transferring the funds to this contract to serve as
+            //    the compensation pool and bounty source.
+            stakingManager.slash(slashAmount, address(this));
+
+            // 3. From the newly received slashed funds, pay the challenger's bounty. The rest remains
+            //    in this contract to pay for victim compensation claims.
+            if (bountyAmount > 0 && !azeToken.transfer(dispute.challenger, bountyAmount)) {
+                revert ArbitrationCouncil__TransferFailed();
+            }
+
             disputeMerkleRoots[claimId] = merkleRoot;
         } else {
-            // Return stake to the defendant (project) if not fraudulent
+            // If the challenge failed, the defendant was correct. Return stake to the defendant (project).
             if (!azeToken.transfer(dispute.defendant, challengeStakeAmount)) {
                 revert ArbitrationCouncil__TransferFailed();
             }

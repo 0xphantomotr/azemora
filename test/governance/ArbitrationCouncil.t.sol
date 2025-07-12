@@ -9,7 +9,6 @@ import {ArbitrationCouncil, ArbitrationCouncil__NotCouncilMember} from "../../sr
 
 // Mocks & Interfaces
 import {MockERC20} from "../mocks/MockERC20.sol";
-import {MockStakingManager} from "../mocks/MockStakingManager.sol";
 import {VRFCoordinatorV2Mock} from "@chainlink/contracts/src/v0.8/vrf/mocks/VRFCoordinatorV2Mock.sol";
 import {IVerifierManager} from "../../src/reputation-weighted/interfaces/IVerifierManager.sol";
 import {IReputationWeightedVerifier} from "../../src/reputation-weighted/interfaces/IReputationWeightedVerifier.sol";
@@ -86,6 +85,25 @@ library MerkleTest {
     }
 }
 
+// --- Local Interfaces & Mocks for Testing ---
+interface IStakingManager {
+    function slash(uint256 slashAmount, address compensationTarget) external;
+}
+
+// Mock for StakingManager that handles token transfers
+contract MockStakingManager is IStakingManager {
+    MockERC20 public aztToken;
+
+    constructor(address _token) {
+        aztToken = MockERC20(_token);
+    }
+
+    function slash(uint256 slashAmount, address compensationTarget) external {
+        // Simulate the transfer of slashed funds from the staking pool to the compensation target (the council)
+        aztToken.transfer(compensationTarget, slashAmount);
+    }
+}
+
 // Mock for VerifierManager to control reputation scores
 contract MockVerifierManager is IVerifierManager {
     mapping(address => uint256) public reputations;
@@ -94,6 +112,10 @@ contract MockVerifierManager is IVerifierManager {
 
     function setReputation(address verifier, uint256 reputation) external {
         reputations[verifier] = reputation;
+    }
+
+    function setStake(address verifier, uint256 amount) external {
+        stakes[verifier] = amount;
     }
 
     function addVerifier(address verifier) external {
@@ -148,6 +170,7 @@ contract ArbitrationCouncilTest is Test {
     address internal member3;
     address internal victim1;
     address internal victim2;
+    address internal treasury;
 
     // --- Constants ---
     uint256 internal constant CHALLENGE_STAKE_AMOUNT = 50e18;
@@ -161,6 +184,7 @@ contract ArbitrationCouncilTest is Test {
         member3 = makeAddr("member3");
         victim1 = makeAddr("victim1");
         victim2 = makeAddr("victim2");
+        treasury = makeAddr("treasury");
 
         vm.startPrank(admin);
 
@@ -169,7 +193,7 @@ contract ArbitrationCouncilTest is Test {
         vrfCoordinator = new VRFCoordinatorV2Mock(0, 0);
         verifierManager = new MockVerifierManager();
         repWeightedVerifier = new MockReputationWeightedVerifier();
-        stakingManager = new MockStakingManager();
+        stakingManager = new MockStakingManager(address(aztToken));
 
         // --- Deploy and Initialize ArbitrationCouncil ---
         council = ArbitrationCouncil(
@@ -183,7 +207,7 @@ contract ArbitrationCouncilTest is Test {
                                 admin,
                                 address(aztToken),
                                 address(verifierManager),
-                                address(0), // treasury
+                                treasury, // <-- FIX: Use the new treasury address
                                 address(vrfCoordinator),
                                 1 // subscriptionId
                             )
@@ -208,6 +232,8 @@ contract ArbitrationCouncilTest is Test {
 
         // --- Setup User State ---
         aztToken.mint(challenger, CHALLENGE_STAKE_AMOUNT);
+        // Fund the staking manager so it has funds to be "slashed"
+        aztToken.mint(address(stakingManager), 1_000_000e18);
 
         // --- Populate Verifier Manager Mock ---
         verifierManager.addVerifier(member1);
@@ -217,6 +243,9 @@ contract ArbitrationCouncilTest is Test {
         verifierManager.setReputation(member1, 100);
         verifierManager.setReputation(member2, 200);
         verifierManager.setReputation(member3, 300);
+        // Set a mock stake for the defendant contract. This ensures the council
+        // can "slash" funds to cover compensation and bounties in fraud cases.
+        verifierManager.setStake(address(repWeightedVerifier), 100e18);
 
         vm.stopPrank();
     }
@@ -329,12 +358,12 @@ contract ArbitrationCouncilTest is Test {
         vm.warp(block.timestamp + 2 days);
         council.resolveDispute(CLAIM_ID, merkleRoot);
 
-        // 5. Fund the council with slashed tokens
-        aztToken.mint(address(council), 100e18);
+        // 5. Fund the council with slashed tokens <-- This is no longer needed.
+        // The new flow handles funding through the slash() call inside resolveDispute().
     }
 
     function test_claimCompensation_succeeds_with_valid_proof() public {
-        (bytes32 merkleRoot, bytes32[] memory proof) = _setupFraudulentDispute();
+        (, bytes32[] memory proof) = _setupFraudulentDispute();
 
         uint256 claimAmount = 10e18;
         uint256 initialBalance = aztToken.balanceOf(victim1);
@@ -347,7 +376,7 @@ contract ArbitrationCouncilTest is Test {
     }
 
     function test_revert_if_claim_twice() public {
-        (bytes32 merkleRoot, bytes32[] memory proof) = _setupFraudulentDispute();
+        (, bytes32[] memory proof) = _setupFraudulentDispute();
         uint256 claimAmount = 10e18;
 
         // First claim succeeds
@@ -361,7 +390,7 @@ contract ArbitrationCouncilTest is Test {
     }
 
     function test_revert_if_invalid_proof() public {
-        (bytes32 merkleRoot, bytes32[] memory proof) = _setupFraudulentDispute();
+        (, bytes32[] memory proof) = _setupFraudulentDispute();
 
         // Use correct amount but for the wrong victim
         uint256 claimAmount = 20e18; // victim2's amount
