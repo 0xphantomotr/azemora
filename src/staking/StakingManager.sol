@@ -7,6 +7,12 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 
+// --- Interfaces ---
+interface IPermit {
+    function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
+        external;
+}
+
 // --- Custom Errors ---
 error StakingManager__ZeroAmount();
 error StakingManager__InsufficientStakedAmount();
@@ -129,17 +135,30 @@ contract StakingManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
     }
 
     function stake(uint256 amount) external nonReentrant updateReward(msg.sender) {
+        _stake(msg.sender, amount);
+    }
+
+    function stakeWithPermit(uint256 amount, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
+        external
+        nonReentrant
+        updateReward(msg.sender)
+    {
+        IPermit(address(stakingToken)).permit(msg.sender, address(this), amount, deadline, v, r, s);
+        _stake(msg.sender, amount);
+    }
+
+    function _stake(address staker, uint256 amount) private {
         if (amount == 0) revert StakingManager__ZeroAmount();
 
         uint256 sharesToMint = tokensToShares(amount);
 
         totalShares += sharesToMint;
-        sharesOf[msg.sender] += sharesToMint;
+        sharesOf[staker] += sharesToMint;
 
-        if (!stakingToken.transferFrom(msg.sender, address(this), amount)) {
+        if (!stakingToken.transferFrom(staker, address(this), amount)) {
             revert StakingManager__TransferFailed();
         }
-        emit Staked(msg.sender, amount, sharesToMint);
+        emit Staked(staker, amount, sharesToMint);
     }
 
     function initiateUnstake(uint256 sharesToUnstake) external nonReentrant updateReward(msg.sender) {
