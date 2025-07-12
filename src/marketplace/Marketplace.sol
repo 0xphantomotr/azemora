@@ -223,6 +223,44 @@ contract Marketplace is
         external
         nonReentrant
         whenNotPaused
+        returns (uint256)
+    {
+        return _list(tokenId, amount, pricePerUnit, expiryDuration, _msgSender());
+    }
+
+    /**
+     * @notice Lists multiple batches of ERC1155 tokens for sale in a single transaction.
+     * @dev The seller must have first approved the marketplace via `setApprovalForAll`.
+     * The length of all arrays must be identical.
+     * @param tokenIds The IDs of the tokens to list.
+     * @param amounts The quantities of each token to list.
+     * @param pricesPerUnit The price for each single unit of each token.
+     * @param expiryDurations The duration in seconds from now for each listing's expiry.
+     * @return listingIds An array of the unique IDs of the newly created listings.
+     */
+    function batchList(
+        uint256[] calldata tokenIds,
+        uint256[] calldata amounts,
+        uint256[] calldata pricesPerUnit,
+        uint256[] calldata expiryDurations
+    ) external nonReentrant whenNotPaused returns (uint256[] memory listingIds) {
+        uint256 numToList = tokenIds.length;
+        if (numToList != amounts.length || numToList != pricesPerUnit.length || numToList != expiryDurations.length) {
+            revert Marketplace__ArrayLengthMismatch();
+        }
+
+        listingIds = new uint256[](numToList);
+        address seller = _msgSender();
+
+        for (uint256 i = 0; i < numToList; i++) {
+            listingIds[i] = _list(tokenIds[i], amounts[i], pricesPerUnit[i], expiryDurations[i], seller);
+        }
+
+        return listingIds;
+    }
+
+    function _list(uint256 tokenId, uint256 amount, uint256 pricePerUnit, uint256 expiryDuration, address seller)
+        private
         returns (uint256 listingId)
     {
         if (amount == 0) revert Marketplace__ZeroAmount();
@@ -241,7 +279,7 @@ contract Marketplace is
         listings[listingId] = Listing({
             id: listingId,
             tokenId: tokenId,
-            seller: _msgSender(),
+            seller: seller,
             pricePerUnit: uint128(pricePerUnit),
             amount: uint96(amount),
             expiryTimestamp: uint64(block.timestamp + expiryDuration),
@@ -251,10 +289,9 @@ contract Marketplace is
         activeListingCount++;
 
         // --- INTERACTIONS ---
-        _creditContract.safeTransferFrom(_msgSender(), address(this), tokenId, amount, "");
+        _creditContract.safeTransferFrom(seller, address(this), tokenId, amount, "");
 
-        emit Listed(listingId, _msgSender(), tokenId, amount, pricePerUnit);
-        return listingId;
+        emit Listed(listingId, seller, tokenId, amount, pricePerUnit);
     }
 
     /**
