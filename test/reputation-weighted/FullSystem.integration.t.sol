@@ -259,7 +259,7 @@ contract FullSystemIntegrationTest is Test {
             expectedMintAmount = (data.originalRequestedAmount * quantitativeOutcome) / 100;
         }
 
-        arbitrationCouncil.resolveDispute(data.taskId, bytes32(0));
+        arbitrationCouncil.resolveDispute(data.taskId);
 
         // The callback to ReputationWeightedVerifier now happens automatically
         // inside resolveDispute. The keeper simulation is no longer needed.

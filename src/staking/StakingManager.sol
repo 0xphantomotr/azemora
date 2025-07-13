@@ -20,6 +20,7 @@ error StakingManager__WithdrawalNotReady();
 error StakingManager__NoUnstakeRequest();
 error StakingManager__InvalidDuration();
 error StakingManager__TransferFailed();
+error StakingManager__InsufficientCapitalForSlash();
 
 /**
  * @title StakingManager
@@ -39,6 +40,7 @@ contract StakingManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
 
     // --- Staking & Reward State ---
     uint256 public totalShares;
+    uint256 public totalStaked; // The total principal amount of tokens staked, not including rewards.
     mapping(address => uint256) public sharesOf;
 
     uint256 public rewardRate;
@@ -96,19 +98,17 @@ contract StakingManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
 
     function sharesToTokens(uint256 _shares) public view returns (uint256) {
         if (totalShares == 0) return 0;
-        uint256 totalStakedCapital = stakingToken.balanceOf(address(this)) - totalRewardsInPool();
-        return (_shares * totalStakedCapital) / totalShares;
+        return (_shares * totalStaked) / totalShares;
     }
 
     function tokensToShares(uint256 _tokens) public view returns (uint256) {
         if (totalShares == 0) {
             return _tokens; // 1 token = 1 share for initial stake
         }
-        uint256 totalStakedCapital = stakingToken.balanceOf(address(this)) - totalRewardsInPool();
-        if (totalStakedCapital == 0) {
+        if (totalStaked == 0) {
             return _tokens; // Avoid division by zero if all capital is rewards
         }
-        return (_tokens * totalShares) / totalStakedCapital;
+        return (_tokens * totalShares) / totalStaked;
     }
 
     function totalRewardsInPool() public view returns (uint256) {
@@ -164,6 +164,7 @@ contract StakingManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
             revert StakingManager__TransferFailed();
         }
 
+        totalStaked += amount;
         totalShares += sharesToMint;
         sharesOf[staker] += sharesToMint;
 
@@ -174,8 +175,11 @@ contract StakingManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
         // This function is for compounding, where the tokens are already in the contract.
         // We still calculate shares based on the current state.
         uint256 sharesToMint = tokensToShares(amount);
+
+        totalStaked += amount;
         totalShares += sharesToMint;
         sharesOf[staker] += sharesToMint;
+
         emit Staked(staker, amount, sharesToMint);
     }
 
@@ -195,6 +199,8 @@ contract StakingManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
 
         // --- Snapshot the token value BEFORE reducing shares ---
         uint256 tokensToWithdraw = sharesToTokens(sharesToUnstake);
+
+        totalStaked -= tokensToWithdraw;
 
         // --- Update share balances ---
         sharesOf[msg.sender] -= sharesToUnstake;
@@ -252,8 +258,12 @@ contract StakingManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
         updateReward(address(0))
     {
         if (slashAmount == 0) revert StakingManager__ZeroAmount();
+        if (totalStaked < slashAmount) revert StakingManager__InsufficientCapitalForSlash();
+
+        totalStaked -= slashAmount;
 
         if (!stakingToken.transfer(compensationTarget, slashAmount)) {
+            // This transaction will revert, so the state change to totalStaked will also be reverted.
             revert StakingManager__TransferFailed();
         }
 

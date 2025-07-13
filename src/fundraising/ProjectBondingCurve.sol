@@ -62,7 +62,6 @@ contract ProjectBondingCurve is
     uint256 public maxWithdrawalPercentage; // e.g., 1500 for 15.00%
     uint256 public withdrawalFrequency; // e.g., 7 days in seconds
     uint256 public lastWithdrawalTimestamp;
-    uint256 public collateralAvailableForWithdrawal;
 
     uint256 private constant PERCENTAGE_DENOMINATOR = 10000;
     uint256 private constant WAD = 1e18; // For fixed-point math scaling
@@ -147,7 +146,6 @@ contract ProjectBondingCurve is
         uint256 cost = _calculateBuyCost(amountToBuy);
         if (cost > maxCollateralToSpend) revert ProjectBondingCurve__SlippageExceeded();
 
-        collateralAvailableForWithdrawal += cost;
         _projectToken.mint(msg.sender, amountToBuy);
 
         if (!collateralToken.transferFrom(msg.sender, address(this), cost)) {
@@ -196,12 +194,11 @@ contract ProjectBondingCurve is
             revert ProjectBondingCurve__WithdrawalTooSoon();
         }
 
-        uint256 withdrawableAmount =
-            (collateralAvailableForWithdrawal * maxWithdrawalPercentage) / PERCENTAGE_DENOMINATOR;
+        uint256 currentBalance = collateralToken.balanceOf(address(this));
+        uint256 withdrawableAmount = (currentBalance * maxWithdrawalPercentage) / PERCENTAGE_DENOMINATOR;
         if (withdrawableAmount == 0) revert ProjectBondingCurve__WithdrawalLimitExceeded();
 
         lastWithdrawalTimestamp = block.timestamp;
-        collateralAvailableForWithdrawal = 0;
 
         if (!collateralToken.transfer(owner(), withdrawableAmount)) {
             revert ProjectBondingCurve__TransferFailed();

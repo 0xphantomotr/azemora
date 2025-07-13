@@ -5,7 +5,13 @@ import {Test, console} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 // Contract Under Test
-import {ArbitrationCouncil, ArbitrationCouncil__NotCouncilMember} from "../../src/governance/ArbitrationCouncil.sol";
+import {
+    ArbitrationCouncil,
+    ArbitrationCouncil__NotCouncilMember,
+    ArbitrationCouncil__InvalidDisputeStatus,
+    ArbitrationCouncil__FraudNotConfirmed,
+    ArbitrationCouncil__MerkleRootAlreadySet
+} from "../../src/governance/ArbitrationCouncil.sol";
 
 // Mocks & Interfaces
 import {MockERC20} from "../mocks/MockERC20.sol";
@@ -292,7 +298,7 @@ contract ArbitrationCouncilTest is Test {
 
         // 4. Resolve the dispute after the voting period
         vm.warp(block.timestamp + 2 days);
-        council.resolveDispute(CLAIM_ID, bytes32(0));
+        council.resolveDispute(CLAIM_ID);
 
         // In a real system, a keeper would call back to the originating verifier. We simulate that here.
         (,,,,,, uint256 finalOutcome,) = council.disputes(CLAIM_ID);
@@ -354,9 +360,12 @@ contract ArbitrationCouncilTest is Test {
         merkleRoot = MerkleTest.getRoot(leaves);
         proof1 = MerkleTest.getProof(leaves, 0);
 
-        // 4. Resolve the dispute as fraudulent and set the merkle root
+        // 4. Resolve the dispute as fraudulent, then set the merkle root as admin
         vm.warp(block.timestamp + 2 days);
-        council.resolveDispute(CLAIM_ID, merkleRoot);
+        council.resolveDispute(CLAIM_ID);
+        vm.prank(admin);
+        council.setCompensationMerkleRoot(CLAIM_ID, merkleRoot);
+        vm.stopPrank();
 
         // 5. Fund the council with slashed tokens <-- This is no longer needed.
         // The new flow handles funding through the slash() call inside resolveDispute().
@@ -424,5 +433,62 @@ contract ArbitrationCouncilTest is Test {
         // 3. Assert that the call reverts with the correct error
         vm.expectRevert(abi.encodeWithSelector(ArbitrationCouncil__NotCouncilMember.selector, unauthorizedVoter));
         council.vote(CLAIM_ID, 50); // The vote amount doesn't matter here
+    }
+
+    // --- Merkle Root Setter Tests ---
+
+    function test_revert_setMerkleRoot_if_not_admin() public {
+        (bytes32 merkleRoot,) = _setupFraudulentDispute();
+
+        // Attempt to set the root from a non-admin account.
+        // We use startPrank because expectRevert consumes a single prank.
+        vm.startPrank(challenger);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)")),
+                challenger,
+                council.COUNCIL_ADMIN_ROLE()
+            )
+        );
+        council.setCompensationMerkleRoot(CLAIM_ID, merkleRoot);
+        vm.stopPrank();
+    }
+
+    function test_revert_setMerkleRoot_if_dispute_not_resolved() public {
+        // 1. Create a dispute but DO NOT resolve it
+        vm.prank(challenger);
+        aztToken.approve(address(council), CHALLENGE_STAKE_AMOUNT);
+        vm.prank(address(this));
+        council.createDispute(CLAIM_ID, challenger, address(repWeightedVerifier));
+
+        // 2. Attempt to set the merkle root as admin
+        vm.prank(admin);
+        // We expect the more specific 'InvalidDisputeStatus' error.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ArbitrationCouncil__InvalidDisputeStatus.selector, CLAIM_ID, ArbitrationCouncil.DisputeStatus.Resolved
+            )
+        );
+        council.setCompensationMerkleRoot(CLAIM_ID, bytes32(uint256(1)));
+    }
+
+    function test_revert_setMerkleRoot_if_not_fraud() public {
+        // 1. Resolve a dispute with a NON-fraudulent outcome (>= 50)
+        this.test_fullFlow_calculatesCorrectWeightedAverage();
+
+        // 2. Attempt to set the merkle root as admin
+        vm.prank(admin);
+        vm.expectRevert(ArbitrationCouncil__FraudNotConfirmed.selector);
+        council.setCompensationMerkleRoot(CLAIM_ID, bytes32(uint256(1)));
+    }
+
+    function test_revert_setMerkleRoot_if_root_already_set() public {
+        (bytes32 merkleRoot,) = _setupFraudulentDispute();
+
+        // The root is already set by the helper function.
+        // Attempting to set it again should fail.
+        vm.prank(admin);
+        vm.expectRevert(ArbitrationCouncil__MerkleRootAlreadySet.selector);
+        council.setCompensationMerkleRoot(CLAIM_ID, merkleRoot);
     }
 }

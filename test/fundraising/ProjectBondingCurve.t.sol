@@ -178,11 +178,13 @@ contract ProjectBondingCurveUnitTest is Test {
         vm.warp(block.timestamp + 11); // move 1 second past the period
         uint256 expectedWithdrawal = (buyCost * maxWithdrawalPercentage) / 10000;
         uint256 ownerBalanceBefore = collateralToken.balanceOf(projectOwner);
+        uint256 curveBalanceBefore = collateralToken.balanceOf(address(curve));
         curve.withdrawCollateral();
         uint256 ownerBalanceAfter = collateralToken.balanceOf(projectOwner);
+        uint256 curveBalanceAfter = collateralToken.balanceOf(address(curve));
 
         assertEq(ownerBalanceAfter - ownerBalanceBefore, expectedWithdrawal, "First withdrawal amount incorrect");
-        assertEq(curve.collateralAvailableForWithdrawal(), 0, "Collateral for withdrawal not reset");
+        assertEq(curveBalanceBefore - curveBalanceAfter, expectedWithdrawal, "Curve collateral not reduced correctly");
 
         // --- Second Withdrawal Attempt ---
         // Should fail immediately after, as timer has reset and no new collateral added

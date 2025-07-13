@@ -315,4 +315,49 @@ contract StakingManagerTest is Test {
         stakingManager.slash(10 * 1e18, user2);
         vm.stopPrank();
     }
+
+    /// @notice Tests that the share price calculation is not vulnerable to donation attacks.
+    /// It verifies that the `totalStaked` variable correctly isolates the accounting from
+    /// the contract's raw token balance.
+    function test_donationAttack_sharePriceIsUnaffected() public {
+        // --- Setup ---
+        address attacker = makeAddr("attacker");
+        aztToken.transfer(attacker, 1000 * 1e18); // Give attacker some tokens for the donation
+
+        uint256 stakeAmount = 100 * 1e18;
+
+        // 1. User 1 stakes and receives shares.
+        _stake(user1, stakeAmount);
+        uint256 user1Shares = stakingManager.sharesOf(user1);
+        assertEq(user1Shares, stakeAmount, "Initial stake should result in 1:1 shares");
+
+        // 2. Attacker donates tokens directly to the contract to inflate its balance.
+        uint256 donationAmount = 50 * 1e18;
+        vm.prank(attacker);
+        aztToken.transfer(address(stakingManager), donationAmount);
+
+        // --- Assert Pre-condition: Contract Balance is Inflated ---
+        uint256 expectedBalance = stakeAmount + donationAmount;
+        assertEq(
+            aztToken.balanceOf(address(stakingManager)),
+            expectedBalance,
+            "Contract balance should be inflated by donation"
+        );
+
+        // 3. User 2 stakes the same amount as User 1.
+        _stake(user2, stakeAmount);
+        uint256 user2Shares = stakingManager.sharesOf(user2);
+
+        // --- Core Assertion ---
+        // Without the `totalStaked` fix, user2 would receive fewer shares because the share price
+        // would be artificially high. This assertion proves the fix works.
+        assertEq(
+            user2Shares,
+            user1Shares,
+            "User 2 should receive the same amount of shares as User 1, unaffected by the donation"
+        );
+
+        // --- Final State Check ---
+        assertEq(stakingManager.totalStaked(), stakeAmount * 2, "Total staked amount should only reflect user stakes");
+    }
 }

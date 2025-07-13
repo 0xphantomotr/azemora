@@ -30,6 +30,8 @@ error ArbitrationCouncil__DisputeAlreadyExists(bytes32 claimId);
 error ArbitrationCouncil__RequestIdNotFound();
 error ArbitrationCouncil__NotEnoughVerifiers();
 error ArbitrationCouncil__FraudNotConfirmed();
+error ArbitrationCouncil__MerkleRootAlreadySet();
+error ArbitrationCouncil__MerkleRootCannotBeZero();
 
 // --- Upgradeable VRF Consumer ---
 
@@ -137,6 +139,7 @@ contract ArbitrationCouncil is
     event DisputeResolved(bytes32 indexed claimId, uint256 finalAmount, bytes32 merkleRoot);
     event CouncilSelected(bytes32 indexed claimId, address[] councilMembers);
     event CompensationClaimed(bytes32 indexed claimId, address indexed user, uint256 amount);
+    event MerkleRootSet(bytes32 indexed claimId, bytes32 merkleRoot);
 
     constructor() {
         _disableInitializers();
@@ -186,6 +189,29 @@ contract ArbitrationCouncil is
 
     function setFraudThreshold(uint256 _threshold) external onlyRole(COUNCIL_ADMIN_ROLE) {
         fraudThreshold = _threshold;
+    }
+
+    function setCompensationMerkleRoot(bytes32 claimId, bytes32 merkleRoot) external onlyRole(COUNCIL_ADMIN_ROLE) {
+        Dispute storage dispute = disputes[claimId];
+        // Check 1: Dispute must be resolved
+        if (dispute.status != DisputeStatus.Resolved) {
+            revert ArbitrationCouncil__InvalidDisputeStatus(claimId, DisputeStatus.Resolved);
+        }
+        // Check 2: The outcome must have been fraudulent
+        if (dispute.quantitativeOutcome >= fraudThreshold) {
+            revert ArbitrationCouncil__FraudNotConfirmed();
+        }
+        // Check 3: Root cannot be set twice
+        if (disputeMerkleRoots[claimId] != bytes32(0)) {
+            revert ArbitrationCouncil__MerkleRootAlreadySet();
+        }
+        // Check 4: Root cannot be empty
+        if (merkleRoot == bytes32(0)) {
+            revert ArbitrationCouncil__MerkleRootCannotBeZero();
+        }
+
+        disputeMerkleRoots[claimId] = merkleRoot;
+        emit MerkleRootSet(claimId, merkleRoot);
     }
 
     function createDispute(bytes32 claimId, address challenger, address defendant)
@@ -310,7 +336,7 @@ contract ArbitrationCouncil is
         emit Voted(claimId, msg.sender, votedAmount, reputation);
     }
 
-    function resolveDispute(bytes32 claimId, bytes32 merkleRoot) external nonReentrant {
+    function resolveDispute(bytes32 claimId) external nonReentrant {
         Dispute storage dispute = disputes[claimId];
         if (dispute.status != DisputeStatus.Voting) {
             revert ArbitrationCouncil__InvalidDisputeStatus(claimId, DisputeStatus.Voting);
@@ -348,7 +374,8 @@ contract ArbitrationCouncil is
                 revert ArbitrationCouncil__TransferFailed();
             }
 
-            disputeMerkleRoots[claimId] = merkleRoot;
+            // The Merkle root is now set in a separate, admin-only function.
+            // disputeMerkleRoots[claimId] = merkleRoot;
         } else {
             // If the challenge failed, the defendant was correct. Return stake to the defendant (project).
             if (!azeToken.transfer(dispute.defendant, challengeStakeAmount)) {
@@ -359,7 +386,7 @@ contract ArbitrationCouncil is
         // Notify the originating verifier module of the final outcome.
         IReputationWeightedVerifier(dispute.defendant).processArbitrationResult(claimId, finalOutcome);
 
-        emit DisputeResolved(claimId, finalOutcome, merkleRoot);
+        emit DisputeResolved(claimId, finalOutcome, disputeMerkleRoots[claimId]);
     }
 
     function claimCompensation(bytes32 claimId, address recipient, uint256 amount, bytes32[] calldata merkleProof)
