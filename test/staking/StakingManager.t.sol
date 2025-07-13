@@ -191,36 +191,113 @@ contract StakingManagerTest is Test {
         assertApproxEqAbs(user2ValueAfterSlash, 270 * 1e18, 1);
     }
 
-    /// @notice Tests that the unstaking cooldown and withdrawal process works as intended.
+    /// @notice Tests that the unstaking cooldown and withdrawal process works as intended,
+    ///         and that rewards are claimed automatically upon unstake initiation.
     function test_unstake_cooldown_and_withdrawal() public {
-        // --- Setup ---
+        // --- Setup: Stake and add rewards ---
         uint256 stakeAmount = 200 * 1e18;
         _stake(user1, stakeAmount);
         uint256 user1Shares = stakingManager.sharesOf(user1);
 
-        // --- Initiate Unstake ---
+        uint256 rewardAmount = 20 * 1e18;
+        vm.startPrank(rewardAdmin);
+        aztToken.approve(address(stakingManager), rewardAmount);
+        stakingManager.notifyRewardAmount(rewardAmount, 100 seconds);
+        vm.stopPrank();
+
+        // --- Action: Advance time and initiate unstake ---
+        vm.warp(block.timestamp + 50 seconds); // Accrue half the rewards
+
+        uint256 rewardsEarned = stakingManager.earned(user1);
+        assertTrue(rewardsEarned > 0, "User should have earned some rewards");
+
+        uint256 balanceBeforeUnstake = aztToken.balanceOf(user1);
+
         vm.startPrank(user1);
         stakingManager.initiateUnstake(user1Shares);
 
-        // --- Assertions for cooldown period ---
-        // 1. Cannot withdraw immediately
+        // --- Assertions for immediate effects ---
+        // 1. Check that rewards were paid out
+        uint256 balanceAfterUnstake = aztToken.balanceOf(user1);
+        assertApproxEqAbs(
+            balanceAfterUnstake - balanceBeforeUnstake,
+            rewardsEarned,
+            1,
+            "User should receive their pending rewards upon initiating unstake"
+        );
+
+        // 2. Cannot withdraw immediately (cooldown)
         vm.expectRevert(StakingManager__WithdrawalNotReady.selector);
         stakingManager.withdraw();
 
-        // 2. User's active shares are zero (they don't earn rewards during cooldown)
-        assertEq(stakingManager.sharesOf(user1), 0);
+        // 3. User's active shares are zero
+        assertEq(stakingManager.sharesOf(user1), 0, "User's active shares should be zero");
 
         // --- Assertions after cooldown period ---
-        // 1. Warp time past the cooldown
         vm.warp(block.timestamp + UNSTAKING_COOLDOWN + 1);
 
-        // 2. Withdraw now succeeds
-        uint256 user1InitialBalance = aztToken.balanceOf(user1);
+        uint256 balanceBeforeWithdraw = aztToken.balanceOf(user1);
         stakingManager.withdraw();
-        uint256 user1FinalBalance = aztToken.balanceOf(user1);
+        uint256 balanceAfterWithdraw = aztToken.balanceOf(user1);
 
-        assertEq(user1FinalBalance - user1InitialBalance, stakeAmount, "User should receive their staked tokens back");
+        assertApproxEqAbs(
+            balanceAfterWithdraw - balanceBeforeWithdraw,
+            stakeAmount,
+            1,
+            "User should receive their staked tokens back after cooldown"
+        );
         vm.stopPrank();
+    }
+
+    function test_initiateUnstake_succeeds_with_zero_rewards() public {
+        // --- Setup ---
+        uint256 stakeAmount = 100 * 1e18;
+        _stake(user1, stakeAmount);
+        uint256 user1Shares = stakingManager.sharesOf(user1);
+
+        // --- Action ---
+        // Immediately initiate unstake, with no time for rewards to accrue
+        vm.startPrank(user1);
+        stakingManager.initiateUnstake(user1Shares);
+        vm.stopPrank();
+
+        // --- Assertions ---
+        (uint256 requestedAmount, uint256 releaseTime) = stakingManager.unstakeRequests(user1);
+        assertEq(requestedAmount, stakeAmount, "Requested amount should equal the initial stake value");
+        assertTrue(releaseTime > block.timestamp, "Release time should be in the future");
+    }
+
+    function test_initiateUnstake_multiple_times_aggregates_and_resets_cooldown() public {
+        // --- Setup ---
+        uint256 stakeAmount = 300 * 1e18;
+        _stake(user1, stakeAmount);
+
+        // --- Action 1: First unstake request ---
+        uint256 sharesToUnstake1 = stakingManager.tokensToShares(100 * 1e18);
+        vm.startPrank(user1);
+        stakingManager.initiateUnstake(sharesToUnstake1);
+        vm.stopPrank();
+
+        // --- Assertions 1 ---
+        (uint256 requestedAmount1, uint256 releaseTime1) = stakingManager.unstakeRequests(user1);
+        assertApproxEqAbs(requestedAmount1, 100 * 1e18, 1);
+
+        // --- Action 2: Advance time and make a second request ---
+        vm.warp(block.timestamp + 1 days);
+        uint256 sharesToUnstake2 = stakingManager.tokensToShares(50 * 1e18);
+        vm.startPrank(user1);
+        stakingManager.initiateUnstake(sharesToUnstake2);
+        vm.stopPrank();
+
+        // --- Assertions 2 ---
+        (uint256 requestedAmount2, uint256 releaseTime2) = stakingManager.unstakeRequests(user1);
+
+        // Amount should be cumulative
+        assertApproxEqAbs(requestedAmount2, 150 * 1e18, 2, "Requested amount should be cumulative");
+
+        // Cooldown timer should have reset from the *second* call
+        assertTrue(releaseTime2 > releaseTime1, "New release time should be later than the first");
+        assertApproxEqAbs(releaseTime2, block.timestamp + UNSTAKING_COOLDOWN, 1, "Release time should be reset");
     }
 
     /// @notice Tests that only an address with SLASHER_ROLE can call slash.

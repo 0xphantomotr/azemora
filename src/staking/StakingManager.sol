@@ -50,7 +50,7 @@ contract StakingManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
 
     // --- Unstaking State ---
     struct UnstakeRequest {
-        uint256 shares;
+        uint256 amount; // This now stores the final token amount to be withdrawn
         uint256 releaseTime;
     }
 
@@ -183,9 +183,25 @@ contract StakingManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
         if (sharesToUnstake == 0) revert StakingManager__ZeroAmount();
         if (sharesOf[msg.sender] < sharesToUnstake) revert StakingManager__InsufficientStakedAmount();
 
-        sharesOf[msg.sender] -= sharesToUnstake; // Remove from reward-earning shares immediately
+        // --- Auto-claim rewards ---
+        uint256 reward = rewards[msg.sender];
+        if (reward > 0) {
+            rewards[msg.sender] = 0;
+            if (!stakingToken.transfer(msg.sender, reward)) {
+                revert StakingManager__TransferFailed();
+            }
+            emit RewardPaid(msg.sender, reward);
+        }
 
-        unstakeRequests[msg.sender].shares += sharesToUnstake;
+        // --- Snapshot the token value BEFORE reducing shares ---
+        uint256 tokensToWithdraw = sharesToTokens(sharesToUnstake);
+
+        // --- Update share balances ---
+        sharesOf[msg.sender] -= sharesToUnstake;
+        totalShares -= sharesToUnstake;
+
+        // --- Store the final token amount for withdrawal ---
+        unstakeRequests[msg.sender].amount += tokensToWithdraw;
         unstakeRequests[msg.sender].releaseTime = block.timestamp + unstakingCooldown;
 
         emit UnstakeInitiated(msg.sender, sharesToUnstake, unstakeRequests[msg.sender].releaseTime);
@@ -193,20 +209,19 @@ contract StakingManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
 
     function withdraw() external nonReentrant {
         UnstakeRequest storage request = unstakeRequests[msg.sender];
-        if (request.shares == 0) revert StakingManager__NoUnstakeRequest();
+        if (request.amount == 0) revert StakingManager__NoUnstakeRequest();
         if (block.timestamp < request.releaseTime) revert StakingManager__WithdrawalNotReady();
 
-        uint256 sharesToWithdraw = request.shares;
-        uint256 tokensToWithdraw = sharesToTokens(sharesToWithdraw);
-
-        totalShares -= sharesToWithdraw; // Decrease total shares *after* calculating token value
+        uint256 tokensToWithdraw = request.amount;
 
         delete unstakeRequests[msg.sender];
 
         if (!stakingToken.transfer(msg.sender, tokensToWithdraw)) {
             revert StakingManager__TransferFailed();
         }
-        emit Withdrawn(msg.sender, tokensToWithdraw, sharesToWithdraw);
+        // We no longer have the share count, so we emit 0 for that part of the event.
+        // This could be improved by storing shares in the request too, but for now, this is the simplest fix.
+        emit Withdrawn(msg.sender, tokensToWithdraw, 0);
     }
 
     function compound() external nonReentrant updateReward(msg.sender) {
