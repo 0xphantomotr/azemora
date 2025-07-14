@@ -58,7 +58,7 @@ contract MarketplaceFuzzTest is Test {
             )
         );
         marketplace.setTreasury(treasury);
-        marketplace.setFee(250); // 2.5% fee
+        marketplace.setProtocolFeeBps(250); // 2.5% fee
 
         vm.stopPrank();
     }

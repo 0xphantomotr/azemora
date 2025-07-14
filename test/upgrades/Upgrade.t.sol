@@ -31,14 +31,14 @@ contract UpgradeTest is Test {
         marketplace = Marketplace(address(proxy)); // Point our interface to the proxy address
 
         // Set initial state on V1 that we will check after the upgrade
-        marketplace.setFee(250); // 2.5% fee
+        marketplace.setProtocolFeeBps(250); // 2.5% fee
 
         vm.stopPrank();
     }
 
     function test_upgradeMarketplace_preservesStateAndRoles() public {
         // --- 1. Pre-Upgrade Assertions ---
-        assertEq(marketplace.feeBps(), 250, "Pre-upgrade feeBps should be 250");
+        assertEq(marketplace.protocolFeeBps(), 250, "Pre-upgrade feeBps should be 250");
         assertTrue(
             marketplace.hasRole(marketplace.DEFAULT_ADMIN_ROLE(), admin), "Admin should have admin role before upgrade"
         );
@@ -55,7 +55,7 @@ contract UpgradeTest is Test {
         MarketplaceV2 marketplaceV2 = MarketplaceV2(address(marketplace));
 
         // Check that state is preserved
-        assertEq(marketplaceV2.feeBps(), 250, "Post-upgrade feeBps should still be 250");
+        assertEq(marketplaceV2.protocolFeeBps(), 250, "Post-upgrade feeBps should still be 250");
 
         // Check that roles are preserved
         assertTrue(
@@ -70,13 +70,13 @@ contract UpgradeTest is Test {
 
         // Check that old functions still work on the new implementation
         vm.prank(admin);
-        marketplaceV2.setFee(500);
-        assertEq(marketplaceV2.feeBps(), 500, "V1 function 'setFee' should still work after upgrade");
+        marketplaceV2.setProtocolFeeBps(500);
+        assertEq(marketplaceV2.protocolFeeBps(), 500, "V1 function 'setFee' should still work after upgrade");
 
         // Check that a non-admin cannot call admin functions
         bytes4 expectedError = bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)"));
         vm.expectRevert(abi.encodeWithSelector(expectedError, otherUser, marketplace.DEFAULT_ADMIN_ROLE()));
         vm.prank(otherUser);
-        marketplaceV2.setFee(1000);
+        marketplaceV2.setProtocolFeeBps(1000);
     }
 }

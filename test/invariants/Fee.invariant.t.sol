@@ -156,7 +156,7 @@ contract FeeInvariantTest is Test, IFeeCallback {
             )
         );
         marketplace.setTreasury(address(treasury));
-        marketplace.setFee(250); // 2.5%
+        marketplace.setProtocolFeeBps(250); // 2.5%
 
         // Setup Project
         bytes32 projectId = keccak256("Test Project");

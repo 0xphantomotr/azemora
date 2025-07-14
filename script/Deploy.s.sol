@@ -127,7 +127,7 @@ contract Deploy is Script {
     function _configureMarketplace(Marketplace marketplace, address treasury) internal {
         console.log("Setting Marketplace Treasury and Fee...");
         marketplace.setTreasury(treasury);
-        marketplace.setFee(250); // 2.5% fee
+        marketplace.setProtocolFeeBps(250); // 2.5% fee
     }
 
     struct Addresses {

@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import "../../src/core/dMRVManager.sol";
 import "../../src/core/ProjectRegistry.sol";
 import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
+import {IVerificationData} from "../../src/core/interfaces/IVerificationData.sol";
 import "../../src/core/DynamicImpactCredit.sol";
 import "../../src/core/MethodologyRegistry.sol";
 import "../mocks/MockVerifierModule.sol";
@@ -107,10 +108,15 @@ contract DMRVManagerFuzzTest is Test {
 
         // --- Execute Action ---
         // 4. Prepare module data and fulfill the request
-        bytes memory data = abi.encode(uint256(quantitativeOutcome), false, bytes32(0), credentialCID);
+        IVerificationData.VerificationResult memory result = IVerificationData.VerificationResult({
+            quantitativeOutcome: uint256(quantitativeOutcome),
+            wasArbitrated: false,
+            arbitrationDisputeId: 0,
+            credentialCID: credentialCID
+        });
 
         vm.prank(address(mockModule));
-        dMRVManager.fulfillVerification(projectId, claimId, data);
+        dMRVManager.fulfillVerification(projectId, claimId, result);
 
         // --- Assert Final State ---
         // 5. Verify the state changes match the inputs

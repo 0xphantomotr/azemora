@@ -166,7 +166,7 @@ contract FullFlowTest is Test {
         dmrvManager.grantRole(dmrvManager.DEFAULT_ADMIN_ROLE(), dmrvOracle);
         // Set marketplace treasury TO THE STAKING CONTRACT
         marketplace.setTreasury(address(stakingRewards));
-        marketplace.setFee(500); // 5% fee
+        marketplace.setProtocolFeeBps(500); // 5% fee
 
         // Configure Governance
         bytes32 proposerRole = timelock.PROPOSER_ROLE();
@@ -252,7 +252,7 @@ contract FullFlowTest is Test {
 
         uint256 buyAmount = 50;
         uint256 totalPrice = buyAmount * pricePerUnit;
-        uint256 fee = (totalPrice * marketplace.feeBps()) / 10000;
+        uint256 fee = (totalPrice * marketplace.protocolFeeBps()) / 10000;
 
         uint256 stakingContractInitialBalance = govToken.balanceOf(address(stakingRewards));
 

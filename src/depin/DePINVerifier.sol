@@ -5,6 +5,7 @@ import "../core/interfaces/IVerifierModule.sol";
 import "./interfaces/IOracleManager.sol";
 import "./interfaces/IRewardCalculator.sol";
 import "../core/interfaces/IDMRVManager.sol";
+import "../core/interfaces/IVerificationData.sol";
 import "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlEnumerableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
@@ -122,9 +123,15 @@ contract DePINVerifier is
             IRewardCalculator(terms.rewardCalculator).calculateReward(terms.rewardTerms, reading.value);
 
         string memory resultURI = rewardAmount > 0 ? "ipfs://depin-verified-v3" : "ipfs://depin-failed-v3";
-        bytes memory resultData = abi.encode(rewardAmount, false, bytes32(0), resultURI);
 
-        dMRVManager.fulfillVerification(projectId, claimId, resultData);
+        IVerificationData.VerificationResult memory result = IVerificationData.VerificationResult({
+            quantitativeOutcome: rewardAmount,
+            wasArbitrated: false,
+            arbitrationDisputeId: 0,
+            credentialCID: resultURI
+        });
+
+        dMRVManager.fulfillVerification(projectId, claimId, result);
 
         return claimId;
     }
@@ -135,15 +142,6 @@ contract DePINVerifier is
         bytes memory evidenceBytes = bytes(evidenceURI);
         (VerificationTerms memory terms) = abi.decode(evidenceBytes, (VerificationTerms));
         return terms;
-    }
-
-    // Not supported in this verifier type.
-    function delegateVerification(bytes32, /* claimId */ bytes calldata, /* data */ address /* originalSubmitter */ )
-        external
-        pure
-        override
-    {
-        revert DePINVerifier__DelegationNotSupported();
     }
 
     /**

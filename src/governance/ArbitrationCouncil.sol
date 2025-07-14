@@ -32,6 +32,7 @@ error ArbitrationCouncil__NotEnoughVerifiers();
 error ArbitrationCouncil__FraudNotConfirmed();
 error ArbitrationCouncil__MerkleRootAlreadySet();
 error ArbitrationCouncil__MerkleRootCannotBeZero();
+error ArbitrationCouncil__InsufficientFundsForBounties();
 
 // --- Upgradeable VRF Consumer ---
 
@@ -116,6 +117,7 @@ contract ArbitrationCouncil is
     uint256 public votingPeriod;
     uint256 public councilSize;
     uint256 public fraudThreshold; // e.g., 50 for 50%. If outcome < threshold, it's fraud.
+    uint256 public keeperBounty; // AZE tokens rewarded to the address that calls resolveDispute
 
     // Chainlink VRF variables
     VRFCoordinatorV2Interface public COORDINATOR;
@@ -140,6 +142,7 @@ contract ArbitrationCouncil is
     event CouncilSelected(bytes32 indexed claimId, address[] councilMembers);
     event CompensationClaimed(bytes32 indexed claimId, address indexed user, uint256 amount);
     event MerkleRootSet(bytes32 indexed claimId, bytes32 merkleRoot);
+    event KeeperRewarded(address indexed keeper, uint256 amount);
 
     constructor() {
         _disableInitializers();
@@ -189,6 +192,10 @@ contract ArbitrationCouncil is
 
     function setFraudThreshold(uint256 _threshold) external onlyRole(COUNCIL_ADMIN_ROLE) {
         fraudThreshold = _threshold;
+    }
+
+    function setKeeperBounty(uint256 _bountyAmount) external onlyRole(COUNCIL_ADMIN_ROLE) {
+        keeperBounty = _bountyAmount;
     }
 
     function setCompensationMerkleRoot(bytes32 claimId, bytes32 merkleRoot) external onlyRole(COUNCIL_ADMIN_ROLE) {
@@ -250,32 +257,42 @@ contract ArbitrationCouncil is
 
         delete vrfRequests[requestId];
 
-        address[] memory potentialJurors = verifierManager.getAllVerifiers();
-        if (potentialJurors.length < councilSize) revert ArbitrationCouncil__NotEnoughVerifiers();
+        address[] memory allVerifiers = verifierManager.getAllVerifiers();
+        uint256 numVerifiers = allVerifiers.length;
 
-        address[] memory selectedCouncil = new address[](councilSize);
+        // Filter out the challenger and defendant from the list of potential jurors
+        address[] memory potentialJurors = new address[](numVerifiers);
         uint256 jurorCount = 0;
-
-        for (uint256 i = 0; i < randomWords.length && jurorCount < councilSize; i++) {
-            uint256 randomIndex = randomWords[i] % potentialJurors.length;
-            address candidate = potentialJurors[randomIndex];
-
-            bool alreadySelected = false;
-            for (uint256 j = 0; j < jurorCount; j++) {
-                if (selectedCouncil[j] == candidate) {
-                    alreadySelected = true;
-                    break;
-                }
-            }
-
-            if (candidate != request.defendant && candidate != request.challenger && !alreadySelected) {
-                selectedCouncil[jurorCount] = candidate;
+        for (uint256 i = 0; i < numVerifiers; i++) {
+            address verifier = allVerifiers[i];
+            if (verifier != request.challenger && verifier != request.defendant) {
+                potentialJurors[jurorCount] = verifier;
                 jurorCount++;
             }
         }
 
         if (jurorCount < councilSize) {
             revert ArbitrationCouncil__NotEnoughVerifiers();
+        }
+
+        // --- Efficient Shuffle (Fisher-Yates style) ---
+        // We use the provided random words to shuffle the first 'councilSize' positions
+        // of our potentialJurors array.
+        for (uint256 i = 0; i < councilSize; i++) {
+            // Use a random number to pick an index from the rest of the array
+            uint256 randomIndex = i + (randomWords[i] % (jurorCount - i));
+
+            // Swap the element at the random index with the current element
+            address temp = potentialJurors[i];
+            potentialJurors[i] = potentialJurors[randomIndex];
+            potentialJurors[randomIndex] = temp;
+        }
+
+        // --- Select the final council ---
+        // The first 'councilSize' elements are now our randomly selected, unique jurors.
+        address[] memory selectedCouncil = new address[](councilSize);
+        for (uint256 i = 0; i < councilSize; i++) {
+            selectedCouncil[i] = potentialJurors[i];
         }
 
         Dispute storage dispute = disputes[request.claimId];
@@ -357,7 +374,10 @@ contract ArbitrationCouncil is
             uint256 slashAmount = verifierManager.getVerifierStake(dispute.defendant);
             if (slashAmount == 0) revert ArbitrationCouncil__FraudNotConfirmed();
 
-            uint256 bountyAmount = (slashAmount * 10) / 100; // 10% bounty
+            uint256 challengerBounty = (slashAmount * 10) / 100; // 10% bounty
+            if (slashAmount < challengerBounty + keeperBounty) {
+                revert ArbitrationCouncil__InsufficientFundsForBounties();
+            }
 
             // 1. Return the challenger's original stake.
             if (!azeToken.transfer(dispute.challenger, challengeStakeAmount)) {
@@ -368,17 +388,35 @@ contract ArbitrationCouncil is
             //    the compensation pool and bounty source.
             stakingManager.slash(slashAmount, address(this));
 
-            // 3. From the newly received slashed funds, pay the challenger's bounty. The rest remains
-            //    in this contract to pay for victim compensation claims.
-            if (bountyAmount > 0 && !azeToken.transfer(dispute.challenger, bountyAmount)) {
+            // 3. From the newly received slashed funds, pay the challenger's bounty.
+            if (challengerBounty > 0 && !azeToken.transfer(dispute.challenger, challengerBounty)) {
                 revert ArbitrationCouncil__TransferFailed();
             }
+
+            // 4. Pay the keeper's bounty.
+            if (keeperBounty > 0 && !azeToken.transfer(msg.sender, keeperBounty)) {
+                revert ArbitrationCouncil__TransferFailed();
+            }
+            emit KeeperRewarded(msg.sender, keeperBounty);
 
             // The Merkle root is now set in a separate, admin-only function.
             // disputeMerkleRoots[claimId] = merkleRoot;
         } else {
-            // If the challenge failed, the defendant was correct. Return stake to the defendant (project).
-            if (!azeToken.transfer(dispute.defendant, challengeStakeAmount)) {
+            // If the challenge failed, the defendant was correct.
+            // Pay the keeper from the challenger's stake before returning the rest to the defendant.
+            if (challengeStakeAmount < keeperBounty) {
+                revert ArbitrationCouncil__InsufficientFundsForBounties();
+            }
+
+            if (keeperBounty > 0) {
+                if (!azeToken.transfer(msg.sender, keeperBounty)) {
+                    revert ArbitrationCouncil__TransferFailed();
+                }
+                emit KeeperRewarded(msg.sender, keeperBounty);
+            }
+
+            uint256 remainingStake = challengeStakeAmount - keeperBounty;
+            if (remainingStake > 0 && !azeToken.transfer(dispute.defendant, remainingStake)) {
                 revert ArbitrationCouncil__TransferFailed();
             }
         }

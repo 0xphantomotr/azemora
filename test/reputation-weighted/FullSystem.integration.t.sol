@@ -236,13 +236,13 @@ contract FullSystemIntegrationTest is Test {
         }
 
         // 4. The jurors cast quantitative votes.
+        uint256 vote1 = 80;
         data.vote2 = 90;
-        data.vote3 = 96;
         vm.prank(verifier2_arbitrator);
         arbitrationCouncil.vote(data.taskId, data.vote2);
         vm.stopPrank();
-        vm.prank(verifier3_arbitrator);
-        arbitrationCouncil.vote(data.taskId, data.vote3);
+        vm.prank(verifier1);
+        arbitrationCouncil.vote(data.taskId, vote1);
         vm.stopPrank();
 
         // 5. Anyone resolves the dispute after the voting period ends.
@@ -252,9 +252,9 @@ contract FullSystemIntegrationTest is Test {
         uint256 quantitativeOutcome;
         uint256 expectedMintAmount;
         {
+            uint256 rep1 = reputationManager.getReputation(verifier1);
             uint256 rep2 = reputationManager.getReputation(verifier2_arbitrator);
-            uint256 rep3 = reputationManager.getReputation(verifier3_arbitrator);
-            quantitativeOutcome = ((data.vote2 * rep2) + (data.vote3 * rep3)) / (rep2 + rep3);
+            quantitativeOutcome = ((vote1 * rep1) + (data.vote2 * rep2)) / (rep1 + rep2);
 
             expectedMintAmount = (data.originalRequestedAmount * quantitativeOutcome) / 100;
         }

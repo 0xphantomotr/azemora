@@ -87,7 +87,7 @@ contract StakingIntegrationTest is Test {
         );
 
         // --- Configure Connections ---
-        marketplace.setFee(1000); // 10% fee for easy math
+        marketplace.setProtocolFeeBps(1000); // 10% fee for easy math
         marketplace.setTreasury(address(stakingRewards)); // <<< CRITICAL: Fees go to staking contract
 
         // Grant Roles for Minting and Ownership Transfer

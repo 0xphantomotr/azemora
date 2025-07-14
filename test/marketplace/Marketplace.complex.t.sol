@@ -74,7 +74,7 @@ contract MarketplaceComplexTest is Test {
             )
         );
         marketplace.setTreasury(treasury);
-        marketplace.setFee(250); // Initial 2.5% fee
+        marketplace.setProtocolFeeBps(250); // Initial 2.5% fee
 
         vm.stopPrank();
 
@@ -178,7 +178,7 @@ contract MarketplaceComplexTest is Test {
 
         // STEP 7: Admin changes the fee, a new purchase reflects this
         vm.prank(admin);
-        marketplace.setFee(500); // 5% fee
+        marketplace.setProtocolFeeBps(500); // 5% fee
 
         // Seller1 lists again
         vm.startPrank(seller1);

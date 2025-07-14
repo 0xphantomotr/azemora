@@ -9,6 +9,7 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "../core/interfaces/IVerifierModule.sol";
 import "./interfaces/IVerifierManager.sol";
 import "../core/interfaces/IDMRVManager.sol";
+import "../core/interfaces/IVerificationData.sol";
 import "../governance/interfaces/IArbitrationCouncil.sol";
 import "./interfaces/IReputationWeightedVerifier.sol";
 import {ERC165Checker} from "@openzeppelin/contracts/utils/introspection/ERC165Checker.sol";
@@ -27,6 +28,7 @@ error ReputationWeightedVerifier__NotPending();
 error ReputationWeightedVerifier__AlreadyFinalized();
 error ReputationWeightedVerifier__InvalidStateForAction();
 error ReputationWeightedVerifier__UnauthorizedCaller();
+error ReputationWeightedVerifier__TransferFailed();
 
 enum TaskStatus {
     Pending,
@@ -81,6 +83,7 @@ contract ReputationWeightedVerifier is
     uint256 public votingPeriod;
     uint256 public approvalThresholdBps; // Basis points required for approval (e.g., 5001 for >50%)
     uint256 public challengePeriod; // Duration of the challenge window
+    uint256 public keeperBounty; // ETH reward for calling finalizeVerification
 
     mapping(bytes32 => VerificationTask) public tasks;
     mapping(bytes32 => address[]) public taskVoters;
@@ -95,6 +98,7 @@ contract ReputationWeightedVerifier is
     event TaskChallenged(bytes32 indexed taskId, address indexed challenger);
     event TaskFinalized(bytes32 indexed taskId, bool finalOutcome, uint256 quantitativeOutcome);
     event TaskOverturned(bytes32 indexed taskId);
+    event KeeperRewarded(address indexed keeper, uint256 amount);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -125,6 +129,20 @@ contract ReputationWeightedVerifier is
         challengePeriod = _challengePeriod;
         approvalThresholdBps = _approvalThresholdBps;
     }
+
+    // --- Admin Functions ---
+
+    function setKeeperBounty(uint256 _bounty) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        keeperBounty = _bounty;
+    }
+
+    function withdrawFees() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        (bool success,) = owner().call{value: address(this).balance}("");
+        require(success, "Withdrawal failed");
+    }
+
+    // --- ETH Handling ---
+    receive() external payable {}
 
     /**
      * @notice MODIFICATION: This function now implements the optimistic verification model.
@@ -178,13 +196,23 @@ contract ReputationWeightedVerifier is
         task.status = TaskStatus.Finalized;
         task.outcome = true; // Optimistic outcome is true
 
+        if (keeperBounty > 0) {
+            (bool success,) = msg.sender.call{value: keeperBounty}("");
+            if (!success) revert ReputationWeightedVerifier__TransferFailed();
+            emit KeeperRewarded(msg.sender, keeperBounty);
+        }
+
         // For an unchallenged task, the quantitative outcome is 100%.
         uint256 quantitativeOutcome = 100;
-        bool wasArbitrated = false;
-        bytes32 arbitrationDisputeId = bytes32(0);
 
-        bytes memory data = abi.encode(quantitativeOutcome, wasArbitrated, arbitrationDisputeId, task.evidenceURI);
-        dMRVManager.fulfillVerification(task.projectId, task.claimId, data);
+        IVerificationData.VerificationResult memory result = IVerificationData.VerificationResult({
+            quantitativeOutcome: quantitativeOutcome,
+            wasArbitrated: false,
+            arbitrationDisputeId: 0,
+            credentialCID: task.evidenceURI
+        });
+
+        dMRVManager.fulfillVerification(task.projectId, task.claimId, result);
 
         emit TaskFinalized(taskId, task.outcome, quantitativeOutcome);
     }
@@ -208,8 +236,13 @@ contract ReputationWeightedVerifier is
 
         // The finalAmount is the quantitative outcome (e.g., 85 for 85%).
         // We will pass this directly to the dMRVManager.
-        bytes memory data = abi.encode(finalAmount, true, taskId, task.evidenceURI);
-        dMRVManager.fulfillVerification(task.projectId, task.claimId, data);
+        IVerificationData.VerificationResult memory result = IVerificationData.VerificationResult({
+            quantitativeOutcome: finalAmount,
+            wasArbitrated: true,
+            arbitrationDisputeId: uint256(taskId),
+            credentialCID: task.evidenceURI
+        });
+        dMRVManager.fulfillVerification(task.projectId, task.claimId, result);
 
         emit TaskFinalized(taskId, task.outcome, finalAmount);
     }
@@ -226,30 +259,45 @@ contract ReputationWeightedVerifier is
 
     // --- View Functions ---
 
+    function getTask(bytes32 taskId)
+        external
+        view
+        returns (
+            bytes32 projectId,
+            bytes32 claimId,
+            string memory evidenceURI,
+            TaskStatus status,
+            bool outcome,
+            uint256 challengeDeadline,
+            uint256 weightedApproveVotes,
+            uint256 weightedRejectVotes
+        )
+    {
+        VerificationTask storage task = tasks[taskId];
+        return (
+            task.projectId,
+            task.claimId,
+            task.evidenceURI,
+            task.status,
+            task.outcome,
+            task.challengeDeadline,
+            task.weightedApproveVotes,
+            task.weightedRejectVotes
+        );
+    }
+
+    function getVote(bytes32 taskId, address voter) external view returns (Vote) {
+        return tasks[taskId].votes[voter];
+    }
+
     /**
-     * @notice Returns the current status of a verification task.
-     * @param taskId The ID of the task to query.
-     * @return The `TaskStatus` enum of the task.
+     * @notice Returns the status of a specific verification task.
+     * @param taskId The ID of the task.
+     * @return The current status of the task.
      */
     function getTaskStatus(bytes32 taskId) external view returns (TaskStatus) {
         return tasks[taskId].status;
     }
 
-    /* ---------- upgrade auth ---------- */
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
-
-    // --- Unused IVerifierModule function ---
-    function delegateVerification(bytes32, bytes calldata, address) external pure override {
-        revert("This module does not support delegation");
-    }
-
-    function supportsInterface(bytes4 interfaceId)
-        public
-        view
-        override(AccessControlEnumerableUpgradeable)
-        returns (bool)
-    {
-        return interfaceId == type(IVerifierModule).interfaceId
-            || interfaceId == type(IReputationWeightedVerifier).interfaceId || super.supportsInterface(interfaceId);
-    }
 }

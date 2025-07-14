@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Script.sol";
 import "forge-std/console.sol";
 import {DMRVManager} from "../../src/core/dMRVManager.sol";
+import {IVerificationData} from "../../src/core/interfaces/IVerificationData.sol";
 
 /**
  * @title MintCreditScript
@@ -46,14 +47,20 @@ contract MintCreditScript is Script {
 
         // 2. Fulfill verification (in a real scenario, this would be done by the module owner)
         console.log("\n--- 2. Fulfilling Verification (Simulated by Deployer) ---");
-        uint256 creditAmount = 100 * 1e18; // Mint 100 credits
+        uint256 quantitativeOutcome = 85; // Simulate an 85% outcome
         string memory newMetaURI = "ipfs://bafkreinewmetadataforproject1";
-        bytes memory verificationData = abi.encode(creditAmount, false, bytes32(0), newMetaURI);
 
-        console.log("Fulfilling with amount:", creditAmount);
+        IVerificationData.VerificationResult memory result = IVerificationData.VerificationResult({
+            quantitativeOutcome: quantitativeOutcome,
+            wasArbitrated: false,
+            arbitrationDisputeId: 0,
+            credentialCID: newMetaURI
+        });
+
+        console.log("Fulfilling with quantitative outcome:", quantitativeOutcome);
         // Note: For this script to work, the calling address (deployer) must be registered
         // as the module address for the given MODULE_TYPE in the dMRVManager.
-        dMRVManager.fulfillVerification(projectId, claimId, verificationData);
+        dMRVManager.fulfillVerification(projectId, claimId, result);
 
         vm.stopBroadcast();
 

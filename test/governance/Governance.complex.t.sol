@@ -227,7 +227,7 @@ contract GovernanceComplexTest is Test {
         targets[0] = address(marketplace);
         uint256[] memory values = new uint256[](1);
         bytes[] memory calldatas = new bytes[](1);
-        calldatas[0] = abi.encodeWithSelector(Marketplace.setFee.selector, 300); // Set fee to 3%
+        calldatas[0] = abi.encodeWithSelector(Marketplace.setProtocolFeeBps.selector, 300); // Set fee to 3%
         string memory description = "Proposal to set fee to 3% with exact quorum";
         bytes32 descriptionHash = keccak256(bytes(description));
 
@@ -251,7 +251,7 @@ contract GovernanceComplexTest is Test {
         vm.warp(block.timestamp + MIN_DELAY + 1);
         AzemoraGovernor(governorAddr).execute(targets, values, calldatas, descriptionHash);
 
-        assertEq(marketplace.feeBps(), 300, "Marketplace fee should be updated");
+        assertEq(marketplace.protocolFeeBps(), 300, "Marketplace fee should be updated");
     }
 
     /**
@@ -264,7 +264,7 @@ contract GovernanceComplexTest is Test {
         targets[0] = address(marketplace);
         uint256[] memory values = new uint256[](1);
         bytes[] memory calldatas = new bytes[](1);
-        calldatas[0] = abi.encodeWithSelector(Marketplace.setFee.selector, 600); // Set fee to 6%
+        calldatas[0] = abi.encodeWithSelector(Marketplace.setProtocolFeeBps.selector, 600); // Set fee to 6%
         string memory description = "Proposal to set fee to 6%";
         bytes32 descriptionHash = keccak256(bytes(description));
 
@@ -285,7 +285,7 @@ contract GovernanceComplexTest is Test {
             uint256(AzemoraGovernor(governorAddr).state(proposalId)),
             "Proposal should be Executed"
         );
-        assertEq(marketplace.feeBps(), 600, "Marketplace fee should be updated");
+        assertEq(marketplace.protocolFeeBps(), 600, "Marketplace fee should be updated");
 
         // --- Assert replay attacks fail ---
 
@@ -316,7 +316,7 @@ contract GovernanceComplexTest is Test {
         targets[0] = address(marketplace);
         uint256[] memory values = new uint256[](1);
         bytes[] memory calldatas = new bytes[](1);
-        calldatas[0] = abi.encodeWithSelector(Marketplace.setFee.selector, 800); // Set fee to 8%
+        calldatas[0] = abi.encodeWithSelector(Marketplace.setProtocolFeeBps.selector, 800); // Set fee to 8%
 
         string memory description1 = "Set fee to 8% (Monday)";
         bytes32 descriptionHash1 = keccak256(bytes(description1));
@@ -370,7 +370,7 @@ contract GovernanceComplexTest is Test {
         targets[0] = address(marketplace);
         uint256[] memory values = new uint256[](1);
         bytes[] memory calldatas = new bytes[](1);
-        calldatas[0] = abi.encodeWithSelector(Marketplace.setFee.selector, 100);
+        calldatas[0] = abi.encodeWithSelector(Marketplace.setProtocolFeeBps.selector, 100);
         string memory description = "Test Vote Snapshot";
 
         // Propose the action. The snapshot of the voter's 50M tokens is taken here.

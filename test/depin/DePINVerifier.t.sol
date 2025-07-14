@@ -7,6 +7,7 @@ import "../../src/depin/DePINVerifier.sol";
 import "../../src/depin/interfaces/IOracleManager.sol";
 import "../../src/depin/interfaces/IRewardCalculator.sol";
 import "../../src/core/interfaces/IDMRVManager.sol";
+import "../../src/core/interfaces/IVerificationData.sol";
 import "openzeppelin-contracts/contracts/proxy/beacon/BeaconProxy.sol";
 import "openzeppelin-contracts/contracts/proxy/beacon/UpgradeableBeacon.sol";
 import "openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
@@ -27,15 +28,23 @@ import {
 contract MockDMRVManager is IDMRVManager {
     bytes32 public lastProjectId;
     bytes32 public lastClaimId;
-    bytes public lastResultData;
+    IVerificationData.VerificationResult private _lastResult;
     bool public wasCalled;
     bool public wasReversed;
 
-    function fulfillVerification(bytes32 projectId, bytes32 claimId, bytes calldata resultData) external {
+    function fulfillVerification(
+        bytes32 projectId,
+        bytes32 claimId,
+        IVerificationData.VerificationResult calldata result
+    ) external {
         lastProjectId = projectId;
         lastClaimId = claimId;
-        lastResultData = resultData;
+        _lastResult = result;
         wasCalled = true;
+    }
+
+    function lastResult() external view returns (IVerificationData.VerificationResult memory) {
+        return _lastResult;
     }
 
     function reverseFulfillment(bytes32 projectId, bytes32 claimId) external {
@@ -197,8 +206,8 @@ contract DePINVerifierTest is Test {
         assertEq(mockDMRVManager.lastProjectId(), projectId);
         assertEq(mockDMRVManager.lastClaimId(), claimId);
 
-        (uint256 rewardAmount,,,) = abi.decode(mockDMRVManager.lastResultData(), (uint256, bool, bytes32, string));
-        assertEq(rewardAmount, mockRewardCalculator.rewardToReturn());
+        assertEq(mockDMRVManager.lastResult().quantitativeOutcome, mockRewardCalculator.rewardToReturn());
+        assertEq(mockDMRVManager.lastResult().wasArbitrated, false);
     }
 
     function test_RevertIf_CallerIsNotDMRVManager() public {
@@ -312,10 +321,9 @@ contract DePINVerifierTest is Test {
 
         // Assert
         assertTrue(mockDMRVManager.wasCalled());
-        (uint256 rewardAmount,,, string memory resultURI) =
-            abi.decode(mockDMRVManager.lastResultData(), (uint256, bool, bytes32, string));
-        assertEq(rewardAmount, 0);
-        assertEq(resultURI, "ipfs://depin-failed-v3");
+        IVerificationData.VerificationResult memory result = mockDMRVManager.lastResult();
+        assertEq(result.quantitativeOutcome, 0);
+        assertEq(result.credentialCID, "ipfs://depin-failed-v3");
     }
 
     function test_RevertIf_ReentrancyAttack() public {

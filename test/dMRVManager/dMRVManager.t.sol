@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import "../../src/core/dMRVManager.sol";
 import "../../src/core/ProjectRegistry.sol";
 import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
+import {IVerificationData} from "../../src/core/interfaces/IVerificationData.sol";
 import "../../src/core/DynamicImpactCredit.sol";
 import "../../src/core/MethodologyRegistry.sol";
 import "../mocks/MockVerifierModule.sol";
@@ -241,12 +242,18 @@ contract DMRVManagerTest is Test {
         // The module "calls back" to fulfill with a 100% quantitative outcome.
         uint256 quantitativeOutcome = 100;
         uint256 expectedMintAmount = (requestedAmount * quantitativeOutcome) / 100;
-        bytes memory fulfillmentData = abi.encode(quantitativeOutcome, false, bytes32(0), "ipfs://new-metadata.json");
+
+        IVerificationData.VerificationResult memory result = IVerificationData.VerificationResult({
+            quantitativeOutcome: quantitativeOutcome,
+            wasArbitrated: false,
+            arbitrationDisputeId: 0,
+            credentialCID: "ipfs://new-metadata.json"
+        });
 
         vm.prank(address(mockModule));
         vm.expectEmit(true, true, true, true);
         emit VerificationFulfilled(claimId, projectId, MOCK_MODULE_TYPE, quantitativeOutcome, expectedMintAmount);
-        dMRVManager.fulfillVerification(projectId, claimId, fulfillmentData);
+        dMRVManager.fulfillVerification(projectId, claimId, result);
 
         // Check if credits were minted
         assertEq(credit.balanceOf(projectOwner, uint256(projectId)), expectedMintAmount);
@@ -267,10 +274,15 @@ contract DMRVManagerTest is Test {
         // The module "calls back" to fulfill with a 50% quantitative outcome.
         uint256 quantitativeOutcome = 50;
         uint256 expectedMintAmount = (requestedAmount * quantitativeOutcome) / 100;
-        bytes memory fulfillmentData = abi.encode(quantitativeOutcome, false, bytes32(0), "ipfs://new-metadata.json");
+        IVerificationData.VerificationResult memory result = IVerificationData.VerificationResult({
+            quantitativeOutcome: quantitativeOutcome,
+            wasArbitrated: false,
+            arbitrationDisputeId: 0,
+            credentialCID: "ipfs://new-metadata.json"
+        });
 
         vm.prank(address(mockModule));
-        dMRVManager.fulfillVerification(projectId, claimId, fulfillmentData);
+        dMRVManager.fulfillVerification(projectId, claimId, result);
 
         // Check if credits were minted
         assertEq(credit.balanceOf(projectOwner, uint256(projectId)), expectedMintAmount);
@@ -290,11 +302,16 @@ contract DMRVManagerTest is Test {
         dMRVManager.requestVerification(projectId, claimId, "ipfs://evidence.json", requestedAmount, MOCK_MODULE_TYPE);
 
         // 3. Attempt to fulfill from an unauthorized address
-        bytes memory fulfillmentData = abi.encode(100, true, bytes32(0), "ipfs://new-metadata.json");
+        IVerificationData.VerificationResult memory result = IVerificationData.VerificationResult({
+            quantitativeOutcome: 100,
+            wasArbitrated: true,
+            arbitrationDisputeId: 0,
+            credentialCID: "ipfs://new-metadata.json"
+        });
 
         vm.prank(user); // A random user cannot fulfill
         vm.expectRevert(DMRVManager__CallerNotRegisteredModule.selector);
-        dMRVManager.fulfillVerification(projectId, claimId, fulfillmentData);
+        dMRVManager.fulfillVerification(projectId, claimId, result);
     }
 
     /// @notice Tests that fulfillVerification correctly mints a proportional amount of credits based on the quantitative outcome.
@@ -317,10 +334,15 @@ contract DMRVManagerTest is Test {
         // --- Test Scenario 1: Partial Mint (75%) ---
         uint256 outcome75 = 75;
         uint256 expectedMint75 = (requestedAmount * outcome75) / 100;
-        bytes memory fulfillmentData75 = abi.encode(outcome75, false, bytes32(0), "");
+        IVerificationData.VerificationResult memory result75 = IVerificationData.VerificationResult({
+            quantitativeOutcome: outcome75,
+            wasArbitrated: false,
+            arbitrationDisputeId: 0,
+            credentialCID: ""
+        });
 
         vm.prank(address(mockModule)); // Only the module can fulfill
-        dMRVManager.fulfillVerification(projectId, claimId, fulfillmentData75);
+        dMRVManager.fulfillVerification(projectId, claimId, result75);
 
         assertEq(credit.balanceOf(projectOwner, tokenId), expectedMint75, "Balance should be 75% of requested amount");
 
@@ -331,9 +353,14 @@ contract DMRVManagerTest is Test {
         dMRVManager.requestVerification(projectId, claimIdZero, "ipfs://zero", requestedAmount, MOCK_MODULE_TYPE);
 
         uint256 initialBalance = credit.balanceOf(projectOwner, tokenId);
-        bytes memory fulfillmentData0 = abi.encode(0, false, bytes32(0), "");
+        IVerificationData.VerificationResult memory result0 = IVerificationData.VerificationResult({
+            quantitativeOutcome: 0,
+            wasArbitrated: false,
+            arbitrationDisputeId: 0,
+            credentialCID: ""
+        });
         vm.prank(address(mockModule));
-        dMRVManager.fulfillVerification(projectId, claimIdZero, fulfillmentData0);
+        dMRVManager.fulfillVerification(projectId, claimIdZero, result0);
 
         assertEq(credit.balanceOf(projectOwner, tokenId), initialBalance, "Balance should not change for 0% outcome");
 
@@ -343,9 +370,14 @@ contract DMRVManagerTest is Test {
         dMRVManager.requestVerification(projectId, claimIdFull, "ipfs://full", requestedAmount, MOCK_MODULE_TYPE);
 
         initialBalance = credit.balanceOf(projectOwner, tokenId);
-        bytes memory fulfillmentData100 = abi.encode(100, false, bytes32(0), "");
+        IVerificationData.VerificationResult memory result100 = IVerificationData.VerificationResult({
+            quantitativeOutcome: 100,
+            wasArbitrated: false,
+            arbitrationDisputeId: 0,
+            credentialCID: ""
+        });
         vm.prank(address(mockModule));
-        dMRVManager.fulfillVerification(projectId, claimIdFull, fulfillmentData100);
+        dMRVManager.fulfillVerification(projectId, claimIdFull, result100);
 
         assertEq(
             credit.balanceOf(projectOwner, tokenId),

@@ -10,6 +10,7 @@ import "./interfaces/IProjectRegistry.sol";
 import "./DynamicImpactCredit.sol";
 import "./interfaces/IVerifierModule.sol";
 import "./interfaces/IMethodologyRegistry.sol";
+import "./interfaces/IVerificationData.sol";
 import {AccessControlEnumerableUpgradeable} from
     "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlEnumerableUpgradeable.sol";
 
@@ -76,14 +77,6 @@ contract DMRVManager is
         bytes32 projectId;
         string evidenceURI;
         uint256 amount; // The originally requested credit amount
-    }
-
-    // Structure for representing parsed verification data from a module
-    struct VerificationData {
-        uint256 quantitativeOutcome; // e.g., 85 for 85%
-        bool wasArbitrated;
-        bytes32 arbitrationDisputeId;
-        string credentialCID;
     }
 
     // --- Events ---
@@ -221,9 +214,13 @@ contract DMRVManager is
      * or update the credential CID of existing ones.
      * @param projectId The ID of the project associated with the claim.
      * @param claimId The ID of the verification claim being fulfilled.
-     * @param data The raw, encoded verification data from the module.
+     * @param result The structured verification data from the module.
      */
-    function fulfillVerification(bytes32 projectId, bytes32 claimId, bytes calldata data) external whenNotPaused {
+    function fulfillVerification(
+        bytes32 projectId,
+        bytes32 claimId,
+        IVerificationData.VerificationResult calldata result
+    ) external whenNotPaused {
         bytes32 methodologyId = _claimToMethodologyId[claimId];
         if (methodologyId == bytes32(0)) revert DMRVManager__ClaimNotFoundOrAlreadyFulfilled();
         if (verifications[claimId].amount == 0) revert DMRVManager__ClaimNotFoundOrAlreadyFulfilled();
@@ -233,9 +230,7 @@ contract DMRVManager is
         if (expectedModule == address(0)) revert DMRVManager__ModuleNotRegistered();
         if (msg.sender != expectedModule) revert DMRVManager__CallerNotRegisteredModule();
 
-        // Process the verification data
-        VerificationData memory vData = parseVerificationData(data);
-        if (vData.quantitativeOutcome > 100) revert DMRVManager__InvalidQuantitativeOutcome();
+        if (result.quantitativeOutcome > 100) revert DMRVManager__InvalidQuantitativeOutcome();
 
         // Retrieve the original request
         Verification memory request = verifications[claimId];
@@ -245,12 +240,12 @@ contract DMRVManager is
         delete verifications[claimId];
 
         // Calculate the proportional amount of credits to mint
-        uint256 amountToMint = (request.amount * vData.quantitativeOutcome) / 100;
+        uint256 amountToMint = (request.amount * result.quantitativeOutcome) / 100;
 
         // Act based on the verification data
-        processVerification(projectId, claimId, amountToMint, vData);
+        processVerification(projectId, claimId, amountToMint, result);
 
-        emit VerificationFulfilled(claimId, projectId, methodologyId, vData.quantitativeOutcome, amountToMint);
+        emit VerificationFulfilled(claimId, projectId, methodologyId, result.quantitativeOutcome, amountToMint);
     }
 
     /**
@@ -259,24 +254,24 @@ contract DMRVManager is
      * @param projectId The project identifier.
      * @param claimId The unique ID for the claim, used to record fulfillment data for potential reversals.
      * @param amountToMint The calculated number of credits to mint.
-     * @param vData The parsed verification data containing the outcome and metadata.
+     * @param result The parsed verification data containing the outcome and metadata.
      */
     function processVerification(
         bytes32 projectId,
         bytes32 claimId,
         uint256 amountToMint,
-        VerificationData memory vData
+        IVerificationData.VerificationResult calldata result
     ) internal {
         if (amountToMint > 0) {
             // Get project owner from registry to mint credits to them
             try projectRegistry.getProject(projectId) returns (IProjectRegistry.Project memory project) {
-                creditContract.mintCredits(project.owner, projectId, amountToMint, vData.credentialCID);
+                creditContract.mintCredits(project.owner, projectId, amountToMint, result.credentialCID);
 
                 // Store fulfillment data for potential reversal
                 fulfillmentRecords[claimId] = FulfillmentRecord({
                     recipient: project.owner,
                     creditAmount: amountToMint,
-                    quantitativeOutcome: vData.quantitativeOutcome
+                    quantitativeOutcome: result.quantitativeOutcome
                 });
 
                 emit CreditsMinted(projectId, project.owner, amountToMint);
@@ -293,25 +288,6 @@ contract DMRVManager is
      */
     function getModuleForClaim(bytes32 claimId) external view returns (bytes32) {
         return _claimToMethodologyId[claimId];
-    }
-
-    /**
-     * @dev Parses the raw bytes data from a verifier module into a structured format.
-     * This is the central point for adapting different module outputs into a standard internal format.
-     * @param data The raw data from the module.
-     * @return A `VerificationData` struct.
-     */
-    function parseVerificationData(bytes calldata data) internal pure returns (VerificationData memory) {
-        // Current format from ReputationWeightedVerifier: (uint256 finalAmount, bool wasArbitrated, bytes32 disputeId, string evidenceURI)
-        (uint256 quantitativeOutcome, bool wasArbitrated, bytes32 arbitrationDisputeId, string memory credentialCID) =
-            abi.decode(data, (uint256, bool, bytes32, string));
-
-        return VerificationData({
-            quantitativeOutcome: quantitativeOutcome,
-            wasArbitrated: wasArbitrated,
-            arbitrationDisputeId: arbitrationDisputeId,
-            credentialCID: credentialCID
-        });
     }
 
     /**

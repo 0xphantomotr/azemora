@@ -112,7 +112,8 @@ contract Marketplace is
     IERC20Upgradeable public paymentToken;
     IStakingManager public stakingManager;
     address public treasury;
-    uint256 public feeBps; // Fee in basis points (e.g., 250 = 2.5%)
+    uint256 public protocolFeeBps; // Fee on sales, in basis points (e.g., 250 = 2.5%)
+    uint256 public listingFeeBps; // Fee to create a listing, in basis points.
     uint256 public stakingFeeBps; // Pct of the fee that goes to stakers (e.g., 5000 = 50%)
 
     struct Listing {
@@ -142,7 +143,8 @@ contract Marketplace is
     event ListingCancelled(uint256 indexed listingId);
     event ListingPriceUpdated(uint256 indexed listingId, uint256 newPricePerUnit);
     event TreasuryUpdated(address indexed newTreasury);
-    event FeeUpdated(uint256 newFeeBps);
+    event ProtocolFeeUpdated(uint256 newFeeBps);
+    event ListingFeeUpdated(uint256 newFeeBps);
     event PartialSold(uint256 indexed listingId, address indexed buyer, uint256 amount, uint256 totalPrice);
     event FeePaid(address indexed recipient, uint256 amount);
 
@@ -171,6 +173,8 @@ contract Marketplace is
 
         creditContract = IERC1155Upgradeable(creditContract_);
         paymentToken = IERC20Upgradeable(paymentToken_);
+        protocolFeeBps = 250; // Default to 2.5% protocol fee
+        listingFeeBps = 0; // Default to 0 listing fee
 
         _roles.push(DEFAULT_ADMIN_ROLE);
         _roles.push(PAUSER_ROLE);
@@ -188,13 +192,23 @@ contract Marketplace is
     }
 
     /**
-     * @notice Sets the marketplace fee.
+     * @notice Sets the protocol fee for sales.
      * @param _feeBps The new fee in basis points (1-10000).
      */
-    function setFee(uint256 _feeBps) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setProtocolFeeBps(uint256 _feeBps) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (_feeBps > 10000) revert Marketplace__FeeTooHigh();
-        feeBps = _feeBps;
-        emit FeeUpdated(_feeBps);
+        protocolFeeBps = _feeBps;
+        emit ProtocolFeeUpdated(_feeBps);
+    }
+
+    /**
+     * @notice Sets the fee for creating a listing.
+     * @param _feeBps The new fee in basis points (1-10000).
+     */
+    function setListingFeeBps(uint256 _feeBps) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (_feeBps > 10000) revert Marketplace__FeeTooHigh();
+        listingFeeBps = _feeBps;
+        emit ListingFeeUpdated(_feeBps);
     }
 
     function setStakingManager(address _stakingManager) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -307,7 +321,7 @@ contract Marketplace is
         // --- Optimisation: Cache storage reads ---
         Listing storage listing = listings[listingId];
         Listing memory listing_ = listing;
-        uint256 feeBps_ = feeBps;
+        uint256 protocolFeeBps_ = protocolFeeBps;
         IERC20Upgradeable paymentToken_ = paymentToken;
 
         // --- CHECKS ---
@@ -319,7 +333,7 @@ contract Marketplace is
         uint256 totalPrice = amountToBuy * listing_.pricePerUnit;
         if (paymentToken_.balanceOf(_msgSender()) < totalPrice) revert Marketplace__InsufficientBalance();
 
-        uint256 fee = (totalPrice * feeBps_) / 10000;
+        uint256 fee = (totalPrice * protocolFeeBps_) / 10000;
         uint256 sellerProceeds = totalPrice - fee;
 
         // --- Calculate Fee Split ---
@@ -452,7 +466,7 @@ contract Marketplace is
             if (listing.amount < amountToBuy) revert Marketplace__NotEnoughItemsInListing();
 
             uint256 price = amountToBuy * listing.pricePerUnit;
-            uint256 fee = (price * feeBps) / 10000;
+            uint256 fee = (price * protocolFeeBps) / 10000;
 
             // Store info for later phases
             totalPayment += price;

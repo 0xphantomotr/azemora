@@ -10,7 +10,8 @@ import {
     ArbitrationCouncil__NotCouncilMember,
     ArbitrationCouncil__InvalidDisputeStatus,
     ArbitrationCouncil__FraudNotConfirmed,
-    ArbitrationCouncil__MerkleRootAlreadySet
+    ArbitrationCouncil__MerkleRootAlreadySet,
+    ArbitrationCouncil__InsufficientFundsForBounties
 } from "../../src/governance/ArbitrationCouncil.sol";
 
 // Mocks & Interfaces
@@ -177,9 +178,11 @@ contract ArbitrationCouncilTest is Test {
     address internal victim1;
     address internal victim2;
     address internal treasury;
+    address internal keeper;
 
     // --- Constants ---
     uint256 internal constant CHALLENGE_STAKE_AMOUNT = 50e18;
+    uint256 internal constant KEEPER_BOUNTY = 2e18;
     bytes32 internal constant CLAIM_ID = keccak256("test-claim");
 
     function setUp() public {
@@ -191,6 +194,7 @@ contract ArbitrationCouncilTest is Test {
         victim1 = makeAddr("victim1");
         victim2 = makeAddr("victim2");
         treasury = makeAddr("treasury");
+        keeper = makeAddr("keeper");
 
         vm.startPrank(admin);
 
@@ -231,6 +235,7 @@ contract ArbitrationCouncilTest is Test {
         council.grantRole(council.VERIFIER_CONTRACT_ROLE(), address(this));
         council.setFraudThreshold(50); // Outcome < 50 is fraud
         council.setStakingManager(address(stakingManager));
+        council.setKeeperBounty(KEEPER_BOUNTY);
 
         vrfCoordinator.createSubscription();
         vrfCoordinator.fundSubscription(1, 100 ether);
@@ -329,6 +334,31 @@ contract ArbitrationCouncilTest is Test {
         );
     }
 
+    // --- Helper function to set up a dispute and leave it in the 'Voting' state ---
+    function _setupDisputeForResolution() internal {
+        vm.prank(challenger);
+        aztToken.approve(address(council), CHALLENGE_STAKE_AMOUNT);
+        vm.prank(address(this));
+        council.createDispute(CLAIM_ID, challenger, address(repWeightedVerifier));
+
+        uint256 vrfRequestId = 1;
+        uint256[] memory randomWords = new uint256[](3);
+        randomWords[0] = 0;
+        randomWords[1] = 1;
+        randomWords[2] = 2;
+        vrfCoordinator.fulfillRandomWordsWithOverride(vrfRequestId, address(council), randomWords);
+    }
+
+    // --- Helper function to set up a dispute and vote for a fraudulent outcome ---
+    function _setupAndVoteFraudulent() internal {
+        _setupDisputeForResolution();
+        vm.prank(member1);
+        council.vote(CLAIM_ID, 10);
+        vm.prank(member2);
+        council.vote(CLAIM_ID, 20);
+        vm.warp(block.timestamp + 2 days);
+    }
+
     // --- Compensation Tests ---
 
     // Helper function to set up a fraudulent dispute for compensation tests
@@ -362,6 +392,7 @@ contract ArbitrationCouncilTest is Test {
 
         // 4. Resolve the dispute as fraudulent, then set the merkle root as admin
         vm.warp(block.timestamp + 2 days);
+        vm.prank(keeper); // Keeper resolves
         council.resolveDispute(CLAIM_ID);
         vm.prank(admin);
         council.setCompensationMerkleRoot(CLAIM_ID, merkleRoot);
@@ -433,6 +464,70 @@ contract ArbitrationCouncilTest is Test {
         // 3. Assert that the call reverts with the correct error
         vm.expectRevert(abi.encodeWithSelector(ArbitrationCouncil__NotCouncilMember.selector, unauthorizedVoter));
         council.vote(CLAIM_ID, 50); // The vote amount doesn't matter here
+    }
+
+    // --- Keeper Bounty Tests ---
+    function test_resolveDispute_paysKeeperBounty_onFraud() public {
+        _setupAndVoteFraudulent();
+
+        uint256 keeperBalanceBefore = aztToken.balanceOf(keeper);
+        uint256 challengerBalanceBefore = aztToken.balanceOf(challenger);
+
+        vm.prank(keeper);
+        council.resolveDispute(CLAIM_ID);
+
+        uint256 keeperBalanceAfter = aztToken.balanceOf(keeper);
+        uint256 challengerBalanceAfter = aztToken.balanceOf(challenger);
+
+        assertEq(keeperBalanceAfter - keeperBalanceBefore, KEEPER_BOUNTY, "Keeper bounty not paid");
+
+        uint256 defendantStake = verifierManager.getVerifierStake(address(repWeightedVerifier));
+        uint256 expectedChallengerBounty = (defendantStake * 10) / 100;
+        uint256 expectedChallengerReturn = CHALLENGE_STAKE_AMOUNT + expectedChallengerBounty;
+
+        assertEq(
+            challengerBalanceAfter - challengerBalanceBefore,
+            expectedChallengerReturn,
+            "Challenger did not receive stake back + bounty"
+        );
+    }
+
+    function test_resolveDispute_paysKeeperBounty_onNoFraud() public {
+        _setupDisputeForResolution();
+        // Vote for a non-fraudulent outcome
+        vm.prank(member1);
+        council.vote(CLAIM_ID, 80);
+        vm.warp(block.timestamp + 2 days);
+
+        uint256 keeperBalanceBefore = aztToken.balanceOf(keeper);
+        uint256 defendantBalanceBefore = aztToken.balanceOf(address(repWeightedVerifier));
+
+        vm.prank(keeper);
+        council.resolveDispute(CLAIM_ID);
+
+        uint256 keeperBalanceAfter = aztToken.balanceOf(keeper);
+        uint256 defendantBalanceAfter = aztToken.balanceOf(address(repWeightedVerifier));
+
+        assertEq(keeperBalanceAfter - keeperBalanceBefore, KEEPER_BOUNTY, "Keeper bounty not paid on no-fraud");
+        assertEq(
+            defendantBalanceAfter - defendantBalanceBefore,
+            CHALLENGE_STAKE_AMOUNT - KEEPER_BOUNTY,
+            "Defendant did not receive the remainder of the challenger's stake"
+        );
+    }
+
+    function test_revert_if_bounty_exceeds_funds() public {
+        _setupAndVoteFraudulent();
+        uint256 defendantStake = verifierManager.getVerifierStake(address(repWeightedVerifier));
+        uint256 excessiveBounty = defendantStake + 1; // More than the entire slashed amount
+
+        vm.prank(admin);
+        council.setKeeperBounty(excessiveBounty);
+        vm.stopPrank();
+
+        vm.prank(keeper);
+        vm.expectRevert(ArbitrationCouncil__InsufficientFundsForBounties.selector);
+        council.resolveDispute(CLAIM_ID);
     }
 
     // --- Merkle Root Setter Tests ---

@@ -141,7 +141,7 @@ contract MarketplaceHandler is Test {
         uint256 totalPrice = buyAmount * l.pricePerUnit;
         if (paymentToken.balanceOf(buyer) < totalPrice) return;
 
-        uint256 fee = (totalPrice * marketplace.feeBps()) / 10000;
+        uint256 fee = (totalPrice * marketplace.protocolFeeBps()) / 10000;
         uint256 sellerProceeds = totalPrice - fee;
 
         userPaymentTokenBalances[buyer] -= totalPrice;
@@ -217,7 +217,7 @@ contract MarketplaceInvariantTest is StdInvariant, Test {
             )
         );
         marketplace.setTreasury(treasury);
-        marketplace.setFee(250); // 2.5% fee
+        marketplace.setProtocolFeeBps(250); // 2.5% fee
         vm.stopPrank();
 
         // --- Set up Handler ---

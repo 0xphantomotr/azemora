@@ -20,14 +20,6 @@ interface IVerifierModule {
         returns (bytes32 taskId);
 
     /**
-     * @notice Handles delegated verification requests (if supported).
-     * @param claimId The ID of the claim being delegated.
-     * @param data The encoded data for the delegated task.
-     * @param originalSubmitter The original address that requested the verification.
-     */
-    function delegateVerification(bytes32 claimId, bytes calldata data, address originalSubmitter) external;
-
-    /**
      * @notice Returns the name of the verifier module.
      * @return The module's name as a string.
      */

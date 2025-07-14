@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import "../../src/core/dMRVManager.sol";
 import "../../src/core/ProjectRegistry.sol";
 import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
+import {IVerificationData} from "../../src/core/interfaces/IVerificationData.sol";
 import "../../src/core/DynamicImpactCredit.sol";
 import "../../src/core/MethodologyRegistry.sol";
 import "../mocks/MockVerifierModule.sol";
@@ -98,16 +99,21 @@ contract DMRVManagerUncovered is Test {
         uint256 requestedAmount = 100e18;
         vm.prank(user);
         dMRVManager.requestVerification(projectId, claimId, "ipfs://evidence.json", requestedAmount, MOCK_MODULE_TYPE);
-        bytes memory fulfillmentData = abi.encode(100, false, bytes32(0), "ipfs://new-metadata.json");
+        IVerificationData.VerificationResult memory result = IVerificationData.VerificationResult({
+            quantitativeOutcome: 100,
+            wasArbitrated: false,
+            arbitrationDisputeId: 0,
+            credentialCID: "ipfs://new-metadata.json"
+        });
 
         // Fulfill once successfully
         vm.prank(address(mockModule));
-        dMRVManager.fulfillVerification(projectId, claimId, fulfillmentData);
+        dMRVManager.fulfillVerification(projectId, claimId, result);
 
         // Try to fulfill again, expecting our new error
         vm.prank(address(mockModule));
         vm.expectRevert(DMRVManager__ClaimNotFoundOrAlreadyFulfilled.selector);
-        dMRVManager.fulfillVerification(projectId, claimId, fulfillmentData);
+        dMRVManager.fulfillVerification(projectId, claimId, result);
     }
 
     function test_GetModuleForClaim() public {
@@ -204,10 +210,15 @@ contract DMRVManagerUncovered is Test {
 
         // Fulfill verification
         string memory credentialCID = "ipfs://final-cid-alpha-1";
-        bytes memory data = abi.encode(50, false, bytes32(0), credentialCID); // 50% outcome
+        IVerificationData.VerificationResult memory result = IVerificationData.VerificationResult({
+            quantitativeOutcome: 50,
+            wasArbitrated: false,
+            arbitrationDisputeId: 0,
+            credentialCID: credentialCID
+        });
 
         vm.prank(address(mockModule));
-        dMRVManager.fulfillVerification(localProjectId, claimId, data);
+        dMRVManager.fulfillVerification(localProjectId, claimId, result);
 
         assertEq(
             credit.balanceOf(projectOwner, uint256(localProjectId)),
@@ -222,11 +233,16 @@ contract DMRVManagerUncovered is Test {
         // DONT request verification, so claim is not found
         // dMRVManager.requestVerification(localProjectId, claimId, "ipfs://evidence.json", requestedAmount, MOCK_MODULE_TYPE);
 
-        bytes memory data = abi.encode(100, false, bytes32(0), "cid");
+        IVerificationData.VerificationResult memory result = IVerificationData.VerificationResult({
+            quantitativeOutcome: 100,
+            wasArbitrated: false,
+            arbitrationDisputeId: 0,
+            credentialCID: "cid"
+        });
 
         vm.prank(address(mockModule));
         vm.expectRevert(DMRVManager__ClaimNotFoundOrAlreadyFulfilled.selector);
-        dMRVManager.fulfillVerification(projectId, claimId, data);
+        dMRVManager.fulfillVerification(projectId, claimId, result);
     }
 
     function test_fulfill_reverts_if_already_fulfilled() public {
@@ -243,15 +259,20 @@ contract DMRVManagerUncovered is Test {
         // --- FIX: Use the globally activated projectId ---
         dMRVManager.requestVerification(projectId, claimId, "ipfs://evidence.json", requestedAmount, MOCK_MODULE_TYPE);
 
-        bytes memory data = abi.encode(100, false, bytes32(0), "cid");
+        IVerificationData.VerificationResult memory result = IVerificationData.VerificationResult({
+            quantitativeOutcome: 100,
+            wasArbitrated: false,
+            arbitrationDisputeId: 0,
+            credentialCID: "cid"
+        });
 
         vm.prank(address(mockModule));
-        dMRVManager.fulfillVerification(projectId, claimId, data);
+        dMRVManager.fulfillVerification(projectId, claimId, result);
 
         // Try to fulfill again
         vm.prank(address(mockModule));
         vm.expectRevert(DMRVManager__ClaimNotFoundOrAlreadyFulfilled.selector);
-        dMRVManager.fulfillVerification(projectId, claimId, data);
+        dMRVManager.fulfillVerification(projectId, claimId, result);
     }
 
     function test_register_module_reverts_if_not_admin() public {

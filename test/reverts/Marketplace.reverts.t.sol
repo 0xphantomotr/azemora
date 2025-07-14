@@ -157,6 +157,6 @@ contract MarketplaceRevertsTest is Test {
         bytes4 expectedError = bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)"));
         vm.expectRevert(abi.encodeWithSelector(expectedError, otherUser, marketplace.DEFAULT_ADMIN_ROLE()));
         vm.prank(otherUser);
-        marketplace.setFee(100);
+        marketplace.setProtocolFeeBps(100);
     }
 }

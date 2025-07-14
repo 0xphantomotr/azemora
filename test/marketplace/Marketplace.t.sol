@@ -8,6 +8,7 @@ import "../../src/core/dMRVManager.sol";
 import "../../src/core/DynamicImpactCredit.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
+import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 
 // Minimal mock ERC20 to avoid dependency on forge-std/mocks
 contract MockERC20 {
@@ -88,9 +89,9 @@ contract MarketplaceTest is Test {
 
         // --- Deploy Infrastructure ---
         // Deploy payment token and mint to buyer
-        paymentToken = new MockERC20("Mock Payment", "MPAY", 18);
+        paymentToken = new MockERC20("Mock Payment", "MPAY", 6);
         vm.prank(address(this)); // Mint from test contract itself
-        paymentToken.mint(buyer, 1_000_000 * 1e18); // 1M USDC
+        paymentToken.mint(buyer, 1_000_000 * 1e6); // 1M USDC
 
         // Deploy mock staking manager
         stakingManager = new MockStakingManager();
@@ -126,7 +127,7 @@ contract MarketplaceTest is Test {
         );
         marketplace = Marketplace(address(marketplaceProxy));
         marketplace.setTreasury(treasury);
-        marketplace.setFee(250); // Set a 2.5% fee
+        marketplace.setProtocolFeeBps(250); // Set a 2.5% fee
         marketplace.setStakingManager(address(stakingManager));
         marketplace.setStakingFeeBps(5000); // 50% of the fee goes to stakers
 
@@ -183,7 +184,7 @@ contract MarketplaceTest is Test {
         uint256 amountToBuy = 50;
         uint256 pricePerUnit = 5 * 1e6;
         uint256 totalPrice = amountToBuy * pricePerUnit;
-        uint256 totalFee = (totalPrice * marketplace.feeBps()) / 10000;
+        uint256 totalFee = (totalPrice * marketplace.protocolFeeBps()) / 10000;
         uint256 stakingFee = (totalFee * marketplace.stakingFeeBps()) / 10000;
         uint256 treasuryFee = totalFee - stakingFee;
         uint256 sellerProceeds = totalPrice - totalFee;
@@ -234,7 +235,7 @@ contract MarketplaceTest is Test {
         // --- Setup ---
         // Set fee to 0 to test the fee == 0 branch
         vm.prank(admin);
-        marketplace.setFee(0);
+        marketplace.setProtocolFeeBps(0);
 
         uint256 listingId = _list();
         uint256 amountToBuy = 50;
@@ -356,10 +357,10 @@ contract MarketplaceTest is Test {
         marketplace.setTreasury(address(0));
     }
 
-    function test_Fail_SetFee_AboveCap() public {
+    function test_Fail_SetProtocolFee_AboveCap() public {
         vm.prank(admin);
         vm.expectRevert(Marketplace__FeeTooHigh.selector);
-        marketplace.setFee(10001); // 100.01%
+        marketplace.setProtocolFeeBps(10001); // 100.01%
     }
 
     function test_Fail_ListWithZeroAmount() public {
@@ -412,7 +413,7 @@ contract MarketplaceTest is Test {
         uint256 amountToBuy = 50;
         uint256 pricePerUnit = 5 * 1e6;
         uint256 totalPrice = amountToBuy * pricePerUnit;
-        uint256 totalFee = (totalPrice * marketplace.feeBps()) / 10000;
+        uint256 totalFee = (totalPrice * marketplace.protocolFeeBps()) / 10000;
         uint256 stakingFee = (totalFee * marketplace.stakingFeeBps()) / 10000;
         uint256 treasuryFee = totalFee - stakingFee;
 
@@ -497,37 +498,67 @@ contract MarketplaceTest is Test {
         // Non-pauser cannot pause
         vm.prank(seller);
         vm.expectRevert(
-            abi.encodeWithSelector(
-                bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)")), seller, pauserRole
-            )
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, seller, pauserRole)
         );
         marketplace.pause();
     }
 
-    function test_RevertsWhenPaused() public {
-        uint256 listingId = _list();
-
-        vm.startPrank(admin);
+    function test_Fail_ListWhenPaused() public {
+        vm.prank(admin);
         marketplace.pause();
-        vm.stopPrank();
-
-        // Check key functions revert when paused
-        bytes4 expectedRevert = bytes4(keccak256("EnforcedPause()"));
 
         vm.prank(seller);
-        vm.expectRevert(expectedRevert);
-        marketplace.list(tokenId, 10, 1e6, 1 days);
+        vm.expectRevert(bytes4(keccak256("EnforcedPause()")));
+        marketplace.list(tokenId, 100, 5 * 1e6, 1 days);
+    }
+
+    function test_Fail_BuyWhenPaused() public {
+        uint256 listingId = _list();
+        vm.prank(admin);
+        marketplace.pause();
 
         vm.prank(buyer);
-        vm.expectRevert(expectedRevert);
-        marketplace.buy(listingId, 1);
+        vm.expectRevert(bytes4(keccak256("EnforcedPause()")));
+        marketplace.buy(listingId, 10);
+    }
 
-        vm.prank(seller);
-        vm.expectRevert(expectedRevert);
-        marketplace.cancelListing(listingId);
+    /* ---------- Batching Tests ---------- */
 
-        vm.prank(seller);
-        vm.expectRevert(expectedRevert);
-        marketplace.updateListingPrice(listingId, 6e6);
+    function test_BatchBuy() public {
+        // Arrange: Create 3 listings from the seller
+        vm.startPrank(seller);
+        credit.setApprovalForAll(address(marketplace), true);
+        uint256 price1 = 10 * 1e6;
+        uint256 price2 = 20 * 1e6;
+        uint256 price3 = 30 * 1e6;
+        uint256 listing1 = marketplace.list(tokenId, 100, price1, 1 days);
+        uint256 listing2 = marketplace.list(tokenId, 100, price2, 1 days);
+        uint256 listing3 = marketplace.list(tokenId, 100, price3, 1 days);
+        vm.stopPrank();
+
+        uint256[] memory listingIds = new uint256[](3);
+        listingIds[0] = listing1;
+        listingIds[1] = listing2;
+        listingIds[2] = listing3;
+
+        uint256[] memory amounts = new uint256[](3);
+        amounts[0] = 10;
+        amounts[1] = 20;
+        amounts[2] = 30;
+
+        uint256 totalPrice = (amounts[0] * price1) + (amounts[1] * price2) + (amounts[2] * price3);
+        uint256 buyerInitialBalance = paymentToken.balanceOf(buyer);
+
+        // Act: Buyer approves and performs a batch buy
+        vm.startPrank(buyer);
+        paymentToken.approve(address(marketplace), totalPrice);
+        marketplace.batchBuy(listingIds, amounts);
+        vm.stopPrank();
+
+        // Assert: Check balances are correct
+        assertEq(credit.balanceOf(buyer, tokenId), 60, "Buyer should have 60 credits");
+        assertEq(
+            paymentToken.balanceOf(buyer), buyerInitialBalance - totalPrice, "Buyer's token balance should be reduced"
+        );
     }
 }

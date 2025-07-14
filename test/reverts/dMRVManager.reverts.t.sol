@@ -6,6 +6,7 @@ import "../../src/core/ProjectRegistry.sol";
 import "../../src/core/dMRVManager.sol";
 import "../../src/core/DynamicImpactCredit.sol";
 import "../../src/core/MethodologyRegistry.sol";
+import {IVerificationData} from "../../src/core/interfaces/IVerificationData.sol";
 import "../mocks/MockVerifierModule.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
@@ -128,10 +129,16 @@ contract DMRVManagerRevertsTest is Test {
         dMRVManager.requestVerification(activeProjectId, claimId, "uri", requestedAmount, MOCK_MODULE_TYPE);
 
         // Step 3: Attempt to fulfill from the wrong module
-        bytes memory data = abi.encode(100, false, bytes32(0), "ipfs://data");
+        IVerificationData.VerificationResult memory result = IVerificationData.VerificationResult({
+            quantitativeOutcome: 100,
+            wasArbitrated: false,
+            arbitrationDisputeId: 0,
+            credentialCID: "ipfs://data"
+        });
+
         vm.prank(address(otherModule)); // Prank as the wrong module
         vm.expectRevert(DMRVManager__CallerNotRegisteredModule.selector);
-        dMRVManager.fulfillVerification(activeProjectId, claimId, data);
+        dMRVManager.fulfillVerification(activeProjectId, claimId, result);
     }
 
     function test_revert_fulfillVerification_claimNotFound() public {
@@ -141,10 +148,15 @@ contract DMRVManagerRevertsTest is Test {
         methodologyRegistry.approveMethodology(MOCK_MODULE_TYPE);
         dMRVManager.addVerifierModule(MOCK_MODULE_TYPE);
 
-        bytes memory data = abi.encode(100, false, bytes32(0), "ipfs://data");
+        IVerificationData.VerificationResult memory result = IVerificationData.VerificationResult({
+            quantitativeOutcome: 100,
+            wasArbitrated: false,
+            arbitrationDisputeId: 0,
+            credentialCID: "ipfs://data"
+        });
         vm.expectRevert(DMRVManager__ClaimNotFoundOrAlreadyFulfilled.selector);
         vm.prank(address(mockModule));
-        dMRVManager.fulfillVerification(activeProjectId, keccak256("non-existent"), data);
+        dMRVManager.fulfillVerification(activeProjectId, keccak256("non-existent"), result);
     }
 
     function test_revert_fulfillVerification_alreadyFulfilled() public {
@@ -160,14 +172,19 @@ contract DMRVManagerRevertsTest is Test {
         dMRVManager.requestVerification(activeProjectId, claimId, "uri", requestedAmount, MOCK_MODULE_TYPE);
 
         // Step 2: Fulfill it
-        bytes memory data = abi.encode(100, false, bytes32(0), "ipfs://data");
+        IVerificationData.VerificationResult memory result = IVerificationData.VerificationResult({
+            quantitativeOutcome: 100,
+            wasArbitrated: false,
+            arbitrationDisputeId: 0,
+            credentialCID: "ipfs://data"
+        });
         vm.prank(address(mockModule));
-        dMRVManager.fulfillVerification(activeProjectId, claimId, data);
+        dMRVManager.fulfillVerification(activeProjectId, claimId, result);
 
         // Step 3: Try to fulfill it again
         vm.expectRevert(DMRVManager__ClaimNotFoundOrAlreadyFulfilled.selector);
         vm.prank(address(mockModule));
-        dMRVManager.fulfillVerification(activeProjectId, claimId, data);
+        dMRVManager.fulfillVerification(activeProjectId, claimId, result);
     }
 
     // --- adminSubmitVerification ---
