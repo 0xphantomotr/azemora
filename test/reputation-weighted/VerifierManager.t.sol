@@ -21,7 +21,7 @@ contract VerifierManagerTest is Test {
     uint256 internal constant MIN_STAKE_AMOUNT = 100 * 1e18;
     uint256 internal constant MIN_REPUTATION = 50;
     uint256 internal constant UNSTAKE_LOCK_PERIOD = 7 days;
-    bytes32 internal constant ARBITRATION_COUNCIL_ROLE = keccak256("ARBITRATION_COUNCIL_ROLE");
+    bytes32 internal constant SLASHER_ROLE = keccak256("SLASHER_ROLE");
     bytes32 internal constant DEFAULT_ADMIN_ROLE = 0x00;
 
     // --- State ---
@@ -83,7 +83,7 @@ contract VerifierManagerTest is Test {
 
     function test_initialize_setsCorrectState() public {
         assertTrue(verifierManager.hasRole(DEFAULT_ADMIN_ROLE, admin), "Admin role not set");
-        assertTrue(verifierManager.hasRole(ARBITRATION_COUNCIL_ROLE, slasher), "Arbitration Council role not set");
+        assertTrue(verifierManager.hasRole(SLASHER_ROLE, slasher), "Slasher role not set");
         assertEq(verifierManager.treasury(), treasury, "Treasury not set");
         assertEq(address(verifierManager.stakingToken()), address(stakingToken), "Staking token not set");
         assertEq(address(verifierManager.reputationManager()), address(reputationManager), "Reputation manager not set");

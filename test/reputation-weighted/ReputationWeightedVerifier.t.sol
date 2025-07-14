@@ -275,30 +275,50 @@ contract ReputationWeightedVerifierTest is Test {
         verifierModule.challengeVerification(taskId);
     }
 
-    /*//////////////////////////////////////////////////////////////
-                           DEPRECATED VOTE FLOW TESTS
-    //////////////////////////////////////////////////////////////*/
-
-    function test_revert_submitVote_isDeprecated() public {
-        vm.expectRevert("DEPRECATED");
-        verifierModule.submitVote(bytes32(0), Vote.Approve);
-    }
-
-    function test_revert_proposeTaskResolution_isDeprecated() public {
-        vm.expectRevert("DEPRECATED");
-        verifierModule.proposeTaskResolution(bytes32(0));
-    }
-
-    /// @notice Tests that processArbitrationResult can only be called by the designated ArbitrationCouncil.
-    function test_revert_processArbitrationResult_if_not_council() public {
-        // 1. Start a task to have a valid taskId to work with.
+    function test_processArbitrationResult_succeeds() public {
         bytes32 taskId = _startTask();
 
-        // 2. Attempt to call from an unauthorized address (admin in this case)
-        vm.prank(admin);
+        // 1. Challenge the task to move it to the correct state
+        vm.startPrank(challenger);
+        aztToken.approve(address(mockArbitrationCouncil), CHALLENGE_STAKE);
+        verifierModule.challengeVerification(taskId);
+        vm.stopPrank();
 
-        // 3. Assert that the call reverts due to our custom error.
+        // 2. Simulate the call from the ArbitrationCouncil
+        uint256 finalAmount = 85; // e.g., council decided 85% is the correct outcome
+        bytes memory expectedData = abi.encode(finalAmount, true, taskId, "ipfs://evidence");
+
+        vm.expectCall(
+            address(dMRVManager),
+            abi.encodeWithSelector(dMRVManager.fulfillVerification.selector, projectId, claimId, expectedData)
+        );
+
+        vm.prank(address(mockArbitrationCouncil)); // Must be called by the council
+        verifierModule.processArbitrationResult(taskId, finalAmount);
+
+        // 3. Assert final state
+        TaskStatus status = verifierModule.getTaskStatus(taskId);
+        assertEq(uint256(status), uint256(TaskStatus.Finalized));
+    }
+
+    function test_revert_if_processArbitrationResult_from_unauthorized() public {
+        bytes32 taskId = _startTask();
+
+        // Challenge to put in correct state
+        vm.startPrank(challenger);
+        aztToken.approve(address(mockArbitrationCouncil), CHALLENGE_STAKE);
+        verifierModule.challengeVerification(taskId);
+        vm.stopPrank();
+
+        // Attempt to call from an unauthorized address
+        vm.prank(admin);
         vm.expectRevert(ReputationWeightedVerifier__UnauthorizedCaller.selector);
-        verifierModule.processArbitrationResult(taskId, 100); // 100% outcome
+        verifierModule.processArbitrationResult(taskId, 50);
+    }
+
+    function test_revert_if_startVerificationTask_from_unauthorized_caller() public {
+        vm.prank(admin); // Use any address that is not the dMRVManager
+        vm.expectRevert("Only dMRVManager can start tasks");
+        verifierModule.startVerificationTask(projectId, claimId, "ipfs://evidence");
     }
 }

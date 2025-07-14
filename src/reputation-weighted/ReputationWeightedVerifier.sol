@@ -135,7 +135,7 @@ contract ReputationWeightedVerifier is
         override
         returns (bytes32 taskId)
     {
-        // require(msg.sender == address(dMRVManager), "Only dMRVManager can start tasks");
+        require(msg.sender == address(dMRVManager), "Only dMRVManager can start tasks");
 
         taskId = keccak256(abi.encodePacked(projectId, claimId, taskCounter));
         taskCounter++;
@@ -149,19 +149,6 @@ contract ReputationWeightedVerifier is
         task.challengeDeadline = block.timestamp + challengePeriod;
 
         emit TaskCreated(taskId, projectId, evidenceURI, task.challengeDeadline);
-    }
-
-    /*  ----------- DEPRECATED VOTING LOGIC -----------
-        The optimistic verification model bypasses the need for universal, active voting.
-        These functions are preserved to potentially be repurposed for the dispute/arbitration
-        phase in a future implementation but are not part of the core optimistic flow.
-    */
-    function submitVote(bytes32 taskId, Vote vote) external nonReentrant {
-        revert("DEPRECATED");
-    }
-
-    function proposeTaskResolution(bytes32 taskId) external nonReentrant {
-        revert("DEPRECATED");
     }
 
     function challengeVerification(bytes32 taskId) external nonReentrant {

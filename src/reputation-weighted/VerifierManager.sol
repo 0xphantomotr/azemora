@@ -39,7 +39,6 @@ contract VerifierManager is
     using SafeERC20 for ERC20Upgradeable;
 
     // --- Roles ---
-    bytes32 public constant ARBITRATION_COUNCIL_ROLE = keccak256("ARBITRATION_COUNCIL_ROLE");
     bytes32 public constant SLASHER_ROLE = keccak256("SLASHER_ROLE");
     bytes32 public constant CONFIG_ADMIN_ROLE = keccak256("CONFIG_ADMIN_ROLE");
 
@@ -100,7 +99,7 @@ contract VerifierManager is
         }
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin_);
-        _grantRole(ARBITRATION_COUNCIL_ROLE, arbitrationCouncil_);
+        _grantRole(SLASHER_ROLE, arbitrationCouncil_);
 
         treasury = treasury_;
         stakingToken = ERC20Upgradeable(stakingToken_);
