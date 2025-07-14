@@ -97,7 +97,7 @@ contract QuestManager is Initializable, AccessControlUpgradeable, UUPSUpgradeabl
      * @dev Only callable by QUEST_ADMIN_ROLE.
      */
     function createQuest(
-        string memory descriptionURI,
+        string calldata descriptionURI,
         RewardType rewardType,
         address rewardContract,
         uint256 rewardIdOrAmount,

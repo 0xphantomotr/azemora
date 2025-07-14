@@ -134,11 +134,14 @@ contract StakingManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
     // --- Core Functions ---
 
     modifier updateReward(address account) {
-        rewardPerShareStored = rewardPerShare();
+        uint256 _rewardPerShare = rewardPerShare(); // Calculate once, cache in memory
+        rewardPerShareStored = _rewardPerShare;
         lastUpdateTime = block.timestamp;
         if (account != address(0)) {
-            rewards[account] = earned(account);
-            userRewardPerSharePaid[account] = rewardPerShareStored;
+            // Manually calculate rewards to avoid redundant function calls from earned()
+            rewards[account] =
+                (sharesOf[account] * (_rewardPerShare - userRewardPerSharePaid[account])) / 1e18 + rewards[account];
+            userRewardPerSharePaid[account] = _rewardPerShare;
         }
         _;
     }

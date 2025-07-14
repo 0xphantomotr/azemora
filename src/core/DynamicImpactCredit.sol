@@ -232,6 +232,7 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
         for (uint256 i = 0; i < rolesLength; i++) {
             if (hasRole(_roles[i], account)) {
                 roles[index++] = _roles[i];
+                // Optimization: stop looping once all roles have been found.
                 if (index == count) break;
             }
         }

@@ -128,8 +128,11 @@ contract OracleManager is IOracleManager, AccessControlEnumerableUpgradeable, UU
 
         // Resize the array to only contain actual responses for sorting
         uint256[] memory validResponses = new uint256[](responseCount);
-        for (uint256 i = 0; i < responseCount; i++) {
+        for (uint256 i = 0; i < responseCount;) {
             validResponses[i] = responses[i];
+            unchecked {
+                ++i;
+            }
         }
 
         _sort(validResponses);
@@ -145,10 +148,13 @@ contract OracleManager is IOracleManager, AccessControlEnumerableUpgradeable, UU
 
     function _checkDeviations(uint256[] memory a, uint256 median, uint32 deviationBps) internal pure {
         uint256 maxDeviation = (median * deviationBps) / 10000;
-        for (uint256 i = 0; i < a.length; i++) {
+        for (uint256 i = 0; i < a.length;) {
             uint256 diff = a[i] > median ? a[i] - median : median - a[i];
             if (diff > maxDeviation) {
                 revert OracleManager__DeviationExceeded(a[i], median, maxDeviation);
+            }
+            unchecked {
+                ++i;
             }
         }
     }
@@ -166,7 +172,7 @@ contract OracleManager is IOracleManager, AccessControlEnumerableUpgradeable, UU
 
     function _sort(uint256[] memory a) internal pure {
         uint256 n = a.length;
-        for (uint256 i = 1; i < n; i++) {
+        for (uint256 i = 1; i < n;) {
             uint256 key = a[i];
             uint256 j = i;
             while (j > 0 && a[j - 1] > key) {
@@ -174,6 +180,9 @@ contract OracleManager is IOracleManager, AccessControlEnumerableUpgradeable, UU
                 j--;
             }
             a[j] = key;
+            unchecked {
+                ++i;
+            }
         }
     }
 

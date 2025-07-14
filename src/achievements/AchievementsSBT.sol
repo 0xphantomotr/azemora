@@ -187,7 +187,7 @@ contract AchievementsSBT is
         }
 
         // Update total supply for each token ID
-        for (uint256 i = 0; i < ids.length; ++i) {
+        for (uint256 i = 0; i < ids.length;) {
             uint256 id = ids[i];
             uint256 amount = amounts[i];
             if (from == address(0)) {
@@ -197,6 +197,9 @@ contract AchievementsSBT is
             if (to == address(0)) {
                 // Burn
                 _totalSupplies[id] -= amount;
+            }
+            unchecked {
+                ++i;
             }
         }
 

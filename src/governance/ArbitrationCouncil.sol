@@ -95,7 +95,7 @@ contract ArbitrationCouncil is
         uint256 totalWeightedVotes; // Stores the sum of (vote * reputation)
         uint256 totalReputationWeight; // Stores the sum of reputation of all who voted
         uint256 quantitativeOutcome; // Stores the final weighted-average outcome
-        uint256 votingDeadline;
+        uint64 votingDeadline; // Changed from uint256 for gas packing
         mapping(address => uint256) votes; // Stores the quantitative vote of each council member
         mapping(address => bool) hasVoted;
         address[] councilMembers;
@@ -251,9 +251,9 @@ contract ArbitrationCouncil is
         return true;
     }
 
-    function fulfillRandomWords(uint256 requestId, uint256[] memory randomWords) internal override {
-        VrfRequest memory request = vrfRequests[requestId];
-        if (request.claimId == bytes32(0)) revert ArbitrationCouncil__RequestIdNotFound();
+    function fulfillRandomWords(uint256 requestId, uint256[] memory randomWords) internal override nonReentrant {
+        VrfRequest memory vrfRequest = vrfRequests[requestId];
+        if (vrfRequest.claimId == bytes32(0)) revert ArbitrationCouncil__RequestIdNotFound();
 
         delete vrfRequests[requestId];
 
@@ -265,7 +265,7 @@ contract ArbitrationCouncil is
         uint256 jurorCount = 0;
         for (uint256 i = 0; i < numVerifiers; i++) {
             address verifier = allVerifiers[i];
-            if (verifier != request.challenger && verifier != request.defendant) {
+            if (verifier != vrfRequest.challenger && verifier != vrfRequest.defendant) {
                 potentialJurors[jurorCount] = verifier;
                 jurorCount++;
             }
@@ -295,15 +295,15 @@ contract ArbitrationCouncil is
             selectedCouncil[i] = potentialJurors[i];
         }
 
-        Dispute storage dispute = disputes[request.claimId];
-        dispute.claimId = request.claimId;
-        dispute.challenger = request.challenger;
-        dispute.defendant = request.defendant;
+        Dispute storage dispute = disputes[vrfRequest.claimId];
+        dispute.claimId = vrfRequest.claimId;
+        dispute.challenger = vrfRequest.challenger;
+        dispute.defendant = vrfRequest.defendant;
         dispute.status = DisputeStatus.Voting;
-        dispute.votingDeadline = block.timestamp + votingPeriod;
         dispute.councilMembers = selectedCouncil;
+        dispute.votingDeadline = uint64(block.timestamp + votingPeriod);
 
-        emit CouncilSelected(request.claimId, selectedCouncil);
+        emit CouncilSelected(vrfRequest.claimId, selectedCouncil);
     }
 
     function setChallengeStakeAmount(uint256 _amount) external onlyRole(COUNCIL_ADMIN_ROLE) {
@@ -330,7 +330,7 @@ contract ArbitrationCouncil is
         if (dispute.status != DisputeStatus.Voting) {
             revert ArbitrationCouncil__InvalidDisputeStatus(claimId, DisputeStatus.Voting);
         }
-        if (block.timestamp > dispute.votingDeadline) revert ArbitrationCouncil__VotingPeriodOver();
+        if (block.timestamp > uint256(dispute.votingDeadline)) revert ArbitrationCouncil__VotingPeriodOver();
         if (dispute.hasVoted[msg.sender]) revert ArbitrationCouncil__AlreadyVoted();
 
         bool isMember = false;
@@ -358,7 +358,7 @@ contract ArbitrationCouncil is
         if (dispute.status != DisputeStatus.Voting) {
             revert ArbitrationCouncil__InvalidDisputeStatus(claimId, DisputeStatus.Voting);
         }
-        if (block.timestamp <= dispute.votingDeadline) revert ArbitrationCouncil__VotingPeriodNotOver();
+        if (block.timestamp <= uint256(dispute.votingDeadline)) revert ArbitrationCouncil__VotingPeriodNotOver();
 
         uint256 finalOutcome = 0;
         if (dispute.totalReputationWeight > 0) {

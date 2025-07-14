@@ -46,7 +46,7 @@ contract VerifierManager is
     struct Verifier {
         uint256 stake;
         uint256 reputationSnapshot;
-        uint256 unstakeAvailableAt; // Timestamp when the verifier can fully withdraw
+        uint64 unstakeAvailableAt; // Timestamp when the verifier can fully withdraw
         bool active;
     }
 
@@ -139,7 +139,7 @@ contract VerifierManager is
         if (!verifiers[user].active) revert VerifierManager__NotRegistered();
 
         verifiers[user].active = false;
-        verifiers[user].unstakeAvailableAt = block.timestamp + unstakeLockPeriod;
+        verifiers[user].unstakeAvailableAt = uint64(block.timestamp + unstakeLockPeriod);
 
         _removeVerifierFromList(user);
 
