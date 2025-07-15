@@ -88,8 +88,15 @@ contract MarketplaceEchidnaTest is Test {
     function echidna_active_listing_has_price() public view returns (bool) {
         uint256 counter = marketplace.listingIdCounter();
         for (uint256 i = 1; i <= counter; i++) {
-            (uint256 id, uint256 tokenId, address seller, uint256 expiryTimestamp, bool active, uint256 pricePerUnit,
-                uint256 amount) = marketplace.listings(i);
+            (
+                uint256 id,
+                uint256 tokenId,
+                address seller,
+                uint256 expiryTimestamp,
+                bool active,
+                uint256 pricePerUnit,
+                uint256 amount
+            ) = marketplace.listings(i);
             if (active) {
                 if (pricePerUnit == 0) return false;
             }
@@ -101,8 +108,15 @@ contract MarketplaceEchidnaTest is Test {
     function echidna_active_listing_has_seller() public view returns (bool) {
         uint256 counter = marketplace.listingIdCounter();
         for (uint256 i = 1; i <= counter; i++) {
-            (uint256 id, uint256 tokenId, address seller, uint256 expiryTimestamp, bool active, uint256 pricePerUnit,
-                uint256 amount) = marketplace.listings(i);
+            (
+                uint256 id,
+                uint256 tokenId,
+                address seller,
+                uint256 expiryTimestamp,
+                bool active,
+                uint256 pricePerUnit,
+                uint256 amount
+            ) = marketplace.listings(i);
             if (active) {
                 if (seller == address(0)) return false;
             }
@@ -134,8 +148,15 @@ contract MarketplaceEchidnaTest is Test {
 
             // Sum up all active listings for the current tokenId.
             for (uint256 j = 1; j <= listingCounter; j++) {
-                (uint256 listedId, uint256 listedTokenId, address seller, uint256 expiry, bool active,
-                    uint256 price, uint256 amount) = marketplace.listings(j);
+                (
+                    uint256 listedId,
+                    uint256 listedTokenId,
+                    address seller,
+                    uint256 expiry,
+                    bool active,
+                    uint256 price,
+                    uint256 amount
+                ) = marketplace.listings(j);
                 if (active && listedTokenId == currentTokenId) {
                     totalListedForToken += amount;
                 }
@@ -182,8 +203,15 @@ contract MarketplaceEchidnaTest is Test {
         listingId = constrain(listingId, 1, counter);
         address buyer = users[listingId % NUM_USERS]; // Pick a random user
 
-        (uint256 id, uint256 tokenId, address seller, uint256 expiryTimestamp, bool active, uint256 pricePerUnit,
-            uint256 amount) = marketplace.listings(listingId);
+        (
+            uint256 id,
+            uint256 tokenId,
+            address seller,
+            uint256 expiryTimestamp,
+            bool active,
+            uint256 pricePerUnit,
+            uint256 amount
+        ) = marketplace.listings(listingId);
 
         if (!active || expiryTimestamp < block.timestamp || seller == buyer) return;
 
@@ -201,8 +229,15 @@ contract MarketplaceEchidnaTest is Test {
         if (counter == 0) return;
         listingId = constrain(listingId, 1, counter);
 
-        (uint256 id, uint256 tokenId, address seller, uint256 expiryTimestamp, bool active, uint256 pricePerUnit,
-            uint256 amount) = marketplace.listings(listingId);
+        (
+            uint256 id,
+            uint256 tokenId,
+            address seller,
+            uint256 expiryTimestamp,
+            bool active,
+            uint256 pricePerUnit,
+            uint256 amount
+        ) = marketplace.listings(listingId);
         if (seller != address(this) || !active) return; // Only contract can cancel its own ACTIVE listings
 
         marketplace.cancelListing(listingId);
@@ -223,8 +258,15 @@ contract MarketplaceEchidnaTest is Test {
             if (foundCount == maxCancellations) break;
 
             uint256 listingId = i; // Listing IDs are 1-based
-            (uint256 id, uint256 tokenId, address seller, uint256 expiryTimestamp, bool active,
-                uint256 pricePerUnit, uint256 amount) = marketplace.listings(listingId);
+            (
+                uint256 id,
+                uint256 tokenId,
+                address seller,
+                uint256 expiryTimestamp,
+                bool active,
+                uint256 pricePerUnit,
+                uint256 amount
+            ) = marketplace.listings(listingId);
 
             // The test contract can only cancel its own active listings
             if (seller == address(this) && active) {
@@ -263,8 +305,8 @@ contract MarketplaceEchidnaTest is Test {
         for (uint256 i = 1; i <= counter; i++) {
             if (foundCount == maxBuys) break;
 
-            (uint256 id, uint256 tokenId, address seller, uint256 expiry, bool active, uint256 price,
-                uint256 amount) = marketplace.listings(i);
+            (uint256 id, uint256 tokenId, address seller, uint256 expiry, bool active, uint256 price, uint256 amount) =
+                marketplace.listings(i);
 
             // Check if listing is valid and not owned by the buyer
             if (active && block.timestamp < expiry && seller != buyer) {
@@ -300,8 +342,15 @@ contract MarketplaceEchidnaTest is Test {
         listingId = constrain(listingId, 1, counter);
         newPrice = constrain(newPrice, 1, 1000 ether); // New price must be > 0
 
-        (uint256 id, uint256 tokenId, address seller, uint256 expiryTimestamp, bool active, uint256 pricePerUnit,
-            uint256 amount) = marketplace.listings(listingId);
+        (
+            uint256 id,
+            uint256 tokenId,
+            address seller,
+            uint256 expiryTimestamp,
+            bool active,
+            uint256 pricePerUnit,
+            uint256 amount
+        ) = marketplace.listings(listingId);
 
         // Only the original seller of an active listing can update its price.
         // For this test, the seller is always `address(this)`.
