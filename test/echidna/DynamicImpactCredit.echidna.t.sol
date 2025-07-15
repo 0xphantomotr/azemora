@@ -13,48 +13,49 @@ contract DynamicImpactCreditEchidnaTest is Test {
     ProjectRegistry internal registry;
     DynamicImpactCredit internal credit;
 
+    // --- Actors ---
     address[] internal users;
-    bytes32[] internal projectIds;
-    uint256[] internal tokenIds;
-
-    // Constants for the test setup
-    uint256 constant NUM_PROJECTS = 5;
-    uint256 constant NUM_USERS = 3;
     address internal admin;
     address internal dMrvManager;
     address internal verifier;
 
-    // To track URI history for the append-only invariant
-    mapping(uint256 => uint256) private uriHistoryLength;
+    // --- Assets ---
+    bytes32[] internal projectIds;
+    uint256[] internal tokenIds;
+
+    // --- State Tracking for Invariants ---
+    mapping(uint256 => uint256) public expectedTotalSupply;
+    mapping(uint256 => uint256) private expectedUriHistoryLength;
+
+    // --- Constants ---
+    uint256 constant NUM_PROJECTS = 5;
+    uint256 constant NUM_USERS = 3;
 
     constructor() {
-        // --- Deploy Logic & Proxies ---
+        // --- Create Actors ---
+        admin = address(this);
+        dMrvManager = vm.addr(0xAAAA);
+        verifier = vm.addr(0xBBBB);
+        for (uint256 i = 0; i < NUM_USERS; i++) {
+            users.push(vm.addr(uint256(keccak256(abi.encodePacked("user", i)))));
+        }
+
+        // --- Deploy & Configure Contracts ---
+        vm.prank(admin);
         // 1. Registry
         ProjectRegistry registryImpl = new ProjectRegistry();
         bytes memory registryData = abi.encodeCall(ProjectRegistry.initialize, ());
         registry = ProjectRegistry(payable(address(new ERC1967Proxy(address(registryImpl), registryData))));
+        registry.grantRole(registry.VERIFIER_ROLE(), verifier);
 
-        // 2. Credit
+        // 2. Credit Contract
         DynamicImpactCredit creditImpl = new DynamicImpactCredit();
         bytes memory creditData =
             abi.encodeCall(DynamicImpactCredit.initializeDynamicImpactCredit, (address(registry), "contract_uri"));
         credit = DynamicImpactCredit(payable(address(new ERC1967Proxy(address(creditImpl), creditData))));
-
-        // --- Create Users and Roles ---
-        admin = address(this);
-        dMrvManager = address(0xAAAA);
-        verifier = address(0xBBBB);
-        for (uint256 i = 0; i < NUM_USERS; i++) {
-            users.push(address(uint160(i + 1)));
-        }
-
-        // --- Grant Roles ---
-        vm.startPrank(admin);
-        registry.grantRole(registry.VERIFIER_ROLE(), verifier);
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), dMrvManager);
-        vm.stopPrank();
 
-        // --- Create Projects and set some to Active ---
+        // --- Create Projects ---
         for (uint256 i = 0; i < NUM_PROJECTS; i++) {
             address owner = users[i % NUM_USERS];
             bytes32 projectId = keccak256(abi.encodePacked(i, owner));
@@ -63,73 +64,48 @@ contract DynamicImpactCreditEchidnaTest is Test {
 
             vm.prank(owner);
             registry.registerProject(projectId, "initial_uri");
-
-            // Activate about half the projects to give Echidna a mix to work with
-            if (i % 2 == 0) {
-                vm.prank(verifier);
-                registry.setProjectStatus(projectId, IProjectRegistry.ProjectStatus.Active);
-            }
         }
-    }
-
-    function setUp() public {
-        vm.startPrank(admin);
-        // Deploy Registry
-        ProjectRegistry registryImpl = new ProjectRegistry();
-        registry = ProjectRegistry(
-            address(new ERC1967Proxy(address(registryImpl), abi.encodeCall(ProjectRegistry.initialize, ())))
-        );
-
-        // Deploy Credits contract
-        DynamicImpactCredit creditImpl = new DynamicImpactCredit();
-        bytes memory creditData =
-            abi.encodeCall(DynamicImpactCredit.initializeDynamicImpactCredit, (address(registry), "contract_uri"));
-
-        credit = DynamicImpactCredit(address(new ERC1967Proxy(address(creditImpl), creditData)));
-
-        // Grant roles
-        credit.grantRole(credit.DMRV_MANAGER_ROLE(), dMrvManager);
-        vm.stopPrank();
     }
 
     // =================================================================
     //                           INVARIANTS
     // =================================================================
 
-    /// @dev Property: Credits can only be minted for an active project.
-    /// This is implicitly tested. If `mintCredits` were to succeed for an inactive
-    /// project, it would break the logic our stateful testing relies on.
-    /// A successful mint for an inactive project is a vulnerability.
-    function echidna_mint_requires_active_project() public pure returns (bool) {
-        // The check is in the mint function itself. Echidna will try to call it
-        // with projectIds that are not active. If it ever succeeds, it has found a bug.
-        // We don't need to check anything here because the exploit is the successful call itself,
-        // which would likely violate other invariants.
-        return true;
-    }
-
     /// @dev Property: The URI history for a token can only grow.
     function echidna_uri_history_is_append_only() public view returns (bool) {
         for (uint256 i = 0; i < tokenIds.length; i++) {
             uint256 tokenId = tokenIds[i];
-            try credit.getCredentialCIDHistory(tokenId) returns (string[] memory history) {
-                if (history.length < uriHistoryLength[tokenId]) {
-                    return false; // History should never shrink
+            uint256 expectedLength = expectedUriHistoryLength[tokenId];
+            if (expectedLength > 0) {
+                string[] memory history = credit.getCredentialCIDHistory(tokenId);
+                if (history.length < expectedLength) {
+                    return false; // Invariant violated
                 }
-            } catch {
-                // If the token doesn't exist yet, history length is 0, which is fine.
             }
         }
         return true;
     }
 
-    /// @dev Property: Only an address with the DMRV_MANAGER_ROLE should be able to mint.
-    function echidna_only_dmrv_manager_can_mint() public pure returns (bool) {
-        // This is an access control property. Echidna will try calling `mintCredits`
-        // from many different `msg.sender` addresses. The `onlyRole` modifier
-        // should prevent unauthorized minting. If a non-manager ever successfully
-        // mints, the total supply will increase unexpectedly, likely breaking another
-        // invariant or showing up as a vulnerability in a static analysis report.
+    /// @dev Property: The total supply of each token should only increase when a valid mint occurs.
+    /// This single invariant effectively tests both access control (only DMRV_MANAGER_ROLE) and
+    /// state requirements (project must be active).
+    function echidna_total_supply_is_conserved() public view returns (bool) {
+        for (uint256 i = 0; i < projectIds.length; i++) {
+            uint256 tokenId = tokenIds[i];
+            uint256 actualSupply = 0;
+
+            // Sum balances of all potential holders
+            for (uint256 j = 0; j < users.length; j++) {
+                actualSupply += credit.balanceOf(users[j], tokenId);
+            }
+            actualSupply += credit.balanceOf(admin, tokenId);
+            actualSupply += credit.balanceOf(dMrvManager, tokenId);
+            actualSupply += credit.balanceOf(verifier, tokenId);
+
+            if (actualSupply != expectedTotalSupply[tokenId]) {
+                return false; // Invariant violated
+            }
+        }
         return true;
     }
 
@@ -137,38 +113,62 @@ contract DynamicImpactCreditEchidnaTest is Test {
     //                      STATE-CHANGING FUNCTIONS
     // =================================================================
 
-    function mintCredits(uint256 projectIdIndex, uint256 amount, address caller) public {
-        bytes32 projectId = projectIds[projectIdIndex % NUM_PROJECTS];
-        uint256 tokenId = uint256(projectId);
-        address to = users[amount % NUM_USERS]; // Pick a user to receive tokens
-
-        // Let Echidna try to mint from the manager, admin, or a random user
-        if (uint256(uint160(caller)) % 3 == 0) {
-            vm.prank(dMrvManager);
-        } else if (uint256(uint160(caller)) % 3 == 1) {
-            vm.prank(admin);
+    /// @dev Echidna calls this function to try and mint credits.
+    /// The `seed` parameter is used to choose the caller and other inputs.
+    function mintCredits(uint256 seed) public {
+        // 1. Choose a caller for this transaction based on the seed
+        address caller;
+        uint256 callerChoice = seed % 4; // 0: manager, 1: admin, 2-3: random user
+        if (callerChoice == 0) {
+            caller = dMrvManager;
+        } else if (callerChoice == 1) {
+            caller = admin;
         } else {
-            vm.prank(users[uint256(uint160(caller)) % NUM_USERS]);
+            caller = users[seed % NUM_USERS];
         }
 
-        // We expect this to revert often. The key is that if it *succeeds*, it must not break an invariant.
-        try credit.mintCredits(to, projectId, amount, "new_uri") {
-            // If minting succeeds, update our internal tracker for the URI history length.
-            uint256 currentLength = credit.getCredentialCIDHistory(tokenId).length;
-            uriHistoryLength[tokenId] = currentLength;
-        } catch {}
+        // 2. Choose other parameters based on the seed
+        bytes32 projectId = projectIds[seed % NUM_PROJECTS];
+        uint256 tokenId = uint256(projectId);
+        address to = users[seed % NUM_USERS];
+        uint256 amount = (seed % 1000) + 1; // Non-zero amount
+
+        // 3. Predict if the mint should succeed BEFORE the call
+        bool canMint = (caller == dMrvManager) || (caller == admin);
+        bool projectIsActive = registry.isProjectActive(projectId);
+        bool shouldSucceed = canMint && projectIsActive;
+
+        if (shouldSucceed) {
+            // 4. Update our expected state ONLY if we predict success
+            expectedTotalSupply[tokenId] += amount;
+            expectedUriHistoryLength[tokenId]++;
+        }
+
+        // 5. Attempt the action with the chosen caller
+        // The invariants will later check if the actual state matches our expectations.
+        vm.prank(caller);
+        try credit.mintCredits(to, projectId, amount, "new_uri") {} catch {}
     }
 
-    function setProjectStatus(uint256 projectIdIndex, uint8 newStatus, address caller) public {
-        bytes32 projectId = projectIds[projectIdIndex % NUM_PROJECTS];
-        IProjectRegistry.ProjectStatus status = IProjectRegistry.ProjectStatus(newStatus % 4);
-
-        // Allow admin or verifier to change status to create varied scenarios for minting
-        if (uint256(uint160(caller)) % 2 == 0) {
-            vm.prank(admin);
+    /// @dev Echidna calls this function to change project statuses.
+    function setProjectStatus(uint256 seed) public {
+        // 1. Choose a caller for this transaction
+        address caller;
+        uint256 callerChoice = seed % 3; // 0: verifier, 1: admin, 2: random user
+        if (callerChoice == 0) {
+            caller = verifier;
+        } else if (callerChoice == 1) {
+            caller = admin;
         } else {
-            vm.prank(verifier);
+            caller = users[seed % NUM_USERS];
         }
+
+        // 2. Choose other parameters
+        bytes32 projectId = projectIds[seed % NUM_PROJECTS];
+        IProjectRegistry.ProjectStatus status = IProjectRegistry.ProjectStatus((seed / 3) % 4);
+
+        // 3. Attempt the action with the chosen caller
+        vm.prank(caller);
         try registry.setProjectStatus(projectId, status) {} catch {}
     }
 }
