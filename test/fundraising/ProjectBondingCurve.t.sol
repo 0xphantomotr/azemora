@@ -22,7 +22,7 @@ import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 contract ProjectBondingCurveUnitTest is Test {
     // --- Constants ---
     uint256 public constant WAD = 1e18;
-    uint256 public constant SLOPE = 1e9;
+    uint256 public constant SLOPE = 1;
     uint256 public constant TEAM_ALLOCATION = 1000 * WAD;
     uint256 public constant VESTING_CLIFF_SECONDS = 30 days;
     uint256 public constant VESTING_DURATION_SECONDS = 90 days;

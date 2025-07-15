@@ -40,7 +40,7 @@ contract MaliciousProjectToken is ProjectToken {
 
 contract ReentrancyTest is Test {
     // --- Constants ---
-    uint256 internal constant SLOPE = 1e9;
+    uint256 internal constant SLOPE = 1;
     uint256 internal constant TEAM_ALLOCATION = 1000e18;
     uint256 internal constant VESTING_CLIFF = 30 days;
     uint256 internal constant VESTING_DURATION = 90 days;

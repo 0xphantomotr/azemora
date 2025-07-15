@@ -20,6 +20,7 @@ contract StakingRewards is Ownable, ReentrancyGuard {
     uint256 public rewardRate; // Rewards distributed per second
     uint256 public lastUpdateTime; // Timestamp of the last reward rate update
     uint256 public rewardPerTokenStored; // Accumulated rewards per token staked
+    uint256 public periodFinish;
     mapping(address => uint256) public userRewardPerTokenPaid; // Tracks rewards paid to each user
     mapping(address => uint256) public rewards; // Rewards earned but not yet claimed by each user
 
@@ -48,7 +49,8 @@ contract StakingRewards is Ownable, ReentrancyGuard {
         if (totalSupply == 0) {
             return rewardPerTokenStored;
         }
-        uint256 timeSinceUpdate = block.timestamp > lastUpdateTime ? block.timestamp - lastUpdateTime : 0;
+        uint256 timePoint = block.timestamp < periodFinish ? block.timestamp : periodFinish;
+        uint256 timeSinceUpdate = timePoint > lastUpdateTime ? timePoint - lastUpdateTime : 0;
         return rewardPerTokenStored + (rewardRate * timeSinceUpdate * 1e18) / totalSupply;
     }
 
@@ -105,9 +107,17 @@ contract StakingRewards is Ownable, ReentrancyGuard {
         lastUpdateTime = block.timestamp;
 
         require(duration > 0, "Duration must be > 0");
-        // Calculate the new reward rate. This assumes new rewards replace the old distribution plan.
-        rewardRate = reward / duration;
 
+        if (block.timestamp >= periodFinish) {
+            rewardRate = reward / duration;
+        } else {
+            uint256 remaining = periodFinish - block.timestamp;
+            uint256 leftover = remaining * rewardRate;
+            rewardRate = (reward + leftover) / duration;
+        }
+
+        periodFinish = block.timestamp + duration;
         emit RewardAdded(reward);
+        emit RewardRateUpdated(rewardRate);
     }
 }

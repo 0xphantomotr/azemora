@@ -9,6 +9,7 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "./interfaces/IBondingCurveStrategy.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 // --- Custom Errors ---
 error ProjectBondingCurve__ZeroAddress();
@@ -49,6 +50,7 @@ contract ProjectBondingCurve is
     address public liquidityMigrator;
 
     // Bonding Curve Parameters
+    uint8 public collateralDecimals;
     uint256 public slope; // Determines the price steepness (price = slope * supply)
 
     // Team Vesting Parameters
@@ -123,6 +125,7 @@ contract ProjectBondingCurve is
         liquidityMigrator = msg.sender;
         _projectToken = ProjectToken(_projectTokenAddress);
         collateralToken = IERC20(_collateralToken);
+        collateralDecimals = IERC20Metadata(_collateralToken).decimals();
         slope = _slope;
         lastWithdrawalTimestamp = block.timestamp;
         maxWithdrawalPercentage = _maxWithdrawalPercentage;
@@ -144,6 +147,8 @@ contract ProjectBondingCurve is
         if (amountToBuy == 0) revert ProjectBondingCurve__InvalidParameter();
 
         uint256 cost = _calculateBuyCost(amountToBuy);
+        // Prevent dust attacks where a user gets tokens for free due to precision loss.
+        if (cost == 0) revert ProjectBondingCurve__InvalidParameter();
         if (cost > maxCollateralToSpend) revert ProjectBondingCurve__SlippageExceeded();
 
         _projectToken.mint(msg.sender, amountToBuy);
@@ -165,6 +170,8 @@ contract ProjectBondingCurve is
         if (amountToSell == 0) revert ProjectBondingCurve__InvalidParameter();
 
         uint256 proceeds = _calculateSellProceeds(amountToSell);
+        // Prevent dust sales where tiny amounts are sold for nothing.
+        if (proceeds == 0) revert ProjectBondingCurve__InvalidParameter();
         if (proceeds < minCollateralToReceive) revert ProjectBondingCurve__SlippageExceeded();
 
         _projectToken.burnFrom(msg.sender, amountToSell);
@@ -259,8 +266,10 @@ contract ProjectBondingCurve is
         uint256 s2 = s1 + amountToBuy;
         // cost = integral of (slope * s)ds from s1 to s2
         // cost = slope/2 * (s2^2 - s1^2)
-        // We divide by WAD twice to account for s being in 18 decimals (WAD), and thus s^2 being in 36 decimals.
-        return (slope * ((s2 * s2) - (s1 * s1))) / 2 / WAD / WAD;
+        // The result of this formula is a WAD (1e18) scaled value.
+        uint256 costWAD = (slope * ((s2 * s2) - (s1 * s1))) / 2 / WAD;
+        // We must scale the WAD value to the collateral token's actual decimals.
+        return (costWAD * (10 ** collateralDecimals)) / WAD;
     }
 
     function _calculateSellProceeds(uint256 amountToSell) internal view returns (uint256) {
@@ -270,8 +279,9 @@ contract ProjectBondingCurve is
         uint256 s2 = s1 - amountToSell;
         // proceeds = integral of (slope * s)ds from s2 to s1
         // proceeds = slope/2 * (s1^2 - s2^2)
-        // We divide by WAD twice to account for s being in 18 decimals (WAD), and thus s^2 being in 36 decimals.
-        return (slope * ((s1 * s1) - (s2 * s2))) / 2 / WAD / WAD;
+        uint256 proceedsWAD = (slope * ((s1 * s1) - (s2 * s2))) / 2 / WAD;
+        // Scale to collateral decimals
+        return (proceedsWAD * (10 ** collateralDecimals)) / WAD;
     }
 
     function _calculateVestedAmount() internal view returns (uint256) {

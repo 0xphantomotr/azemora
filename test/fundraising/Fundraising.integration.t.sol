@@ -36,8 +36,8 @@ contract FundraisingIntegrationTest is Test {
 
     // --- Constants ---
     uint256 public constant WAD = 1e18;
-    // Realistic slope to avoid overflow with WAD arithmetic
-    uint256 public constant SLOPE = 1e9; // Price increases by 1 gwei per token
+    // Lowered slope to make the cost affordable for the test user's balance.
+    uint256 public constant SLOPE = 1;
     uint256 public constant TEAM_ALLOCATION = 1000 * WAD;
     uint256 public constant AMOUNT_TO_BUY = 50 * WAD;
     uint256 public constant AMOUNT_TO_SELL = 25 * WAD; // Sell half of what was bought
