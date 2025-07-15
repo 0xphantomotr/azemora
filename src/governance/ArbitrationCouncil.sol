@@ -12,9 +12,7 @@ import "@chainlink/contracts/src/v0.8/vrf/interfaces/VRFCoordinatorV2Interface.s
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
 // --- Interfaces ---
-interface IStakingManager {
-    function slash(uint256 slashAmount, address compensationTarget) external;
-}
+// IStakingManager interface removed
 
 // --- Custom Errors ---
 error ArbitrationCouncil__InvalidDisputeStatus(bytes32 claimId, ArbitrationCouncil.DisputeStatus requiredStatus);
@@ -110,7 +108,7 @@ contract ArbitrationCouncil is
     // --- State Variables ---
     IERC20 public azeToken;
     IVerifierManager public verifierManager;
-    IStakingManager public stakingManager;
+    // IStakingManager public stakingManager; <-- This line is removed
     address public treasury;
 
     uint256 public challengeStakeAmount;
@@ -185,10 +183,7 @@ contract ArbitrationCouncil is
         s_callbackGasLimit = _callbackGasLimit;
     }
 
-    function setStakingManager(address _stakingManager) external onlyRole(COUNCIL_ADMIN_ROLE) {
-        if (_stakingManager == address(0)) revert ArbitrationCouncil__ZeroAddress();
-        stakingManager = IStakingManager(_stakingManager);
-    }
+    // setStakingManager function removed
 
     function setFraudThreshold(uint256 _threshold) external onlyRole(COUNCIL_ADMIN_ROLE) {
         fraudThreshold = _threshold;
@@ -371,6 +366,10 @@ contract ArbitrationCouncil is
         // If the final outcome is below the fraud threshold, the challenge was successful.
         if (finalOutcome < fraudThreshold) {
             // The amount to slash is the defendant's stake from the verifier manager.
+            // Note: The defendant in an arbitration case is the Verifier Module contract itself.
+            // Slashing is intended for the verifiers *behind* that module. This logic
+            // assumes the verifier module is the staker, which needs review.
+            // For now, we proceed with the assumption that the defendant *is* the staker.
             uint256 slashAmount = verifierManager.getVerifierStake(dispute.defendant);
             if (slashAmount == 0) revert ArbitrationCouncil__FraudNotConfirmed();
 
@@ -386,7 +385,7 @@ contract ArbitrationCouncil is
 
             // 2. Slash the defendant's stake, transferring the funds to this contract to serve as
             //    the compensation pool and bounty source.
-            stakingManager.slash(slashAmount, address(this));
+            verifierManager.slash(dispute.defendant, address(this));
 
             // 3. From the newly received slashed funds, pay the challenger's bounty.
             if (challengerBounty > 0 && !azeToken.transfer(dispute.challenger, challengerBounty)) {

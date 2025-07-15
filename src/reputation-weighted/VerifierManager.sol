@@ -165,21 +165,23 @@ contract VerifierManager is
     /**
      * @notice Slashes a verifier's entire stake.
      * @dev Can only be called by a contract with the SLASHER_ROLE after a successful dispute resolution.
-     * The slashed stake is sent to the DAO Treasury.
+     * The slashed stake is sent to the designated compensation target.
      * @param verifier The address of the verifier to be slashed.
+     * @param compensationTarget The address to receive the slashed funds.
      */
-    function slash(address verifier) external onlyRole(SLASHER_ROLE) nonReentrant {
+    function slash(address verifier, address compensationTarget) external onlyRole(SLASHER_ROLE) nonReentrant {
         Verifier storage v = verifiers[verifier];
         if (!v.active && v.stake == 0) revert VerifierManager__NotRegistered();
         uint256 stakeToSlash = v.stake;
         if (stakeToSlash == 0) revert VerifierManager__NothingToSlash();
+        if (compensationTarget == address(0)) revert VerifierManager__ZeroAddress();
 
         v.stake = 0; // Slashed to zero
         v.active = false; // Deactivate the verifier
         _removeVerifierFromList(verifier); // Remove them from the active list
 
-        // The slashed stake is sent to the DAO Treasury
-        stakingToken.safeTransfer(treasury, stakeToSlash);
+        // The slashed stake is sent to the compensation target (i.e., the ArbitrationCouncil)
+        stakingToken.safeTransfer(compensationTarget, stakeToSlash);
 
         // For now, we assume a full reputation slash. This could be made more granular.
         reputationManager.slashReputation(verifier, v.reputationSnapshot);

@@ -17,8 +17,9 @@ interface IVerifierManager {
     /**
      * @notice Slashes a verifier's stake for misconduct.
      * @param verifier The address of the verifier to be slashed.
+     * @param compensationTarget The address to receive the slashed funds.
      */
-    function slash(address verifier) external;
+    function slash(address verifier, address compensationTarget) external;
 
     /**
      * @notice Returns a list of all registered verifiers.

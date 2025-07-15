@@ -189,6 +189,7 @@ contract VerifierManagerTest is Test {
         vm.stopPrank();
 
         uint256 reputationBefore = reputationManager.getReputation(userWithReputation);
+        uint256 slasherBalanceBefore = stakingToken.balanceOf(slasher);
 
         vm.startPrank(slasher);
         // Expect reputation slash call
@@ -196,11 +197,14 @@ contract VerifierManagerTest is Test {
             address(reputationManager),
             abi.encodeWithSelector(reputationManager.slashReputation.selector, userWithReputation, reputationBefore)
         );
-        verifierManager.slash(userWithReputation);
+        // The slasher designates itself as the compensation target
+        verifierManager.slash(userWithReputation, slasher);
         vm.stopPrank();
 
+        uint256 slasherBalanceAfter = stakingToken.balanceOf(slasher);
+
         assertEq(verifierManager.getVerifierStake(userWithReputation), 0, "Stake not fully slashed");
-        assertEq(stakingToken.balanceOf(treasury), MIN_STAKE_AMOUNT, "Treasury did not receive slashed stake");
+        assertEq(slasherBalanceAfter - slasherBalanceBefore, MIN_STAKE_AMOUNT, "Slasher did not receive slashed stake");
         assertFalse(verifierManager.isVerifier(userWithReputation), "Verifier should be deactivated after slash");
     }
 
@@ -211,11 +215,11 @@ contract VerifierManagerTest is Test {
         vm.stopPrank();
 
         vm.startPrank(randomAddress);
-        bytes memory expectedRevert = abi.encodeWithSignature(
-            "AccessControlUnauthorizedAccount(address,bytes32)", randomAddress, verifierManager.SLASHER_ROLE()
-        );
+        bytes memory expectedRevert =
+            abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", randomAddress, SLASHER_ROLE);
         vm.expectRevert(expectedRevert);
-        verifierManager.slash(userWithReputation);
+        // Add a valid target address, even though the call should revert on the access control check.
+        verifierManager.slash(userWithReputation, randomAddress);
         vm.stopPrank();
     }
 

@@ -93,29 +93,20 @@ library MerkleTest {
 }
 
 // --- Local Interfaces & Mocks for Testing ---
-interface IStakingManager {
-    function slash(uint256 slashAmount, address compensationTarget) external;
-}
+// IStakingManager interface removed
 
-// Mock for StakingManager that handles token transfers
-contract MockStakingManager is IStakingManager {
-    MockERC20 public aztToken;
-
-    constructor(address _token) {
-        aztToken = MockERC20(_token);
-    }
-
-    function slash(uint256 slashAmount, address compensationTarget) external {
-        // Simulate the transfer of slashed funds from the staking pool to the compensation target (the council)
-        aztToken.transfer(compensationTarget, slashAmount);
-    }
-}
+// Mock for StakingManager removed
 
 // Mock for VerifierManager to control reputation scores
 contract MockVerifierManager is IVerifierManager {
     mapping(address => uint256) public reputations;
     mapping(address => uint256) public stakes;
     address[] public verifiers;
+    MockERC20 public aztToken;
+
+    constructor(address _token) {
+        aztToken = MockERC20(_token);
+    }
 
     function setReputation(address verifier, uint256 reputation) external {
         reputations[verifier] = reputation;
@@ -142,7 +133,12 @@ contract MockVerifierManager is IVerifierManager {
         return true;
     }
 
-    function slash(address) external {}
+    function slash(address verifier, address compensationTarget) external {
+        uint256 stakeToSlash = stakes[verifier];
+        stakes[verifier] = 0;
+        // Simulate the transfer of slashed funds from the manager's pool to the compensation target
+        aztToken.transfer(compensationTarget, stakeToSlash);
+    }
 
     function getVerifierStake(address account) external view returns (uint256) {
         return stakes[account];
@@ -167,7 +163,7 @@ contract ArbitrationCouncilTest is Test {
     MockVerifierManager internal verifierManager;
     MockReputationWeightedVerifier internal repWeightedVerifier;
     VRFCoordinatorV2Mock internal vrfCoordinator;
-    MockStakingManager internal stakingManager;
+    // MockStakingManager internal stakingManager; <-- This line is removed
 
     // --- Users ---
     address internal admin;
@@ -201,9 +197,9 @@ contract ArbitrationCouncilTest is Test {
         // --- Deploy Mocks ---
         aztToken = new MockERC20("AZT", "AZT", 18);
         vrfCoordinator = new VRFCoordinatorV2Mock(0, 0);
-        verifierManager = new MockVerifierManager();
+        verifierManager = new MockVerifierManager(address(aztToken));
         repWeightedVerifier = new MockReputationWeightedVerifier();
-        stakingManager = new MockStakingManager(address(aztToken));
+        // stakingManager = new MockStakingManager(address(aztToken)); <-- This line is removed
 
         // --- Deploy and Initialize ArbitrationCouncil ---
         council = ArbitrationCouncil(
@@ -234,7 +230,7 @@ contract ArbitrationCouncilTest is Test {
         council.setChallengeStakeAmount(CHALLENGE_STAKE_AMOUNT);
         council.grantRole(council.VERIFIER_CONTRACT_ROLE(), address(this));
         council.setFraudThreshold(50); // Outcome < 50 is fraud
-        council.setStakingManager(address(stakingManager));
+        // council.setStakingManager(address(stakingManager)); <-- This line is removed
         council.setKeeperBounty(KEEPER_BOUNTY);
 
         vrfCoordinator.createSubscription();
@@ -243,8 +239,8 @@ contract ArbitrationCouncilTest is Test {
 
         // --- Setup User State ---
         aztToken.mint(challenger, CHALLENGE_STAKE_AMOUNT);
-        // Fund the staking manager so it has funds to be "slashed"
-        aztToken.mint(address(stakingManager), 1_000_000e18);
+        // Fund the verifier manager so it has funds to be "slashed"
+        aztToken.mint(address(verifierManager), 1_000_000e18);
 
         // --- Populate Verifier Manager Mock ---
         verifierManager.addVerifier(member1);
@@ -472,6 +468,8 @@ contract ArbitrationCouncilTest is Test {
 
         uint256 keeperBalanceBefore = aztToken.balanceOf(keeper);
         uint256 challengerBalanceBefore = aztToken.balanceOf(challenger);
+        // Get the stake amount *before* it gets slashed by resolveDispute()
+        uint256 defendantStake = verifierManager.getVerifierStake(address(repWeightedVerifier));
 
         vm.prank(keeper);
         council.resolveDispute(CLAIM_ID);
@@ -481,7 +479,6 @@ contract ArbitrationCouncilTest is Test {
 
         assertEq(keeperBalanceAfter - keeperBalanceBefore, KEEPER_BOUNTY, "Keeper bounty not paid");
 
-        uint256 defendantStake = verifierManager.getVerifierStake(address(repWeightedVerifier));
         uint256 expectedChallengerBounty = (defendantStake * 10) / 100;
         uint256 expectedChallengerReturn = CHALLENGE_STAKE_AMOUNT + expectedChallengerBounty;
 
