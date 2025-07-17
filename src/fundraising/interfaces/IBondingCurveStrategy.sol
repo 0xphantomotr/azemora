@@ -9,17 +9,17 @@ pragma solidity ^0.8.20;
 interface IBondingCurveStrategy {
     /**
      * @notice Initializes a bonding curve strategy contract.
-     * @param projectToken The address of the newly created, project-specific token.
-     * @param collateralToken The address of the token used to buy the project token (e.g., USDC).
-     * @param projectOwner The address that will own the bonding curve and receive withdrawn funds.
-     * @param strategyInitializationData Abi-encoded data containing the parameters specific to this strategy
+     * @param _projectToken The address of the newly created, project-specific token.
+     * @param _collateralToken The address of the token used to buy the project token (e.g., USDC).
+     * @param _projectOwner The address that will own the bonding curve and receive withdrawn funds.
+     * @param _strategyInitializationData Abi-encoded data containing the parameters specific to this strategy
      * (e.g., slope, team allocation, etc.).
      */
     function initialize(
-        address projectToken,
-        address collateralToken,
-        address projectOwner,
-        bytes calldata strategyInitializationData
+        address _projectToken,
+        address _collateralToken,
+        address _projectOwner,
+        bytes calldata _strategyInitializationData
     ) external;
 
     /**

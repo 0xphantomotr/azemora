@@ -128,6 +128,7 @@ contract DMRVManager is
         _grantRole(MODULE_ADMIN_ROLE, _msgSender());
         _grantRole(REVERSER_ROLE, _msgSender());
 
+        _roles.push(DEFAULT_ADMIN_ROLE);
         _roles.push(PAUSER_ROLE);
         _roles.push(MODULE_ADMIN_ROLE);
         _roles.push(REVERSER_ROLE);
@@ -354,11 +355,9 @@ contract DMRVManager is
      * @return A list of role identifiers held by the account.
      */
     function getRoles(address account) external view returns (bytes32[] memory) {
+        uint256 rolesLength = _roles.length;
         uint256 count = 0;
-        if (hasRole(DEFAULT_ADMIN_ROLE, account)) {
-            count++;
-        }
-        for (uint256 i = 0; i < _roles.length; i++) {
+        for (uint256 i = 0; i < rolesLength; i++) {
             if (hasRole(_roles[i], account)) {
                 count++;
             }
@@ -370,10 +369,7 @@ contract DMRVManager is
 
         bytes32[] memory roles = new bytes32[](count);
         uint256 index = 0;
-        if (hasRole(DEFAULT_ADMIN_ROLE, account)) {
-            roles[index++] = DEFAULT_ADMIN_ROLE;
-        }
-        for (uint256 i = 0; i < _roles.length; i++) {
+        for (uint256 i = 0; i < rolesLength; i++) {
             if (hasRole(_roles[i], account)) {
                 roles[index++] = _roles[i];
                 if (index == count) break;

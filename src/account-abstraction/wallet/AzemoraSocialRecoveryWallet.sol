@@ -70,6 +70,7 @@ contract AzemoraSocialRecoveryWallet is IAccount, Initializable {
         public
         initializer
     {
+        require(_owner != address(0), "owner is the zero address");
         require(_threshold > 0 && _threshold <= _guardians.length, "Invalid threshold");
         entryPoint = _entryPoint;
         owner = _owner;
@@ -192,7 +193,8 @@ contract AzemoraSocialRecoveryWallet is IAccount, Initializable {
     }
 
     function _execute(address dest, uint256 value, bytes calldata func) internal {
-        // slither-disable-next-line arbitrary-send
+        // The wallet is expected to be able to execute multiple calls.
+        // slither-disable-next-line arbitrary-send-eth
         (bool success,) = dest.call{value: value}(func);
         if (!success) {
             assembly {

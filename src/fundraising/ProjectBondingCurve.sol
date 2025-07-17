@@ -203,7 +203,7 @@ contract ProjectBondingCurve is
 
         uint256 currentBalance = collateralToken.balanceOf(address(this));
         uint256 withdrawableAmount = (currentBalance * maxWithdrawalPercentage) / PERCENTAGE_DENOMINATOR;
-        if (withdrawableAmount == 0) revert ProjectBondingCurve__WithdrawalLimitExceeded();
+        if (withdrawableAmount <= 0) revert ProjectBondingCurve__WithdrawalLimitExceeded();
 
         lastWithdrawalTimestamp = block.timestamp;
 
@@ -221,7 +221,7 @@ contract ProjectBondingCurve is
         uint256 vestedAmount = _calculateVestedAmount();
         uint256 claimableAmount = vestedAmount - teamTokensClaimed;
 
-        if (claimableAmount == 0) revert ProjectBondingCurve__NothingToClaim();
+        if (claimableAmount <= 0) revert ProjectBondingCurve__NothingToClaim();
 
         teamTokensClaimed += claimableAmount;
 
@@ -267,9 +267,9 @@ contract ProjectBondingCurve is
         // cost = integral of (slope * s)ds from s1 to s2
         // cost = slope/2 * (s2^2 - s1^2)
         // The result of this formula is a WAD (1e18) scaled value.
-        uint256 costWAD = (slope * ((s2 * s2) - (s1 * s1))) / 2 / WAD;
+        uint256 costWAD = (slope * ((s2 * s2) - (s1 * s1)) * (10 ** collateralDecimals)) / (2 * WAD * WAD);
         // We must scale the WAD value to the collateral token's actual decimals.
-        return (costWAD * (10 ** collateralDecimals)) / WAD;
+        return costWAD;
     }
 
     function _calculateSellProceeds(uint256 amountToSell) internal view returns (uint256) {
@@ -279,9 +279,9 @@ contract ProjectBondingCurve is
         uint256 s2 = s1 - amountToSell;
         // proceeds = integral of (slope * s)ds from s2 to s1
         // proceeds = slope/2 * (s1^2 - s2^2)
-        uint256 proceedsWAD = (slope * ((s1 * s1) - (s2 * s2))) / 2 / WAD;
+        uint256 proceedsWAD = (slope * ((s1 * s1) - (s2 * s2)) * (10 ** collateralDecimals)) / (2 * WAD * WAD);
         // Scale to collateral decimals
-        return (proceedsWAD * (10 ** collateralDecimals)) / WAD;
+        return proceedsWAD;
     }
 
     function _calculateVestedAmount() internal view returns (uint256) {

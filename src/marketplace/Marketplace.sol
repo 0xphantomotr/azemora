@@ -84,6 +84,7 @@ error Marketplace__TransferFailed();
 error Marketplace__ListingNotExpired();
 error Marketplace__AmountTooLarge();
 error Marketplace__PriceTooLarge();
+error Marketplace__PaymentTransferFailed();
 
 /**
  * @title Marketplace
@@ -337,7 +338,7 @@ contract Marketplace is
         uint256 sellerProceeds = totalPrice - fee;
 
         // --- Calculate Fee Split ---
-        uint256 stakingFee = (fee * stakingFeeBps) / 10000;
+        uint256 stakingFee = (totalPrice * protocolFeeBps_ * stakingFeeBps) / (10000 * 10000);
         uint256 treasuryFee = fee - stakingFee;
 
         // --- EFFECTS ---

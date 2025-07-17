@@ -22,6 +22,8 @@ contract TokenPaymaster is IPaymaster, ReentrancyGuard {
     uint256 public feePercentage; // e.g., 5 for a 5% fee
 
     event TokensCharged(address indexed user, uint256 actualGasCost, uint256 tokenCost);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    event FeePercentageUpdated(uint256 newFeePercentage);
 
     modifier onlyOwner() {
         require(msg.sender == owner, "not owner");
@@ -33,14 +35,19 @@ contract TokenPaymaster is IPaymaster, ReentrancyGuard {
         token = IERC20(_token);
         oracle = IPriceOracle(_oracle);
         owner = msg.sender;
+        emit OwnershipTransferred(address(0), msg.sender);
     }
 
     function transferOwnership(address newOwner) public onlyOwner {
+        require(newOwner != address(0), "new owner is the zero address");
+        address oldOwner = owner;
         owner = newOwner;
+        emit OwnershipTransferred(oldOwner, newOwner);
     }
 
     function setFeePercentage(uint256 _feePercentage) external onlyOwner {
         feePercentage = _feePercentage;
+        emit FeePercentageUpdated(_feePercentage);
     }
 
     function _getRequiredTokenAmount(uint256 gasCostInEthWei) internal view returns (uint256) {
@@ -65,9 +72,8 @@ contract TokenPaymaster is IPaymaster, ReentrancyGuard {
             revert("TokenPaymaster: insufficient token allowance");
         }
 
-        // The context only needs to contain enough information to identify the user in postOp.
-        // We no longer pass the token amount here.
-        context = abi.encode(userOp.sender);
+        // Pass sender and maxCost to postOp to ensure the correct user is charged the correct amount.
+        context = abi.encode(userOp.sender, maxCost);
         return (context, 0);
     }
 
@@ -80,12 +86,12 @@ contract TokenPaymaster is IPaymaster, ReentrancyGuard {
         require(msg.sender == address(entryPoint), "Sender not EntryPoint");
         // Only charge the user if the main operation succeeded.
         if (mode == IPaymaster.PostOpMode.opSucceeded && context.length > 0) {
-            (address user) = abi.decode(context, (address));
+            (address user, uint256 maxCost) = abi.decode(context, (address, uint256));
 
-            // Calculate the final token cost based on the *actual* gas used.
             uint256 finalTokenCost = _getRequiredTokenAmount(actualGasCost);
+            require(finalTokenCost <= _getRequiredTokenAmount(maxCost), "TokenPaymaster: insufficient fee");
 
-            // slither-disable-next-line arbitrary-from
+            // slither-disable-next-line arbitrary-send-erc20
             require(token.transferFrom(user, address(this), finalTokenCost), "TokenPaymaster: transfer failed");
             emit TokensCharged(user, actualGasCost, finalTokenCost);
         }

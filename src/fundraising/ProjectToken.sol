@@ -15,12 +15,12 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 contract ProjectToken is ERC20, ERC20Burnable, Ownable {
     /**
      * @dev Sets the name, symbol, and initial owner of the token.
-     * @param name The name of the token.
-     * @param symbol The symbol of the token.
+     * @param name_ The name of the token.
+     * @param symbol_ The symbol of the token.
      * @param initialOwner The address that will be set as the contract owner.
      */
-    constructor(string memory name, string memory symbol, address initialOwner)
-        ERC20(name, symbol)
+    constructor(string memory name_, string memory symbol_, address initialOwner)
+        ERC20(name_, symbol_)
         Ownable(initialOwner)
     {}
 

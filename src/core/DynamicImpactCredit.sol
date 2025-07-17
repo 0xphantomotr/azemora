@@ -75,6 +75,12 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
         _grantRole(BURNER_ROLE(), _msgSender()); // Initially grant to deployer
 
         projectRegistry = IProjectRegistry(projectRegistryAddress);
+
+        _roles.push(DMRV_MANAGER_ROLE());
+        _roles.push(BURNER_ROLE());
+        _roles.push(METADATA_UPDATER_ROLE());
+        _roles.push(PAUSER_ROLE());
+        _roles.push(DEFAULT_ADMIN_ROLE);
     }
 
     /**
@@ -95,10 +101,8 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
         if (!projectRegistry.isProjectActive(projectId)) revert DynamicImpactCredit__ProjectNotActive();
 
         uint256 tokenId = uint256(projectId);
-        _mint(to, tokenId, amount, "");
-
-        // Always update the URI by pushing to the history array
         _credentialCIDs[tokenId].push(credentialCID);
+        _mint(to, tokenId, amount, "");
 
         emit URI(credentialCID, tokenId);
     }
@@ -123,15 +127,23 @@ contract DynamicImpactCredit is ERC1155Upgradeable, AccessControlUpgradeable, UU
             revert DynamicImpactCredit__LengthMismatch();
         }
 
+        uint256[] memory tokenIds = new uint256[](len);
+
         for (uint256 i = 0; i < len; i++) {
-            if (!projectRegistry.isProjectActive(projectIds[i])) {
+            bytes32 projectId = projectIds[i];
+            if (!projectRegistry.isProjectActive(projectId)) {
                 revert DynamicImpactCredit__ProjectNotActive();
             }
-            uint256 tokenId = uint256(projectIds[i]);
-            _mint(to, tokenId, amounts[i], "");
+            uint256 tokenId = uint256(projectId);
+            tokenIds[i] = tokenId;
+
+            // Effect
             _credentialCIDs[tokenId].push(credentialCIDs[i]);
             emit URI(credentialCIDs[i], tokenId);
         }
+
+        // Interaction
+        _mintBatch(to, tokenIds, amounts, "");
     }
 
     /**

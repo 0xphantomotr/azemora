@@ -40,14 +40,19 @@ contract PromotionalPaymaster is IPaymaster {
         uint256 indexed promotionId, uint256 startTime, uint256 endTime, uint256 userTxLimit, uint256 totalTxLimit
     );
     event PromotionDeactivated();
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     constructor(IEntryPoint _entryPoint) {
         entryPoint = _entryPoint;
         owner = msg.sender;
+        emit OwnershipTransferred(address(0), msg.sender);
     }
 
     function transferOwnership(address newOwner) public onlyOwner {
+        require(newOwner != address(0), "new owner is the zero address");
+        address oldOwner = owner;
         owner = newOwner;
+        emit OwnershipTransferred(oldOwner, newOwner);
     }
 
     /**

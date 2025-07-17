@@ -33,7 +33,9 @@ contract AzemoraSocialRecoveryWalletFactory {
         external
         returns (address proxy)
     {
+        require(owner != address(0), "owner is the zero address");
         proxy = Clones.cloneDeterministic(walletImplementation, keccak256(abi.encodePacked(owner, salt)));
+        require(proxy != address(0), "create2 failed");
 
         // Initialize the new proxy wallet with its social recovery settings.
         (bool success,) = proxy.call(

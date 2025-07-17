@@ -16,6 +16,7 @@ error OracleManager__QuorumNotMet(uint256 responses, uint256 required);
 error OracleManager__DeviationExceeded(uint256 value, uint256 median, uint256 maxDeviation);
 error OracleManager__NoResponses();
 error OracleManager__AlreadySet();
+error OracleManager__NoValidReadings();
 
 /**
  * @title OracleManager
@@ -113,8 +114,10 @@ contract OracleManager is IOracleManager, AccessControlEnumerableUpgradeable, UU
                 }
             }
 
+            // slither-disable-next-line unused-return
             try IDePINOracle(oracleAddress).getSensorReading(sensorId) returns (uint256 value, uint256 timestamp) {
                 // A production version would add more robust staleness checks here.
+                // The 'timestamp' variable is intentionally unused in this version.
                 if (value > 0) {
                     responses[responseCount] = value;
                     responseCount++;

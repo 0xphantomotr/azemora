@@ -29,6 +29,7 @@ error ReputationWeightedVerifier__AlreadyFinalized();
 error ReputationWeightedVerifier__InvalidStateForAction();
 error ReputationWeightedVerifier__UnauthorizedCaller();
 error ReputationWeightedVerifier__TransferFailed();
+error ReputationWeightedVerifier__NoBountyToClaim();
 
 enum TaskStatus {
     Pending,
@@ -87,9 +88,10 @@ contract ReputationWeightedVerifier is
 
     mapping(bytes32 => VerificationTask) public tasks;
     mapping(bytes32 => address[]) public taskVoters;
+    mapping(address => uint256) public keeperBounties;
     uint256 public taskCounter;
 
-    uint256[42] private __gap;
+    uint256[41] private __gap;
 
     // --- Events ---
     event TaskCreated(bytes32 indexed taskId, bytes32 indexed projectId, string evidenceURI, uint256 challengeDeadline);
@@ -136,6 +138,16 @@ contract ReputationWeightedVerifier is
         keeperBounty = _bounty;
     }
 
+    function claimKeeperBounty() external nonReentrant {
+        uint256 amount = keeperBounties[msg.sender];
+        if (amount == 0) revert ReputationWeightedVerifier__NoBountyToClaim();
+
+        keeperBounties[msg.sender] = 0;
+
+        (bool success,) = msg.sender.call{value: amount}("");
+        require(success, "ReputationWeightedVerifier__TransferFailed");
+    }
+
     function withdrawFees() external onlyRole(DEFAULT_ADMIN_ROLE) {
         (bool success,) = owner().call{value: address(this).balance}("");
         require(success, "Withdrawal failed");
@@ -169,15 +181,16 @@ contract ReputationWeightedVerifier is
         emit TaskCreated(taskId, projectId, evidenceURI, task.challengeDeadline);
     }
 
-    function challengeVerification(bytes32 taskId) external nonReentrant {
+    function challengeVerification(bytes32 taskId, bytes calldata signature) external nonReentrant {
         VerificationTask storage task = tasks[taskId];
         if (task.status != TaskStatus.Pending) revert ReputationWeightedVerifier__NotPending();
         if (block.timestamp > task.challengeDeadline) revert ReputationWeightedVerifier__ChallengePeriodOver();
 
         task.status = TaskStatus.Challenged;
 
-        // This contract must be approved by the challenger to spend the stake.
-        arbitrationCouncil.createDispute(taskId, msg.sender, address(this));
+        // The challenger is now derived from the signature inside createDispute.
+        bool success = arbitrationCouncil.createDispute(taskId, address(this), signature);
+        require(success, "Dispute creation failed");
 
         emit TaskChallenged(taskId, msg.sender);
     }
@@ -197,8 +210,7 @@ contract ReputationWeightedVerifier is
         task.outcome = true; // Optimistic outcome is true
 
         if (keeperBounty > 0) {
-            (bool success,) = msg.sender.call{value: keeperBounty}("");
-            if (!success) revert ReputationWeightedVerifier__TransferFailed();
+            keeperBounties[msg.sender] += keeperBounty;
             emit KeeperRewarded(msg.sender, keeperBounty);
         }
 

@@ -33,6 +33,7 @@ contract LogarithmicCurve is
     IProjectBonding
 {
     using SafeERC20 for IERC20;
+    using SafeERC20 for ProjectToken;
 
     // --- State Variables ---
     ProjectToken internal _projectToken;
@@ -143,7 +144,7 @@ contract LogarithmicCurve is
         }
 
         collateralToken.safeTransfer(msg.sender, collateralAmount);
-        _projectToken.transfer(msg.sender, projectTokenAmount);
+        _projectToken.safeTransfer(msg.sender, projectTokenAmount);
     }
 
     // --- Internal Math ---

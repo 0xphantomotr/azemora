@@ -33,8 +33,8 @@ contract AzemoraGovernor is
     }
 
     function initialize(
-        IVotes token,
-        TimelockControllerUpgradeable timelock,
+        IVotes _token,
+        TimelockControllerUpgradeable _timelock,
         uint48 _votingDelay,
         uint32 _votingPeriod,
         uint256 _proposalThreshold,
@@ -42,9 +42,9 @@ contract AzemoraGovernor is
     ) public initializer {
         __Governor_init("AzemoraGovernor");
         __GovernorSettings_init(_votingDelay, _votingPeriod, _proposalThreshold);
-        __GovernorVotes_init(token);
+        __GovernorVotes_init(_token);
         __GovernorVotesQuorumFraction_init(_quorumFraction);
-        __GovernorTimelockControl_init(timelock);
+        __GovernorTimelockControl_init(_timelock);
 
         // The deployer is granted the proposer role by default,
         // and the timelock is granted the executor role.

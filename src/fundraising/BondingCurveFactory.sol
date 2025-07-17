@@ -10,6 +10,7 @@ import "./ProjectToken.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./interfaces/IBalancerVault.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 // --- Structs ---
 struct BondingCurveParams {
@@ -38,7 +39,7 @@ error BondingCurveFactory__InvalidSeedAmount();
  * a selected, DAO-approved strategy. It also orchestrates the post-fundraise
  * migration of liquidity to a decentralized exchange.
  */
-contract BondingCurveFactory is Ownable {
+contract BondingCurveFactory is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using SafeERC20 for ProjectToken;
 
@@ -136,11 +137,14 @@ contract BondingCurveFactory is Ownable {
      * @param projectTokenAmountToSeed The amount of project tokens to seed the pool with.
      * This determines the initial price in the AMM.
      */
-    function migrateToAmm(bytes32 projectId, uint256 projectTokenAmountToSeed) external {
+    function migrateToAmm(bytes32 projectId, uint256 projectTokenAmountToSeed) external nonReentrant {
         if (projectTokenAmountToSeed == 0) revert BondingCurveFactory__InvalidSeedAmount();
 
         AmmConfig memory config = ammConfigs[projectId];
         if (!config.enabled) revert BondingCurveFactory__AmmNotEnabled();
+
+        // Effect: Disable future migrations immediately to prevent reentrancy.
+        delete ammConfigs[projectId];
 
         address curveAddress = getBondingCurve[projectId];
         IBondingCurveStrategy curve = IBondingCurveStrategy(curveAddress);
@@ -158,8 +162,6 @@ contract BondingCurveFactory is Ownable {
         // 3. Add liquidity by calling the internal helper function
         _addLiquidityToBalancer(config, projectOwner, collateralToSeed, projectTokenAmountToSeed, curve.projectToken());
 
-        // 4. Disable future migrations and emit event.
-        delete ammConfigs[projectId];
         emit LiquidityMigrated(
             projectId, config.balancerVault, config.poolId, collateralToSeed, projectTokenAmountToSeed
         );
@@ -204,18 +206,19 @@ contract BondingCurveFactory is Ownable {
         uint256 projectTokenAmountToSeed,
         address projectTokenAddress
     ) internal {
-        // Balancer requires assets to be sorted by address.
-        address tokenA = collateralToken < projectTokenAddress ? collateralToken : projectTokenAddress;
-        address tokenB = collateralToken < projectTokenAddress ? projectTokenAddress : collateralToken;
+        // 1. Prepare assets and amounts
+        address collateralAddress = address(collateralToken);
+        address tokenA = collateralAddress < projectTokenAddress ? collateralAddress : projectTokenAddress;
+        address tokenB = collateralAddress < projectTokenAddress ? projectTokenAddress : collateralAddress;
 
-        uint256 amountA = tokenA == collateralToken ? collateralToSeed : projectTokenAmountToSeed;
-        uint256 amountB = tokenB == collateralToken ? collateralToSeed : projectTokenAmountToSeed;
+        uint256 amountA = tokenA == collateralAddress ? collateralToSeed : projectTokenAmountToSeed;
+        uint256 amountB = tokenB == collateralAddress ? collateralToSeed : projectTokenAmountToSeed;
 
-        // Approve the Balancer Vault to spend the tokens held by this factory.
-        IERC20(tokenA).approve(config.balancerVault, amountA);
-        IERC20(tokenB).approve(config.balancerVault, amountB);
+        // 2. Approve the Balancer Vault
+        SafeERC20.forceApprove(IERC20(tokenA), config.balancerVault, amountA);
+        SafeERC20.forceApprove(IERC20(tokenB), config.balancerVault, amountB);
 
-        // Construct the JoinPoolRequest.
+        // 3. Prepare arguments for the join call
         address[] memory assets = new address[](2);
         assets[0] = tokenA;
         assets[1] = tokenB;
@@ -224,6 +227,20 @@ contract BondingCurveFactory is Ownable {
         maxAmountsIn[0] = amountA;
         maxAmountsIn[1] = amountB;
 
+        // 4. Delegate to the helper function to avoid stack depth issues
+        _executeJoinPool(config, projectOwner, assets, maxAmountsIn);
+    }
+
+    /**
+     * @dev Executes the call to Balancer's joinPool.
+     * @dev Isolated in its own function to prevent "Stack too deep" errors.
+     */
+    function _executeJoinPool(
+        AmmConfig memory config,
+        address projectOwner,
+        address[] memory assets,
+        uint256[] memory maxAmountsIn
+    ) internal {
         // For initial liquidity, the userData is abi.encode(0, amountsIn). `0` is the `INIT` action.
         bytes memory userData = abi.encode(uint256(0), maxAmountsIn);
 

@@ -29,7 +29,9 @@ contract AzemoraSmartWalletFactory {
      * @return proxy The newly created wallet contract instance.
      */
     function createAccount(address owner, uint256 salt) external returns (address proxy) {
+        require(owner != address(0), "owner is the zero address");
         proxy = Clones.cloneDeterministic(walletImplementation, keccak256(abi.encodePacked(owner, salt)));
+        require(proxy != address(0), "create2 failed");
         // To initialize, we need to make a call to the new proxy.
         // The AzemoraSmartWallet should have an init(address owner) function.
         // For this example, let's assume AzemoraSmartWallet's constructor can be used for initialization

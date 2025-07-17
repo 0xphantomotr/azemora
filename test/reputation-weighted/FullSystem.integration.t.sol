@@ -20,6 +20,7 @@ import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 import {MockReputationManager} from "../mocks/MockReputationManager.sol";
 import {VRFCoordinatorV2Mock} from "@chainlink/contracts/src/v0.8/vrf/mocks/VRFCoordinatorV2Mock.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 contract FullSystemIntegrationTest is Test {
     // --- Test Data Struct ---
@@ -69,6 +70,8 @@ contract FullSystemIntegrationTest is Test {
     address internal challenger;
     address internal treasury;
 
+    uint256 internal challengerPrivateKey = 0x789;
+
     function setUp() public {
         // 1. Create Users
         admin = makeAddr("admin");
@@ -76,7 +79,7 @@ contract FullSystemIntegrationTest is Test {
         verifier1 = makeAddr("verifier1");
         verifier2_arbitrator = makeAddr("verifier2_arbitrator");
         verifier3_arbitrator = makeAddr("verifier3_arbitrator");
-        challenger = makeAddr("challenger");
+        challenger = vm.addr(challengerPrivateKey);
         treasury = makeAddr("treasury");
 
         vm.startPrank(admin);
@@ -221,7 +224,17 @@ contract FullSystemIntegrationTest is Test {
         // 2. A challenger starts a dispute.
         vm.startPrank(challenger);
         aztToken.approve(address(arbitrationCouncil), CHALLENGE_STAKE_AMOUNT);
-        repWeightedVerifier.challengeVerification(data.taskId);
+
+        bytes32 domainSeparator = arbitrationCouncil.domainSeparator();
+        bytes32 digest = keccak256(
+            abi.encodePacked(
+                "\x19\x01", domainSeparator, keccak256(abi.encode(data.taskId, address(repWeightedVerifier)))
+            )
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(challengerPrivateKey, digest);
+        bytes memory signature = abi.encodePacked(r, s, v);
+
+        repWeightedVerifier.challengeVerification(data.taskId, signature);
         vm.stopPrank();
 
         // 3. The ArbitrationCouncil uses VRF to select a jury.

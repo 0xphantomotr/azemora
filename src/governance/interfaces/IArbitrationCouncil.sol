@@ -10,8 +10,8 @@ interface IArbitrationCouncil {
     /**
      * @notice Creates a new dispute.
      * @param claimId The unique ID of the verification claim being challenged.
-     * @param challenger The address initiating the challenge.
      * @param defendant The address of the entity whose decision is being challenged.
+     * @param signature A signature from the challenger proving their intent to challenge.
      */
-    function createDispute(bytes32 claimId, address challenger, address defendant) external returns (bool);
+    function createDispute(bytes32 claimId, address defendant, bytes calldata signature) external returns (bool);
 }

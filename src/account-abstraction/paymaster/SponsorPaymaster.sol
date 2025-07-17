@@ -25,13 +25,19 @@ contract SponsorPaymaster is IPaymaster {
         _;
     }
 
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
     constructor(IEntryPoint _entryPoint) {
         entryPoint = _entryPoint;
         owner = msg.sender;
+        emit OwnershipTransferred(address(0), msg.sender);
     }
 
     function transferOwnership(address newOwner) public onlyOwner {
+        require(newOwner != address(0), "new owner is the zero address");
+        address oldOwner = owner;
         owner = newOwner;
+        emit OwnershipTransferred(oldOwner, newOwner);
     }
 
     function setActionSponsorship(address contractAddress, bytes4 functionSelector, bool isSponsored)

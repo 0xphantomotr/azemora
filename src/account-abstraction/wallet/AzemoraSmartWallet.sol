@@ -32,6 +32,7 @@ contract AzemoraSmartWallet is IAccount, Initializable {
      * @param _owner The address of the wallet owner.
      */
     function initialize(IEntryPoint _entryPoint, address _owner) public initializer {
+        require(_owner != address(0), "owner is the zero address");
         entryPoint = _entryPoint;
         owner = _owner;
     }
@@ -76,7 +77,7 @@ contract AzemoraSmartWallet is IAccount, Initializable {
     }
 
     function _execute(address dest, uint256 value, bytes calldata func) internal {
-        // slither-disable-next-line arbitrary-send
+        // slither-disable-next-line arbitrary-send-eth
         (bool success,) = dest.call{value: value}(func);
         if (!success) {
             assembly {

@@ -59,12 +59,12 @@ contract DeviceRegistry is
 
     /**
      * @notice Initializes the contract, setting up ERC721 and AccessControl.
-     * @param name The name of the NFT collection (e.g., "Azemora Trusted Device").
-     * @param symbol The symbol of the NFT collection (e.g., "AZD").
+     * @param _name The name of the NFT collection (e.g., "Azemora Trusted Device").
+     * @param _symbol The symbol of the NFT collection (e.g., "AZD").
      * @param initialAdmin The address to grant the DEFAULT_ADMIN_ROLE to.
      */
-    function initialize(string calldata name, string calldata symbol, address initialAdmin) public initializer {
-        __ERC721_init(name, symbol);
+    function initialize(string calldata _name, string calldata _symbol, address initialAdmin) public initializer {
+        __ERC721_init(_name, _symbol);
         __ERC721Enumerable_init();
         __AccessControlEnumerable_init();
         __UUPSUpgradeable_init();
@@ -97,8 +97,11 @@ contract DeviceRegistry is
         uint256 tokenId = _nextTokenId;
         _nextTokenId++;
 
-        _safeMint(initialOwner, tokenId);
+        // Effect
         _deviceToTokenId[deviceId] = tokenId;
+
+        // Interaction
+        _safeMint(initialOwner, tokenId);
 
         emit DeviceRegistered(deviceId, tokenId, initialOwner);
         return tokenId;

@@ -37,6 +37,7 @@ contract ExponentialCurve is
     IProjectBonding
 {
     using SafeERC20 for IERC20;
+    using SafeERC20 for ProjectToken;
 
     // --- State Variables ---
 
@@ -188,11 +189,11 @@ contract ExponentialCurve is
         uint256 vestedAmount = _calculateVestedAmount();
         uint256 claimableAmount = vestedAmount - teamTokensClaimed;
 
-        if (claimableAmount == 0) revert ExponentialCurve__NothingToClaim();
+        if (claimableAmount <= 0) revert ExponentialCurve__NothingToClaim();
 
         teamTokensClaimed += claimableAmount;
 
-        _projectToken.transfer(owner(), claimableAmount);
+        _projectToken.safeTransfer(owner(), claimableAmount);
         return claimableAmount;
     }
 
@@ -217,7 +218,7 @@ contract ExponentialCurve is
         }
 
         collateralToken.safeTransfer(msg.sender, collateralAmount);
-        _projectToken.transfer(msg.sender, projectTokenAmount);
+        _projectToken.safeTransfer(msg.sender, projectTokenAmount);
     }
 
     // --- Internal Math Functions ---

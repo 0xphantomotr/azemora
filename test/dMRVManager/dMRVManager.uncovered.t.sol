@@ -19,7 +19,6 @@ contract DMRVManagerUncovered is Test {
     MethodologyRegistry methodologyRegistry;
 
     address admin = address(0xA11CE);
-    address user = address(0xDEADBEEF);
     address projectOwner = address(0x044E);
 
     bytes32 public constant MOCK_MODULE_TYPE = keccak256("mock");
@@ -68,6 +67,7 @@ contract DMRVManagerUncovered is Test {
         // --- Role Setup ---
         credit.grantRole(credit.DMRV_MANAGER_ROLE(), address(dMRVManager));
         credit.grantRole(credit.METADATA_UPDATER_ROLE(), address(dMRVManager));
+        credit.grantRole(credit.BURNER_ROLE(), address(dMRVManager));
         registry.grantRole(registry.VERIFIER_ROLE(), admin);
         methodologyRegistry.grantRole(methodologyRegistry.DEFAULT_ADMIN_ROLE(), admin);
         methodologyRegistry.grantRole(methodologyRegistry.METHODOLOGY_ADMIN_ROLE(), admin);
@@ -97,7 +97,7 @@ contract DMRVManagerUncovered is Test {
 
         bytes32 claimId = keccak256("claim-double-fulfill");
         uint256 requestedAmount = 100e18;
-        vm.prank(user);
+        vm.prank(projectOwner);
         dMRVManager.requestVerification(projectId, claimId, "ipfs://evidence.json", requestedAmount, MOCK_MODULE_TYPE);
         IVerificationData.VerificationResult memory result = IVerificationData.VerificationResult({
             quantitativeOutcome: 100,
@@ -127,7 +127,7 @@ contract DMRVManagerUncovered is Test {
         uint256 requestedAmount = 100e18;
 
         // Action
-        vm.prank(user);
+        vm.prank(projectOwner);
         dMRVManager.requestVerification(projectId, claimId, "ipfs://evidence.json", requestedAmount, MOCK_MODULE_TYPE);
 
         // Assert
@@ -147,11 +147,12 @@ contract DMRVManagerUncovered is Test {
     }
 
     function test_Pause_RevertsForNonPauser() public {
-        vm.startPrank(user); // Non-pauser
+        address nonPauser = makeAddr("non-pauser");
+        vm.startPrank(nonPauser); // Non-pauser
         bytes32 pauserRole = dMRVManager.PAUSER_ROLE();
         vm.expectRevert(
             abi.encodeWithSelector(
-                bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)")), user, pauserRole
+                bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)")), nonPauser, pauserRole
             )
         );
         dMRVManager.pause();
@@ -165,7 +166,7 @@ contract DMRVManagerUncovered is Test {
         bytes4 expectedRevert = bytes4(keccak256("EnforcedPause()"));
 
         // Test requestVerification
-        vm.prank(user);
+        vm.prank(projectOwner);
         vm.expectRevert(expectedRevert);
         uint256 requestedAmount = 100e18;
         dMRVManager.requestVerification(projectId, keccak256("c1"), "uri", requestedAmount, MOCK_MODULE_TYPE);
@@ -182,7 +183,7 @@ contract DMRVManagerUncovered is Test {
         // Admin gets DEFAULT_ADMIN_ROLE, PAUSER_ROLE, REVERSER_ROLE, and MODULE_ADMIN_ROLE
         assertEq(roles.length, 4, "Admin should have 4 roles");
 
-        bytes32[] memory emptyRoles = dMRVManager.getRoles(user);
+        bytes32[] memory emptyRoles = dMRVManager.getRoles(projectOwner);
         assertEq(emptyRoles.length, 0);
     }
 

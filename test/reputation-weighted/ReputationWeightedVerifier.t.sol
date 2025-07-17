@@ -25,17 +25,9 @@ import {IVerificationData} from "../../src/core/interfaces/IVerificationData.sol
 import {MockReputationManager} from "../mocks/MockReputationManager.sol";
 
 // --- Mock for ArbitrationCouncil ---
+// A simple mock that only needs to implement the interface for vm.expectCall to work.
 contract MockArbitrationCouncil is IArbitrationCouncil {
-    bytes32 public lastClaimId;
-    address public lastChallenger;
-    address public lastDefendant;
-    bool public wasCalled;
-
-    function createDispute(bytes32 claimId, address challenger, address defendant) external returns (bool) {
-        lastClaimId = claimId;
-        lastChallenger = challenger;
-        lastDefendant = defendant; // The verifier module itself is the defendant
-        wasCalled = true;
+    function createDispute(bytes32, address, bytes calldata) external override returns (bool) {
         return true;
     }
 }
@@ -43,6 +35,7 @@ contract MockArbitrationCouncil is IArbitrationCouncil {
 contract ReputationWeightedVerifierTest is Test {
     // --- Events to mirror for testing ---
     event TaskFinalized(bytes32 indexed taskId, bool finalOutcome, uint256 quantitativeOutcome);
+    event TaskChallenged(bytes32 indexed taskId, address indexed challenger);
 
     // --- Constants ---
     uint256 internal constant VOTING_PERIOD = 3 days;
@@ -52,7 +45,7 @@ contract ReputationWeightedVerifierTest is Test {
     uint256 internal constant KEEPER_BOUNTY = 1 ether;
 
     // --- State ---
-    ReputationWeightedVerifier internal verifierModule;
+    ReputationWeightedVerifier internal verifier;
     VerifierManager internal verifierManager;
     DMRVManager internal dMRVManager;
     MockReputationManager internal reputationManager;
@@ -60,7 +53,7 @@ contract ReputationWeightedVerifierTest is Test {
     MockERC20 internal aztToken;
     ProjectRegistry internal projectRegistry;
     DynamicImpactCredit internal creditContract;
-    MockArbitrationCouncil internal mockArbitrationCouncil;
+    MockArbitrationCouncil internal arbitrationCouncil;
 
     // --- Users ---
     address internal admin;
@@ -69,19 +62,28 @@ contract ReputationWeightedVerifierTest is Test {
     address internal challenger;
     address internal treasury;
     address internal keeper;
+    address internal user;
 
     bytes32 internal projectId = keccak256("p1");
     bytes32 internal claimId = keccak256("c1");
     bytes32 internal constant MODULE_TYPE = keccak256("REPUTATION_WEIGHTED_V1");
+
+    // Keys for signing
+    uint256 internal challengerPrivateKey = 0x456;
+
+    bytes32 internal constant PROJECT_ID = keccak256("project_1");
+    bytes32 internal constant CLAIM_ID = keccak256("claim_1");
+    bytes32 internal constant TASK_ID = keccak256(abi.encodePacked(PROJECT_ID, CLAIM_ID, uint256(0)));
 
     function setUp() public {
         // --- 1. Set up users ---
         admin = makeAddr("admin");
         verifier1 = makeAddr("v1");
         verifier2 = makeAddr("v2");
-        challenger = makeAddr("challenger");
+        challenger = vm.addr(challengerPrivateKey);
         treasury = makeAddr("treasury");
         keeper = makeAddr("keeper");
+        user = makeAddr("user");
 
         vm.startPrank(admin);
 
@@ -108,7 +110,7 @@ contract ReputationWeightedVerifierTest is Test {
 
         // --- 3. Deploy Managers & Mocks ---
         reputationManager = new MockReputationManager();
-        mockArbitrationCouncil = new MockArbitrationCouncil();
+        arbitrationCouncil = new MockArbitrationCouncil();
 
         verifierManager = VerifierManager(
             address(
@@ -118,7 +120,7 @@ contract ReputationWeightedVerifierTest is Test {
                         VerifierManager.initialize,
                         (
                             admin, // admin
-                            address(mockArbitrationCouncil), // arbitration council
+                            address(arbitrationCouncil), // arbitration council
                             treasury,
                             address(aztToken),
                             address(reputationManager),
@@ -144,7 +146,7 @@ contract ReputationWeightedVerifierTest is Test {
         );
 
         // --- 4. Deploy the main module under test ---
-        verifierModule = ReputationWeightedVerifier(
+        verifier = ReputationWeightedVerifier(
             payable(
                 address(
                     new ERC1967Proxy(
@@ -155,7 +157,7 @@ contract ReputationWeightedVerifierTest is Test {
                                 admin,
                                 address(verifierManager),
                                 address(dMRVManager),
-                                address(mockArbitrationCouncil),
+                                address(arbitrationCouncil),
                                 VOTING_PERIOD,
                                 CHALLENGE_PERIOD,
                                 APPROVAL_THRESHOLD_BPS
@@ -167,17 +169,17 @@ contract ReputationWeightedVerifierTest is Test {
         );
 
         // --- 5. Configure bounty and fund the contract ---
-        verifierModule.setKeeperBounty(KEEPER_BOUNTY);
-        vm.deal(address(verifierModule), 5 ether); // Fund with 5 ETH
+        verifier.setKeeperBounty(KEEPER_BOUNTY);
+        vm.deal(address(verifier), 5 ether); // Fund with 5 ETH
 
         // --- 6. Grant all necessary roles ---
         creditContract.grantRole(creditContract.DMRV_MANAGER_ROLE(), address(dMRVManager));
         creditContract.grantRole(creditContract.BURNER_ROLE(), address(dMRVManager));
-        dMRVManager.grantRole(dMRVManager.REVERSER_ROLE(), address(verifierModule));
-        verifierModule.grantRole(verifierModule.ARBITRATION_COUNCIL_ROLE(), address(mockArbitrationCouncil));
-        verifierManager.grantRole(verifierManager.SLASHER_ROLE(), address(verifierModule));
+        dMRVManager.grantRole(dMRVManager.REVERSER_ROLE(), address(verifier));
+        verifier.grantRole(verifier.ARBITRATION_COUNCIL_ROLE(), address(arbitrationCouncil));
+        verifierManager.grantRole(verifierManager.SLASHER_ROLE(), address(verifier));
 
-        methodologyRegistry.addMethodology(MODULE_TYPE, address(verifierModule), "ipfs://", bytes32(0));
+        methodologyRegistry.addMethodology(MODULE_TYPE, address(verifier), "ipfs://", bytes32(0));
         methodologyRegistry.approveMethodology(MODULE_TYPE);
         dMRVManager.addVerifierModule(MODULE_TYPE);
         projectRegistry.registerProject(projectId, "ipfs://project");
@@ -205,17 +207,26 @@ contract ReputationWeightedVerifierTest is Test {
     }
 
     function _startTask() internal returns (bytes32 taskId) {
-        // We must start the task via the dMRVManager to correctly simulate the flow.
-        // This ensures the dMRVManager has a record of the pending claim.
-        // Bypassing it and calling the verifierModule directly (as before) causes
-        // the dMRVManager to revert on fulfillment because it has no record of the claim.
-        vm.prank(admin); // Any user can request verification
-        uint256 requestedAmount = 100e18; // Standard request for tests
+        vm.prank(admin);
+        uint256 requestedAmount = 100e18;
         taskId = dMRVManager.requestVerification(projectId, claimId, "ipfs://evidence", requestedAmount, MODULE_TYPE);
     }
 
+    function _getChallengeSignature(bytes32 taskId, address verifierModule, uint256 privateKey)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        // For the purpose of testing the verifier, we only need to pass a correctly encoded signature.
+        // The actual cryptographic validity is tested in the ArbitrationCouncil tests.
+        // We are creating a dummy signature here.
+        bytes32 digest = keccak256(abi.encodePacked(taskId, verifierModule));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
     /*//////////////////////////////////////////////////////////////
-                           NEW OPTIMISTIC FLOW TESTS
+                           OPTIMISTIC FLOW TESTS
     //////////////////////////////////////////////////////////////*/
 
     function test_flow_optimisticHappyPath() public {
@@ -235,11 +246,10 @@ contract ReputationWeightedVerifierTest is Test {
             address(dMRVManager), abi.encodeCall(dMRVManager.fulfillVerification, (projectId, claimId, expectedResult))
         );
 
-        // The event emission is tested in the new bounty test. We can remove this check for robustness.
         vm.prank(keeper);
-        verifierModule.finalizeVerification(taskId);
+        verifier.finalizeVerification(taskId);
 
-        TaskStatus finalStatus = verifierModule.getTaskStatus(taskId);
+        TaskStatus finalStatus = verifier.getTaskStatus(taskId);
         assertEq(uint256(finalStatus), uint256(TaskStatus.Finalized));
     }
 
@@ -248,23 +258,20 @@ contract ReputationWeightedVerifierTest is Test {
 
         // Immediately challenge the optimistic assumption.
         vm.startPrank(challenger);
-        aztToken.approve(address(mockArbitrationCouncil), CHALLENGE_STAKE);
+        aztToken.approve(address(arbitrationCouncil), CHALLENGE_STAKE);
+
+        bytes memory signature = _getChallengeSignature(taskId, address(verifier), challengerPrivateKey);
 
         // We expect the module to call the arbitration council to create a dispute.
         vm.expectCall(
-            address(mockArbitrationCouncil),
-            abi.encodeWithSelector(
-                mockArbitrationCouncil.createDispute.selector, taskId, challenger, address(verifierModule)
-            )
+            address(arbitrationCouncil),
+            abi.encodeWithSelector(IArbitrationCouncil.createDispute.selector, taskId, address(verifier), signature)
         );
-        verifierModule.challengeVerification(taskId);
+        verifier.challengeVerification(taskId, signature);
         vm.stopPrank();
 
         // Assert the state is now 'Challenged'.
-        assertTrue(mockArbitrationCouncil.wasCalled());
-        assertEq(mockArbitrationCouncil.lastClaimId(), taskId);
-
-        TaskStatus status = verifierModule.getTaskStatus(taskId);
+        TaskStatus status = verifier.getTaskStatus(taskId);
         assertEq(uint256(status), uint256(TaskStatus.Challenged));
     }
 
@@ -273,7 +280,7 @@ contract ReputationWeightedVerifierTest is Test {
 
         // We are still within the challenge period.
         vm.expectRevert(ReputationWeightedVerifier__ChallengePeriodNotOver.selector);
-        verifierModule.finalizeVerification(taskId);
+        verifier.finalizeVerification(taskId);
     }
 
     function test_challengeVerification_RevertsIfChallengePeriodOver() public {
@@ -283,8 +290,9 @@ contract ReputationWeightedVerifierTest is Test {
         vm.warp(block.timestamp + CHALLENGE_PERIOD + 1);
 
         vm.prank(challenger);
+        bytes memory signature = _getChallengeSignature(taskId, address(verifier), challengerPrivateKey);
         vm.expectRevert(ReputationWeightedVerifier__ChallengePeriodOver.selector);
-        verifierModule.challengeVerification(taskId);
+        verifier.challengeVerification(taskId, signature);
     }
 
     function test_processArbitrationResult_succeeds() public {
@@ -292,8 +300,9 @@ contract ReputationWeightedVerifierTest is Test {
 
         // 1. Challenge the task to move it to the correct state
         vm.startPrank(challenger);
-        aztToken.approve(address(mockArbitrationCouncil), CHALLENGE_STAKE);
-        verifierModule.challengeVerification(taskId);
+        aztToken.approve(address(arbitrationCouncil), CHALLENGE_STAKE);
+        bytes memory signature = _getChallengeSignature(taskId, address(verifier), challengerPrivateKey);
+        verifier.challengeVerification(taskId, signature);
         vm.stopPrank();
 
         // 2. Simulate the call from the ArbitrationCouncil
@@ -309,11 +318,11 @@ contract ReputationWeightedVerifierTest is Test {
             address(dMRVManager), abi.encodeCall(dMRVManager.fulfillVerification, (projectId, claimId, expectedResult))
         );
 
-        vm.prank(address(mockArbitrationCouncil)); // Must be called by the council
-        verifierModule.processArbitrationResult(taskId, finalAmount);
+        vm.prank(address(arbitrationCouncil)); // Must be called by the council
+        verifier.processArbitrationResult(taskId, finalAmount);
 
         // 3. Assert final state
-        TaskStatus status = verifierModule.getTaskStatus(taskId);
+        TaskStatus status = verifier.getTaskStatus(taskId);
         assertEq(uint256(status), uint256(TaskStatus.Finalized));
     }
 
@@ -322,33 +331,36 @@ contract ReputationWeightedVerifierTest is Test {
 
         // Challenge to put in correct state
         vm.startPrank(challenger);
-        aztToken.approve(address(mockArbitrationCouncil), CHALLENGE_STAKE);
-        verifierModule.challengeVerification(taskId);
+        aztToken.approve(address(arbitrationCouncil), CHALLENGE_STAKE);
+        bytes memory signature = _getChallengeSignature(taskId, address(verifier), challengerPrivateKey);
+        verifier.challengeVerification(taskId, signature);
         vm.stopPrank();
 
         // Attempt to call from an unauthorized address
         vm.prank(admin);
         vm.expectRevert(ReputationWeightedVerifier__UnauthorizedCaller.selector);
-        verifierModule.processArbitrationResult(taskId, 50);
+        verifier.processArbitrationResult(taskId, 50);
     }
 
     function test_revert_if_startVerificationTask_from_unauthorized_caller() public {
         vm.prank(admin); // Use any address that is not the dMRVManager
         vm.expectRevert("Only dMRVManager can start tasks");
-        verifierModule.startVerificationTask(projectId, claimId, "ipfs://evidence");
+        verifier.startVerificationTask(projectId, claimId, "ipfs://evidence");
     }
 
-    function test_finalizeVerification_paysKeeperBounty() public {
+    function test_finalizeVerification_creditsKeeperBounty() public {
         bytes32 taskId = _startTask();
         vm.warp(block.timestamp + CHALLENGE_PERIOD + 1);
 
-        uint256 keeperBalanceBefore = keeper.balance;
+        uint256 bountyBalanceBefore = verifier.keeperBounties(keeper);
 
         vm.prank(keeper);
-        verifierModule.finalizeVerification(taskId);
+        verifier.finalizeVerification(taskId);
 
-        uint256 keeperBalanceAfter = keeper.balance;
+        uint256 bountyBalanceAfter = verifier.keeperBounties(keeper);
 
-        assertEq(keeperBalanceAfter - keeperBalanceBefore, KEEPER_BOUNTY, "Keeper did not receive correct ETH bounty");
+        assertEq(
+            bountyBalanceAfter - bountyBalanceBefore, KEEPER_BOUNTY, "Keeper did not receive correct bounty credit"
+        );
     }
 }

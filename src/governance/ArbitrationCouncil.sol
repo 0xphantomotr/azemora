@@ -10,6 +10,7 @@ import "../reputation-weighted/interfaces/IReputationWeightedVerifier.sol";
 import "../reputation-weighted/interfaces/IVerifierManager.sol";
 import "@chainlink/contracts/src/v0.8/vrf/interfaces/VRFCoordinatorV2Interface.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 // --- Interfaces ---
 // IStakingManager interface removed
@@ -71,6 +72,10 @@ contract ArbitrationCouncil is
     ReentrancyGuardUpgradeable,
     VRFConsumerBaseV2Upgradeable
 {
+    // --- EIP-712 ---
+    bytes32 private DOMAIN_SEPARATOR;
+    uint256 private chainId;
+
     // --- Roles ---
     bytes32 public constant COUNCIL_ADMIN_ROLE = keccak256("COUNCIL_ADMIN_ROLE");
     bytes32 public constant VERIFIER_CONTRACT_ROLE = keccak256("VERIFIER_CONTRACT_ROLE");
@@ -158,6 +163,7 @@ contract ArbitrationCouncil is
         __UUPSUpgradeable_init();
         __ReentrancyGuard_init();
         _initializeVRF(_vrfCoordinator);
+        _setDomainSeparator();
 
         _grantRole(DEFAULT_ADMIN_ROLE, initialAdmin);
         _grantRole(COUNCIL_ADMIN_ROLE, initialAdmin);
@@ -216,15 +222,27 @@ contract ArbitrationCouncil is
         emit MerkleRootSet(claimId, merkleRoot);
     }
 
-    function createDispute(bytes32 claimId, address challenger, address defendant)
+    function createDispute(bytes32 claimId, address defendant, bytes calldata signature)
         external
         onlyRole(VERIFIER_CONTRACT_ROLE)
         nonReentrant
         returns (bool)
     {
+        // --- Signature Verification ---
+        // The challenger address is now securely recovered from the signature itself.
+        bytes32 digest =
+            keccak256(abi.encodePacked("\x19\x01", domainSeparator(), keccak256(abi.encode(claimId, defendant))));
+        address challenger = ECDSA.recover(digest, signature);
+
         if (challenger == address(0) || defendant == address(0)) revert ArbitrationCouncil__ZeroAddress();
         if (disputes[claimId].status != DisputeStatus.None) revert ArbitrationCouncil__DisputeAlreadyExists(claimId);
 
+        // --- Checks-Effects-Interactions Pattern ---
+        // Effects:
+        // Set status to AwaitingRandomness immediately to prevent reentrancy for this claimId.
+        disputes[claimId].status = DisputeStatus.AwaitingRandomness;
+
+        // Interactions:
         if (azeToken.balanceOf(challenger) < challengeStakeAmount) revert ArbitrationCouncil__InsufficientStake();
         if (azeToken.allowance(challenger, address(this)) < challengeStakeAmount) {
             revert ArbitrationCouncil__InsufficientStake();
@@ -238,9 +256,6 @@ contract ArbitrationCouncil is
         );
 
         vrfRequests[requestId] = VrfRequest({claimId: claimId, challenger: challenger, defendant: defendant});
-
-        Dispute storage dispute = disputes[claimId];
-        dispute.status = DisputeStatus.AwaitingRandomness;
 
         emit DisputeCreated(claimId, challenger, defendant, requestId);
         return true;
@@ -461,6 +476,35 @@ contract ArbitrationCouncil is
             }
         }
         return false;
+    }
+
+    function _setDomainSeparator() private {
+        chainId = block.chainid;
+        DOMAIN_SEPARATOR = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(bytes("ArbitrationCouncil")),
+                keccak256(bytes("1")),
+                block.chainid,
+                address(this)
+            )
+        );
+    }
+
+    function domainSeparator() public view returns (bytes32) {
+        return block.chainid == chainId ? DOMAIN_SEPARATOR : _calculateDomainSeparator();
+    }
+
+    function _calculateDomainSeparator() private view returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(bytes("ArbitrationCouncil")),
+                keccak256(bytes("1")),
+                block.chainid,
+                address(this)
+            )
+        );
     }
 
     /* ---------- upgrade auth ---------- */

@@ -141,8 +141,8 @@ contract QuestManager is Initializable, AccessControlUpgradeable, UUPSUpgradeabl
         if (_quests[questId].id == 0) revert QuestManager__QuestNotFound();
         if (questCompleted[questId][user]) revert QuestManager__QuestAlreadyCompleted();
 
-        _grantReward(user, _quests[questId]);
         questCompleted[questId][user] = true;
+        _grantReward(user, _quests[questId]);
 
         emit AdminQuestCompletion(user, questId);
     }
@@ -184,8 +184,8 @@ contract QuestManager is Initializable, AccessControlUpgradeable, UUPSUpgradeabl
         bool verified = abi.decode(result, (bool));
         if (!verified) revert QuestManager__VerificationFailed();
 
-        _grantReward(_msgSender(), quest);
         questCompleted[questId][_msgSender()] = true;
+        _grantReward(_msgSender(), quest);
 
         emit QuestRewardClaimed(_msgSender(), questId);
     }

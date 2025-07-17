@@ -147,7 +147,10 @@ contract StakingManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
     }
 
     function stake(uint256 amount) external nonReentrant updateReward(msg.sender) {
-        _stake(msg.sender, amount);
+        _applyStakeEffects(msg.sender, amount);
+        if (!stakingToken.transferFrom(msg.sender, address(this), amount)) {
+            revert StakingManager__TransferFailed();
+        }
     }
 
     function stakeWithPermit(uint256 amount, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
@@ -155,17 +158,20 @@ contract StakingManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
         nonReentrant
         updateReward(msg.sender)
     {
+        // --- Effects ---
+        _applyStakeEffects(msg.sender, amount);
+
+        // --- Interactions ---
         IPermit(address(stakingToken)).permit(msg.sender, address(this), amount, deadline, v, r, s);
-        _stake(msg.sender, amount);
-    }
-
-    function _stake(address staker, uint256 amount) private {
-        // Share calculation must happen BEFORE the transfer changes the contract's balance
-        uint256 sharesToMint = tokensToShares(amount);
-
-        if (!stakingToken.transferFrom(staker, address(this), amount)) {
+        if (!stakingToken.transferFrom(msg.sender, address(this), amount)) {
             revert StakingManager__TransferFailed();
         }
+    }
+
+    function _applyStakeEffects(address staker, uint256 amount) private {
+        // Share calculation must happen BEFORE the transfer changes the contract's balance
+        uint256 sharesToMint = tokensToShares(amount);
+        if (sharesToMint == 0) revert StakingManager__ZeroAmount();
 
         totalStaked += amount;
         totalShares += sharesToMint;
@@ -190,28 +196,27 @@ contract StakingManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
         if (sharesToUnstake == 0) revert StakingManager__ZeroAmount();
         if (sharesOf[msg.sender] < sharesToUnstake) revert StakingManager__InsufficientStakedAmount();
 
-        // --- Auto-claim rewards ---
+        // --- Effects first: Update all state before external calls ---
         uint256 reward = rewards[msg.sender];
-        if (reward > 0) {
-            rewards[msg.sender] = 0;
-            if (!stakingToken.transfer(msg.sender, reward)) {
-                revert StakingManager__TransferFailed();
-            }
-            emit RewardPaid(msg.sender, reward);
-        }
-
-        // --- Snapshot the token value BEFORE reducing shares ---
         uint256 tokensToWithdraw = sharesToTokens(sharesToUnstake);
 
+        rewards[msg.sender] = 0;
         totalStaked -= tokensToWithdraw;
-
-        // --- Update share balances ---
         sharesOf[msg.sender] -= sharesToUnstake;
         totalShares -= sharesToUnstake;
-
-        // --- Store the final token amount for withdrawal ---
         unstakeRequests[msg.sender].amount += tokensToWithdraw;
         unstakeRequests[msg.sender].releaseTime = block.timestamp + unstakingCooldown;
+
+        // --- Interactions: Now transfer funds ---
+        if (reward > 0) {
+            if (!stakingToken.transfer(msg.sender, reward)) {
+                // If reward transfer fails, we don't revert the unstake.
+                // Instead, we put the rewards back. The user can try claiming again later.
+                rewards[msg.sender] = reward;
+            } else {
+                emit RewardPaid(msg.sender, reward);
+            }
+        }
 
         emit UnstakeInitiated(msg.sender, sharesToUnstake, unstakeRequests[msg.sender].releaseTime);
     }
@@ -275,27 +280,30 @@ contract StakingManager is Initializable, AccessControlUpgradeable, UUPSUpgradea
 
     function notifyRewardAmount(uint256 reward, uint256 duration)
         external
+        nonReentrant
         onlyRole(REWARD_ADMIN_ROLE)
         updateReward(address(0))
     {
         if (duration == 0) revert StakingManager__InvalidDuration();
-
-        if (block.timestamp >= periodFinish) {
-            rewardRate = reward / duration;
+        if (reward == 0) {
+            rewardRate = 0;
         } else {
-            uint256 remaining = periodFinish - block.timestamp;
-            uint256 leftover = remaining * rewardRate;
-            rewardRate = (reward + leftover) / duration;
+            rewardRate = reward / duration;
         }
 
-        if (!stakingToken.transferFrom(msg.sender, address(this), reward)) {
-            revert StakingManager__TransferFailed();
-        }
-
+        // Effects
         lastUpdateTime = block.timestamp;
         periodFinish = block.timestamp + duration;
-        emit RewardAdded(reward);
+
+        // Interaction
+        if (reward > 0) {
+            if (!stakingToken.transferFrom(msg.sender, address(this), reward)) {
+                revert StakingManager__TransferFailed();
+            }
+        }
+
         emit RewardRateUpdated(rewardRate);
+        emit RewardAdded(reward);
     }
 
     function setUnstakingCooldown(uint256 newCooldown) external onlyRole(DEFAULT_ADMIN_ROLE) {
