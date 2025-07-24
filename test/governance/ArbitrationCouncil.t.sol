@@ -16,7 +16,7 @@ import {
 
 // Mocks & Interfaces
 import {MockERC20} from "../mocks/MockERC20.sol";
-import {VRFCoordinatorV2Mock} from "@chainlink/contracts/src/v0.8/vrf/mocks/VRFCoordinatorV2Mock.sol";
+import {VRFCoordinatorV2_5Mock} from "@chainlink/contracts/src/v0.8/vrf/mocks/VRFCoordinatorV2_5Mock.sol";
 import {IVerifierManager} from "../../src/reputation-weighted/interfaces/IVerifierManager.sol";
 import {IReputationWeightedVerifier} from "../../src/reputation-weighted/interfaces/IReputationWeightedVerifier.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
@@ -156,7 +156,7 @@ contract ArbitrationCouncilTest is Test {
     MockERC20 internal aztToken;
     MockVerifierManager internal verifierManager;
     MockReputationWeightedVerifier internal repWeightedVerifier;
-    VRFCoordinatorV2Mock internal vrfCoordinator;
+    VRFCoordinatorV2_5Mock internal vrfCoordinator;
 
     // --- Users ---
     address internal admin;
@@ -192,9 +192,11 @@ contract ArbitrationCouncilTest is Test {
 
         // --- Deploy Mocks ---
         aztToken = new MockERC20("AZT", "AZT", 18);
-        vrfCoordinator = new VRFCoordinatorV2Mock(0, 0);
+        vrfCoordinator = new VRFCoordinatorV2_5Mock(0, 0, 1);
         verifierManager = new MockVerifierManager(address(aztToken));
         repWeightedVerifier = new MockReputationWeightedVerifier();
+
+        uint256 subId = vrfCoordinator.createSubscription();
 
         // --- Deploy and Initialize ArbitrationCouncil ---
         council = ArbitrationCouncil(
@@ -210,7 +212,7 @@ contract ArbitrationCouncilTest is Test {
                                 address(verifierManager),
                                 treasury,
                                 address(vrfCoordinator),
-                                1 // subscriptionId
+                                subId
                             )
                         )
                     )
@@ -227,9 +229,8 @@ contract ArbitrationCouncilTest is Test {
         council.setFraudThreshold(50);
         council.setKeeperBounty(KEEPER_BOUNTY);
 
-        vrfCoordinator.createSubscription();
-        vrfCoordinator.fundSubscription(1, 100 ether);
-        vrfCoordinator.addConsumer(1, address(council));
+        vrfCoordinator.fundSubscription(subId, 100 ether);
+        vrfCoordinator.addConsumer(subId, address(council));
 
         // --- Setup User State as Admin ---
         aztToken.mint(challenger, CHALLENGE_STAKE_AMOUNT);

@@ -8,7 +8,9 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../reputation-weighted/interfaces/IReputationWeightedVerifier.sol";
 import "../reputation-weighted/interfaces/IVerifierManager.sol";
-import "@chainlink/contracts/src/v0.8/vrf/interfaces/VRFCoordinatorV2Interface.sol";
+import {IVRFCoordinatorV2Plus} from "@chainlink/contracts/src/v0.8/vrf/dev/interfaces/IVRFCoordinatorV2Plus.sol";
+import {VRFConsumerBaseV2Upgradeable} from "@chainlink/contracts/src/v0.8/vrf/dev/VRFConsumerBaseV2Upgradeable.sol";
+import {VRFV2PlusClient} from "@chainlink/contracts/src/v0.8/vrf/dev/libraries/VRFV2PlusClient.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
@@ -32,32 +34,6 @@ error ArbitrationCouncil__FraudNotConfirmed();
 error ArbitrationCouncil__MerkleRootAlreadySet();
 error ArbitrationCouncil__MerkleRootCannotBeZero();
 error ArbitrationCouncil__InsufficientFundsForBounties();
-
-// --- Upgradeable VRF Consumer ---
-
-/**
- * @dev An upgradeable version of Chainlink's VRFConsumerBaseV2.
- * It replaces the constructor with an internal initializer function.
- */
-abstract contract VRFConsumerBaseV2Upgradeable {
-    error OnlyCoordinatorCanFulfill(address have, address want);
-
-    address internal s_vrfCoordinator;
-
-    function _initializeVRF(address vrfCoordinator) internal {
-        if (vrfCoordinator == address(0)) revert ArbitrationCouncil__ZeroAddress();
-        s_vrfCoordinator = vrfCoordinator;
-    }
-
-    function fulfillRandomWords(uint256 requestId, uint256[] memory randomWords) internal virtual;
-
-    function rawFulfillRandomWords(uint256 requestId, uint256[] memory randomWords) external {
-        if (msg.sender != s_vrfCoordinator) {
-            revert OnlyCoordinatorCanFulfill(msg.sender, s_vrfCoordinator);
-        }
-        fulfillRandomWords(requestId, randomWords);
-    }
-}
 
 /**
  * @title ArbitrationCouncil
@@ -123,8 +99,8 @@ contract ArbitrationCouncil is
     uint256 public keeperBounty; // AZE tokens rewarded to the address that calls resolveDispute
 
     // Chainlink VRF variables
-    VRFCoordinatorV2Interface public COORDINATOR;
-    uint64 public s_subscriptionId;
+    IVRFCoordinatorV2Plus public COORDINATOR;
+    uint256 public s_subscriptionId;
     bytes32 public s_keyHash;
     uint32 public s_callbackGasLimit;
     uint16 public s_requestConfirmations;
@@ -157,12 +133,12 @@ contract ArbitrationCouncil is
         address _verifierManager,
         address _treasury,
         address _vrfCoordinator,
-        uint64 _vrfSubscriptionId
+        uint256 _vrfSubscriptionId
     ) public initializer {
         __AccessControl_init();
         __UUPSUpgradeable_init();
         __ReentrancyGuard_init();
-        _initializeVRF(_vrfCoordinator);
+        __VRFConsumerBaseV2_init(_vrfCoordinator);
         _setDomainSeparator();
 
         _grantRole(DEFAULT_ADMIN_ROLE, initialAdmin);
@@ -173,7 +149,7 @@ contract ArbitrationCouncil is
         verifierManager = IVerifierManager(_verifierManager);
         treasury = _treasury;
 
-        COORDINATOR = VRFCoordinatorV2Interface(_vrfCoordinator);
+        COORDINATOR = IVRFCoordinatorV2Plus(_vrfCoordinator);
         s_subscriptionId = _vrfSubscriptionId;
         // Constants like callbackGasLimit, requestConfirmations, and keyHash are set by admin
     }
@@ -251,9 +227,16 @@ contract ArbitrationCouncil is
             revert ArbitrationCouncil__TransferFailed();
         }
 
-        uint256 requestId = COORDINATOR.requestRandomWords(
-            s_keyHash, s_subscriptionId, s_requestConfirmations, s_callbackGasLimit, uint32(councilSize)
-        );
+        VRFV2PlusClient.ExtraArgsV1 memory extraArgs = VRFV2PlusClient.ExtraArgsV1({nativePayment: false});
+        VRFV2PlusClient.RandomWordsRequest memory req = VRFV2PlusClient.RandomWordsRequest({
+            keyHash: s_keyHash,
+            subId: s_subscriptionId,
+            requestConfirmations: s_requestConfirmations,
+            callbackGasLimit: s_callbackGasLimit,
+            numWords: uint32(councilSize),
+            extraArgs: VRFV2PlusClient._argsToBytes(extraArgs)
+        });
+        uint256 requestId = COORDINATOR.requestRandomWords(req);
 
         vrfRequests[requestId] = VrfRequest({claimId: claimId, challenger: challenger, defendant: defendant});
 

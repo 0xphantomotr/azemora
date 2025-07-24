@@ -19,7 +19,7 @@ import {IProjectRegistry} from "../../src/core/interfaces/IProjectRegistry.sol";
 // Mocks & Tokens
 import {MockERC20} from "../mocks/MockERC20.sol";
 import {MockReputationManager} from "../mocks/MockReputationManager.sol";
-import {VRFCoordinatorV2Mock} from "@chainlink/contracts/src/v0.8/vrf/mocks/VRFCoordinatorV2Mock.sol";
+import {VRFCoordinatorV2_5Mock} from "@chainlink/contracts/src/v0.8/vrf/mocks/VRFCoordinatorV2_5Mock.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 contract FullSystemIntegrationTest is Test {
@@ -44,7 +44,6 @@ contract FullSystemIntegrationTest is Test {
     uint256 internal constant CHALLENGE_STAKE_AMOUNT = 50 * 1e18;
     uint256 internal constant ARBITRATION_COUNCIL_SIZE = 1;
     bytes32 internal constant REP_WEIGHTED_MODULE_TYPE = keccak256("REPUTATION_WEIGHTED_V1");
-    uint64 internal constant VRF_SUB_ID = 1;
     bytes32 internal constant VRF_KEY_HASH = keccak256("test key hash");
     uint32 internal constant VRF_CALLBACK_GAS_LIMIT = 500000;
     uint16 internal constant VRF_REQUEST_CONFIRMATIONS = 3;
@@ -59,7 +58,7 @@ contract FullSystemIntegrationTest is Test {
     MethodologyRegistry internal methodologyRegistry;
     ArbitrationCouncil internal arbitrationCouncil;
     MockERC20 internal aztToken;
-    VRFCoordinatorV2Mock internal vrfCoordinator;
+    VRFCoordinatorV2_5Mock internal vrfCoordinator;
 
     // --- Users ---
     address internal admin;
@@ -86,9 +85,9 @@ contract FullSystemIntegrationTest is Test {
 
         // 2. Deploy contracts with no cross-dependencies
         aztToken = new MockERC20("Azemora Token", "AZT", 18);
-        vrfCoordinator = new VRFCoordinatorV2Mock(0, 0);
-        vrfCoordinator.createSubscription();
-        vrfCoordinator.fundSubscription(VRF_SUB_ID, 1000 ether);
+        vrfCoordinator = new VRFCoordinatorV2_5Mock(0, 0, 1);
+        uint256 vrfSubId = vrfCoordinator.createSubscription();
+        vrfCoordinator.fundSubscription(vrfSubId, 1000 ether);
 
         reputationManager = new MockReputationManager();
         projectRegistry = ProjectRegistry(
@@ -131,7 +130,7 @@ contract FullSystemIntegrationTest is Test {
 
         // 4. INITIALIZE CONTRACTS NOW THAT ALL ADDRESSES ARE KNOWN
         arbitrationCouncil.initialize(
-            admin, address(aztToken), address(verifierManager), treasury, address(vrfCoordinator), VRF_SUB_ID
+            admin, address(aztToken), address(verifierManager), treasury, address(vrfCoordinator), vrfSubId
         );
         verifierManager.initialize(
             admin,
@@ -159,7 +158,7 @@ contract FullSystemIntegrationTest is Test {
         arbitrationCouncil.setCouncilSize(2);
         arbitrationCouncil.setVotingPeriod(VOTING_PERIOD);
 
-        vrfCoordinator.addConsumer(VRF_SUB_ID, address(arbitrationCouncil));
+        vrfCoordinator.addConsumer(vrfSubId, address(arbitrationCouncil));
         creditContract.grantRole(creditContract.DMRV_MANAGER_ROLE(), address(dMRVManager));
         creditContract.grantRole(creditContract.BURNER_ROLE(), address(dMRVManager));
         dMRVManager.grantRole(dMRVManager.REVERSER_ROLE(), address(repWeightedVerifier));
