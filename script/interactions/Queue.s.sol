@@ -4,41 +4,49 @@ pragma solidity ^0.8.20;
 import "forge-std/Script.sol";
 import "forge-std/console.sol";
 import {AzemoraGovernor} from "../../src/governance/AzemoraGovernor.sol";
-import {Treasury} from "../../src/governance/Treasury.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {DMRVManager} from "../../src/core/dMRVManager.sol";
 
 /**
  * @title QueueScript
  * @dev A script to queue a passed governance proposal.
  */
 contract QueueScript is Script {
-    function run(uint256 proposalId) external {
+    function run() external {
+        // --- Use the correct Proposal ID from the proposal script's output ---
+        uint256 proposalId = 6882719540068179991427622714661728303569774533887008696370161192431493079835;
+
         // --- Load Config ---
         address governorAddress = vm.envAddress("GOVERNOR_ADDRESS");
-        address treasuryAddress = vm.envAddress("TREASURY_ADDRESS");
-        address tokenAddress = vm.envAddress("TOKEN_ADDRESS");
-        uint256 proposerPrivateKey = vm.envUint("PRIVATE_KEY");
-        address proposerAddress = vm.addr(proposerPrivateKey);
+        address dMRVManagerAddress = vm.envAddress("DMRV_MANAGER_ADDRESS");
+        uint256 queuerPrivateKey = vm.envUint("PRIVATE_KEY");
 
-        // --- Re-calculate Proposal Details ---
-        // The calldata for the proposal needs to be reconstructed to get its hash.
-        uint256 amountToWithdraw = IERC20(tokenAddress).balanceOf(treasuryAddress);
-
-        address[] memory targets = new address[](1);
-        targets[0] = treasuryAddress;
-
-        uint256[] memory values = new uint256[](1);
-        values[0] = 0;
-
-        bytes[] memory calldatas = new bytes[](1);
-        calldatas[0] =
-            abi.encodeWithSelector(Treasury.withdrawERC20.selector, tokenAddress, proposerAddress, amountToWithdraw);
-
-        string memory description = "Proposal #1: Withdraw accumulated marketplace fees to the proposer's address.";
+        // --- Reconstruct Proposal Details to get the descriptionHash ---
+        string memory projectName = "My Test Reforestation Project";
+        bytes32 projectId = keccak256(abi.encodePacked(projectName));
+        uint256 amountToMint = 150 * 1e18;
+        string memory credentialCID = "ipfs://bafkreiapprovedcreditsforproject1";
+        string memory description = "Proposal: Mint 150 credits for My Test Reforestation Project";
         bytes32 descriptionHash = keccak256(bytes(description));
 
+        address[] memory targets = new address[](1);
+        targets[0] = dMRVManagerAddress;
+
+        uint256[] memory values = new uint256[](1); // 0 ETH
+
+        bytes[] memory calldatas = new bytes[](1);
+        calldatas[0] = abi.encodeWithSelector(
+            DMRVManager.adminSubmitVerification.selector,
+            projectId,
+            amountToMint,
+            credentialCID,
+            false // updateMetadataOnly
+        );
+
         // --- Queue the Proposal ---
-        vm.startBroadcast(proposerPrivateKey);
+        console.log("--- Queuing Proposal ---");
+        console.log("Proposal ID:", proposalId);
+
+        vm.startBroadcast(queuerPrivateKey);
 
         AzemoraGovernor governor = AzemoraGovernor(payable(governorAddress));
         governor.queue(targets, values, calldatas, descriptionHash);
@@ -46,6 +54,6 @@ contract QueueScript is Script {
         vm.stopBroadcast();
 
         console.log("\nProposal queued successfully!");
-        console.log("  Proposal ID:", proposalId);
+        console.log("Next Step: Wait for the timelock delay and then run 'Execute.s.sol'");
     }
 }

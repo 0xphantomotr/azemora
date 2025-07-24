@@ -4,67 +4,47 @@ pragma solidity ^0.8.20;
 import "forge-std/Script.sol";
 import "forge-std/console.sol";
 import {DMRVManager} from "../../src/core/dMRVManager.sol";
-import {IVerificationData} from "../../src/core/interfaces/IVerificationData.sol";
 
 /**
- * @title MintCreditScript
- * @dev A script to simulate the dMRV process by requesting and fulfilling verification.
- * This version uses the modular verification flow.
+ * @title AdminMintCreditScript
+ * @dev A script for an admin to directly mint impact credits, bypassing the module system.
+ * This is useful for testing, manual corrections, or for systems where an off-chain
+ * entity is the sole trusted verifier.
  */
-contract MintCreditScript is Script {
+contract AdminMintCreditScript is Script {
     function run() external {
         // --- Load Environment Variables ---
         address dMRVManagerAddress = vm.envAddress("DMRV_MANAGER_ADDRESS");
         if (dMRVManagerAddress == address(0)) {
             revert("DMRV_MANAGER_ADDRESS not set in .env file");
         }
-        string memory moduleTypeStr = vm.envString("MODULE_TYPE");
-        if (bytes(moduleTypeStr).length == 0) {
-            revert("MODULE_TYPE not set in .env file (e.g., MOCK_MODULE)");
-        }
-        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+        uint256 adminPrivateKey = vm.envUint("PRIVATE_KEY"); // The deployer has the admin role
 
         // --- Prepare Project Data ---
         string memory projectName = "My Test Reforestation Project";
         bytes32 projectId = keccak256(abi.encodePacked(projectName));
-        bytes32 claimId = keccak256(abi.encodePacked(projectId, block.timestamp)); // Simple unique claim ID
-        bytes32 moduleType = keccak256(abi.encodePacked(moduleTypeStr));
-        string memory evidenceURI = "ipfs://your-evidence-cid-goes-here";
+        uint256 amountToMint = 150 * 1e18; // Mint 150 credits
+        string memory credentialCID = "ipfs://bafkreiapprovedcreditsforproject1";
+
+        console.log("--- Admin Minting Credits ---");
+        console.log("   dMRVManager:", dMRVManagerAddress);
+        console.log("   Project ID: ", vm.toString(projectId));
+        console.log("   Amount:     ", amountToMint);
+        console.log("   Credential: ", credentialCID);
 
         DMRVManager dMRVManager = DMRVManager(dMRVManagerAddress);
 
-        // --- Execute Transactions in a single broadcast ---
-        vm.startBroadcast(deployerPrivateKey);
+        // --- Execute Transaction ---
+        vm.startBroadcast(adminPrivateKey);
 
-        // 1. Request verification
-        console.log("--- 1. Requesting Verification ---");
-        console.log("   Project ID:", vm.toString(projectId));
-        console.log("   Claim ID:  ", vm.toString(claimId));
-        console.log("   Module Type:", moduleTypeStr);
-        uint256 requestedAmount = 150 * 1e18; // Request 150 credits
-        dMRVManager.requestVerification(projectId, claimId, evidenceURI, requestedAmount, moduleType);
-        console.log("On-chain request created successfully.");
-
-        // 2. Fulfill verification (in a real scenario, this would be done by the module owner)
-        console.log("\n--- 2. Fulfilling Verification (Simulated by Deployer) ---");
-        uint256 quantitativeOutcome = 85; // Simulate an 85% outcome
-        string memory newMetaURI = "ipfs://bafkreinewmetadataforproject1";
-
-        IVerificationData.VerificationResult memory result = IVerificationData.VerificationResult({
-            quantitativeOutcome: quantitativeOutcome,
-            wasArbitrated: false,
-            arbitrationDisputeId: 0,
-            credentialCID: newMetaURI
-        });
-
-        console.log("Fulfilling with quantitative outcome:", quantitativeOutcome);
-        // Note: For this script to work, the calling address (deployer) must be registered
-        // as the module address for the given MODULE_TYPE in the dMRVManager.
-        dMRVManager.fulfillVerification(projectId, claimId, result);
+        // Directly mint credits using the admin-privileged function.
+        // The last parameter `updateMetadataOnly` is false because we want to mint new tokens.
+        dMRVManager.adminSubmitVerification(projectId, amountToMint, credentialCID, false);
 
         vm.stopBroadcast();
 
         console.log("\nCredit minting transaction sent successfully!");
-        console.log("You can now use the Marketplace script to list this credit for sale.");
+        console.log("The project owner now has 150 new credits.");
+        console.log("Next Step: Use the 'ListCredit.s.sol' script to put them on the marketplace.");
     }
 }

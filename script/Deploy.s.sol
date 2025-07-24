@@ -20,6 +20,7 @@ contract Deploy is Script {
         address deployerAddress = vm.addr(deployerPrivateKey);
         address treasuryAddress = vm.envAddress("TREASURY_ADDRESS");
         address paymentTokenAddress = vm.envAddress("TOKEN_ADDRESS");
+        address timelockAddress = vm.envAddress("TIMELOCK_ADDRESS");
 
         if (block.chainid == 31337) {
             vm.deal(deployerAddress, 100 ether);
@@ -29,7 +30,7 @@ contract Deploy is Script {
 
         // --- Deployment Sequence ---
         ProjectRegistry projectRegistry = _deployProjectRegistry();
-        MethodologyRegistry methodologyRegistry = _deployMethodologyRegistry();
+        MethodologyRegistry methodologyRegistry = _deployMethodologyRegistry(deployerAddress);
         DynamicImpactCredit dynamicImpactCredit = _deployDynamicImpactCredit(projectRegistry);
         DMRVManager dMRVManager = _deployDMRVManager(projectRegistry, dynamicImpactCredit, methodologyRegistry);
         Marketplace marketplace = _deployMarketplace(dynamicImpactCredit, AzemoraToken(payable(paymentTokenAddress)));
@@ -37,6 +38,17 @@ contract Deploy is Script {
         // --- Post-Deployment Configuration ---
         _configureRoles(dynamicImpactCredit, dMRVManager);
         _configureMarketplace(marketplace, treasuryAddress);
+
+        // --- Transfer Ownership to DAO ---
+        _transferOwnerships(
+            deployerAddress,
+            timelockAddress,
+            projectRegistry,
+            methodologyRegistry,
+            dynamicImpactCredit,
+            dMRVManager,
+            marketplace
+        );
 
         // --- Store Deployment Addresses ---
         DeploymentAddresses deploymentAddresses = _storeAddresses(
@@ -76,10 +88,10 @@ contract Deploy is Script {
         return ProjectRegistry(payable(address(proxy)));
     }
 
-    function _deployMethodologyRegistry() internal returns (MethodologyRegistry) {
+    function _deployMethodologyRegistry(address admin) internal returns (MethodologyRegistry) {
         console.log("Deploying MethodologyRegistry...");
         MethodologyRegistry impl = new MethodologyRegistry();
-        bytes memory initData = abi.encodeCall(MethodologyRegistry.initialize, (msg.sender));
+        bytes memory initData = abi.encodeCall(MethodologyRegistry.initialize, (admin));
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         return MethodologyRegistry(payable(address(proxy)));
     }
@@ -128,6 +140,35 @@ contract Deploy is Script {
         console.log("Setting Marketplace Treasury and Fee...");
         marketplace.setTreasury(treasury);
         marketplace.setProtocolFeeBps(250); // 2.5% fee
+    }
+
+    function _transferOwnerships(
+        address deployer,
+        address timelock,
+        ProjectRegistry projectRegistry,
+        MethodologyRegistry methodologyRegistry,
+        DynamicImpactCredit dynamicImpactCredit,
+        DMRVManager dMRVManager,
+        Marketplace marketplace
+    ) internal {
+        console.log("Transferring ownership of all contracts to the Timelock...");
+        bytes32 adminRole = 0x00; // DEFAULT_ADMIN_ROLE
+
+        // The Timelock (DAO) becomes the sole owner/admin of all application contracts.
+        projectRegistry.grantRole(adminRole, timelock);
+        projectRegistry.renounceRole(adminRole, deployer);
+
+        methodologyRegistry.grantRole(adminRole, timelock);
+        methodologyRegistry.renounceRole(adminRole, deployer);
+
+        dynamicImpactCredit.grantRole(adminRole, timelock);
+        dynamicImpactCredit.renounceRole(adminRole, deployer);
+
+        dMRVManager.grantRole(adminRole, timelock);
+        dMRVManager.renounceRole(adminRole, deployer);
+
+        marketplace.grantRole(adminRole, timelock);
+        marketplace.renounceRole(adminRole, deployer);
     }
 
     struct Addresses {

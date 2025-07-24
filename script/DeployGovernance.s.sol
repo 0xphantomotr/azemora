@@ -11,23 +11,33 @@ import {Treasury} from "../src/governance/Treasury.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 contract DeployGovernance is Script {
-    // --- Constants ---
-    uint256 private constant TIMELOCK_MIN_DELAY = 1 days; // 1 day delay
-    uint48 private constant GOVERNOR_VOTING_DELAY = 5760; // ~1 day in blocks (15s block time)
-    uint32 private constant GOVERNOR_VOTING_PERIOD = 40320; // ~7 days in blocks (15s block time)
-    uint256 private constant GOVERNOR_PROPOSAL_THRESHOLD = 0; // No minimum token balance to propose
+    // Sensible defaults for production
+    uint256 private constant DEFAULT_TIMELOCK_MIN_DELAY = 1 days;
+    uint48 private constant DEFAULT_GOVERNOR_VOTING_DELAY = 5760; // ~1 day in blocks (15s block time)
+    uint32 private constant DEFAULT_GOVERNOR_VOTING_PERIOD = 40320; // ~7 days in blocks (15s block time)
+    uint256 private constant DEFAULT_GOVERNOR_PROPOSAL_THRESHOLD = 0;
+    uint256 private constant DEFAULT_QUORUM_FRACTION = 4; // Default to 4%
 
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployerAddress = vm.addr(deployerPrivateKey);
 
+        // --- Load Config from .env ---
+        uint256 minDelay = vm.envOr("TIMELOCK_MIN_DELAY", DEFAULT_TIMELOCK_MIN_DELAY);
+        uint48 votingDelay = uint48(vm.envOr("GOVERNOR_VOTING_DELAY", DEFAULT_GOVERNOR_VOTING_DELAY));
+        uint32 votingPeriod = uint32(vm.envOr("GOVERNOR_VOTING_PERIOD", DEFAULT_GOVERNOR_VOTING_PERIOD));
+        uint256 proposalThreshold = vm.envOr("GOVERNOR_PROPOSAL_THRESHOLD", DEFAULT_GOVERNOR_PROPOSAL_THRESHOLD);
+        uint256 quorumFraction = vm.envOr("GOVERNOR_QUORUM_FRACTION", DEFAULT_QUORUM_FRACTION);
+
         vm.startBroadcast(deployerPrivateKey);
 
         // 1. Deploy Governance Contracts
         AzemoraToken token = _deployToken();
-        AzemoraTimelockController timelock = _deployTimelock(deployerAddress);
-        AzemoraGovernor governor = _deployGovernor(token, timelock);
-        Treasury treasury = _deployTreasury(address(governor));
+        AzemoraTimelockController timelock = _deployTimelock(deployerAddress, minDelay);
+        AzemoraGovernor governor =
+            _deployGovernor(token, timelock, votingDelay, votingPeriod, proposalThreshold, quorumFraction);
+        // CRITICAL: The Timelock must own the Treasury to enforce execution delays.
+        Treasury treasury = _deployTreasury(address(timelock));
 
         // 2. Configure Roles
         _configureRoles(timelock, governor);
@@ -50,12 +60,12 @@ contract DeployGovernance is Script {
         return AzemoraToken(payable(address(proxy)));
     }
 
-    function _deployTimelock(address admin) internal returns (AzemoraTimelockController) {
+    function _deployTimelock(address admin, uint256 minDelay) internal returns (AzemoraTimelockController) {
         console.log("Deploying AzemoraTimelockController...");
         AzemoraTimelockController impl = new AzemoraTimelockController();
         bytes memory initData = abi.encodeWithSelector(
             AzemoraTimelockController.initialize.selector,
-            TIMELOCK_MIN_DELAY,
+            minDelay,
             new address[](0), // No proposers initially
             new address[](0), // No executors initially
             admin // Deployer is admin to start
@@ -64,19 +74,24 @@ contract DeployGovernance is Script {
         return AzemoraTimelockController(payable(address(proxy)));
     }
 
-    function _deployGovernor(AzemoraToken token, AzemoraTimelockController timelock)
-        internal
-        returns (AzemoraGovernor)
-    {
+    function _deployGovernor(
+        AzemoraToken token,
+        AzemoraTimelockController timelock,
+        uint48 votingDelay,
+        uint32 votingPeriod,
+        uint256 proposalThreshold,
+        uint256 quorumFraction
+    ) internal returns (AzemoraGovernor) {
         console.log("Deploying AzemoraGovernor...");
         AzemoraGovernor impl = new AzemoraGovernor();
         bytes memory initData = abi.encodeWithSelector(
             AzemoraGovernor.initialize.selector,
             token,
             timelock,
-            GOVERNOR_VOTING_DELAY,
-            GOVERNOR_VOTING_PERIOD,
-            GOVERNOR_PROPOSAL_THRESHOLD
+            votingDelay,
+            votingPeriod,
+            proposalThreshold,
+            quorumFraction
         );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         return AzemoraGovernor(payable(address(proxy)));
