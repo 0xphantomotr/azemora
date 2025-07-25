@@ -12,7 +12,7 @@ import {AzemoraGovernor} from "../../src/governance/AzemoraGovernor.sol";
 contract VoteScript is Script {
     function run() external {
         // --- Use the correct hex value for the Proposal ID ---
-        uint256 proposalId = 6882719540068179991427622714661728303569774533887008696370161192431493079835;
+        uint256 proposalId = 46482692473281245105756105293512398332063573339722852850225954674196225401082;
 
         // --- Load Config ---
         address governorAddress = vm.envAddress("GOVERNOR_ADDRESS");
