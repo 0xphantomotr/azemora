@@ -26,8 +26,8 @@ contract ApproveProjectScript is Script {
         address verifierAddress = vm.addr(verifierPrivateKey);
 
         // --- Prepare Project Data ---
-        string memory projectName = "My Test Reforestation Project";
-        bytes32 projectId = keccak256(abi.encodePacked(projectName));
+        // --- MODIFICATION: Hardcode the specific Project ID from the successful registration ---
+        bytes32 projectId = 0x9ae32c048ebcac9031ac02cc0bfa46abc7ba897ebd5df4b96faede36d217bb13;
 
         console.log("--- Approving Project ---");
         console.log("Registry Contract:", projectRegistryAddress);

@@ -23,8 +23,9 @@ contract RegisterProjectScript is Script {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
 
         // --- Prepare Project Data ---
-        // In a real scenario, this would come from a trusted source or be uniquely generated.
-        string memory projectName = "My Test Reforestation Project";
+        // --- MODIFICATION: Make the project name unique by appending the timestamp ---
+        string memory uniqueSuffix = vm.toString(block.timestamp);
+        string memory projectName = string.concat("My Test Reforestation Project ", uniqueSuffix);
         bytes32 projectId = keccak256(abi.encodePacked(projectName));
         string memory metaURI = "ipfs://bafkreih2y7h2s6x5k5crvj3l3p5y6z4c6v2d7f4j3n2k1h4g5j6f7e8d9a";
 
