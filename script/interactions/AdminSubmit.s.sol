@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import { Script } from "forge-std/Script.sol";
-import { console } from "forge-std/console.sol";
-import { DMRVManager } from "../../src/core/dMRVManager.sol";
+import {Script} from "forge-std/Script.sol";
+import {console} from "forge-std/console.sol";
+import {DMRVManager} from "../../src/core/dMRVManager.sol";
 
 contract AdminSubmit is Script {
     function run() external {
@@ -27,4 +27,4 @@ contract AdminSubmit is Script {
 
         console.log("Admin submission successful!");
     }
-} 
+}

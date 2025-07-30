@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import { Script } from "forge-std/Script.sol";
-import { console } from "forge-std/console.sol";
-import { MethodologyRegistry } from "../../src/core/MethodologyRegistry.sol";
+import {Script} from "forge-std/Script.sol";
+import {console} from "forge-std/console.sol";
+import {MethodologyRegistry} from "../../src/core/MethodologyRegistry.sol";
 
 contract ApproveMethodology is Script {
     function run() external {
         address methodologyRegistryAddress = vm.envAddress("METHODOLOGY_REGISTRY_ADDRESS");
-        
+
         // The ID for the ReputationWeightedVerifier methodology
         bytes32 methodologyId = keccak256(bytes("ReputationWeightedVerifier_v2"));
         // The address of the deployed verifier module
@@ -27,10 +27,7 @@ contract ApproveMethodology is Script {
         // --- CORRECTED FUNCTION CALL ---
         // First, add the methodology to the registry with all required arguments
         MethodologyRegistry(methodologyRegistryAddress).addMethodology(
-            methodologyId,
-            moduleAddress,
-            schemaURI,
-            schemaHash
+            methodologyId, moduleAddress, schemaURI, schemaHash
         );
 
         // Second, approve it (as the DAO would)
@@ -40,4 +37,4 @@ contract ApproveMethodology is Script {
 
         console.log("Successfully approved the methodology.");
     }
-} 
+}

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import { Script } from "forge-std/Script.sol";
-import { console } from "forge-std/console.sol";
-import { DMRVManager } from "../../src/core/dMRVManager.sol";
+import {Script} from "forge-std/Script.sol";
+import {console} from "forge-std/console.sol";
+import {DMRVManager} from "../../src/core/dMRVManager.sol";
 
 contract SubmitVerification is Script {
     function run() external {
@@ -23,13 +23,7 @@ contract SubmitVerification is Script {
 
         vm.startBroadcast();
 
-        DMRVManager(dmrvManagerAddress).requestVerification(
-            projectId,
-            claimId,
-            evidenceURI,
-            amount,
-            methodologyId
-        );
+        DMRVManager(dmrvManagerAddress).requestVerification(projectId, claimId, evidenceURI, amount, methodologyId);
 
         vm.stopBroadcast();
 
@@ -40,4 +34,4 @@ contract SubmitVerification is Script {
         console.log(" -> Claim ID:");
         console.logBytes32(claimId);
     }
-} 
+}
