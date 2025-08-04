@@ -2,7 +2,6 @@
 pragma solidity ^0.8.20;
 
 import "./AzemoraSmartWallet.sol";
-import {IEntryPoint} from "@account-abstraction/interfaces/IEntryPoint.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 
 /**

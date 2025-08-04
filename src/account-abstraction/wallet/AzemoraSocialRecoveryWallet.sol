@@ -5,7 +5,7 @@ import {PackedUserOperation} from "@account-abstraction/interfaces/PackedUserOpe
 import {IEntryPoint} from "@account-abstraction/interfaces/IEntryPoint.sol";
 import {IAccount} from "@account-abstraction/interfaces/IAccount.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
 /**
  * @title AzemoraSocialRecoveryWallet

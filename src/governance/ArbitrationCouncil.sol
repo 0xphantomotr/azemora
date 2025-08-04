@@ -175,6 +175,12 @@ contract ArbitrationCouncil is
         keeperBounty = _bountyAmount;
     }
 
+    function setVerifierManager(address _verifierManager) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (address(verifierManager) != address(0)) revert("Already set");
+        if (_verifierManager == address(0)) revert("Cannot be zero address");
+        verifierManager = IVerifierManager(_verifierManager);
+    }
+
     function setCompensationMerkleRoot(bytes32 claimId, bytes32 merkleRoot) external onlyRole(COUNCIL_ADMIN_ROLE) {
         Dispute storage dispute = disputes[claimId];
         // Check 1: Dispute must be resolved

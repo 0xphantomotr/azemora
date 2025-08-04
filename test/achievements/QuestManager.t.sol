@@ -3,12 +3,14 @@ pragma solidity ^0.8.20;
 
 import {Test, console} from "forge-std/Test.sol";
 import {QuestManager} from "../../src/achievements/QuestManager.sol";
-import {IAchievementSBT, IQuestVerifier} from "../../src/achievements/QuestManager.sol";
 import {ReputationManager} from "../../src/achievements/ReputationManager.sol";
 import {TokenBalanceVerifier} from "../../src/achievements/verifiers/TokenBalanceVerifier.sol";
 import {NftHolderVerifier} from "../../src/achievements/verifiers/NftHolderVerifier.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IAchievementSBT} from "../../src/achievements/interfaces/IAchievementSBT.sol";
+import {IQuestVerifier} from "../../src/achievements/interfaces/IQuestVerifier.sol";
+import {IReputationManager} from "../../src/achievements/interfaces/IReputationManager.sol";
 
 // --- Mocks ---
 
@@ -46,10 +48,18 @@ contract MockAZE is IERC20 {
 }
 
 contract MockAchievementSBT is IAchievementSBT {
+    address public lastTo;
+    uint256 public lastAchievementId;
+    uint256 public lastAmount;
+    uint256 public mintCount;
     mapping(address => mapping(uint256 => uint256)) public userAchievements;
 
-    function mintAchievement(address user, uint256 achievementId) external {
-        userAchievements[user][achievementId]++;
+    function mintAchievement(address to, uint256 achievementId, uint256 amount) external {
+        lastTo = to;
+        lastAchievementId = achievementId;
+        lastAmount = amount;
+        mintCount++;
+        userAchievements[to][achievementId] += amount;
     }
 }
 

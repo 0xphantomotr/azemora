@@ -8,20 +8,9 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 // This is the corrected import path, pointing to the non-upgradeable library's file
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
-// Interfaces for contracts QuestManager interacts with
-interface IAchievementSBT {
-    function mintAchievement(address user, uint256 achievementId) external;
-}
-
-interface IReputationManager {
-    function addReputation(address user, uint256 amount) external;
-}
-
-// A generic interface for on-chain verification hooks
-interface IQuestVerifier {
-    function verify(address user) external view returns (bool);
-}
+import "./interfaces/IReputationManager.sol";
+import "./interfaces/IQuestVerifier.sol";
+import "./interfaces/IAchievementSBT.sol";
 
 /**
  * @title QuestManager
@@ -196,7 +185,8 @@ contract QuestManager is Initializable, AccessControlUpgradeable, UUPSUpgradeabl
         if (quest.rewardType == RewardType.AZE) {
             IERC20(quest.rewardContract).safeTransfer(user, quest.rewardIdOrAmount);
         } else if (quest.rewardType == RewardType.SBT) {
-            IAchievementSBT(quest.rewardContract).mintAchievement(user, quest.rewardIdOrAmount);
+            // For SBTs, the amount is typically 1
+            IAchievementSBT(quest.rewardContract).mintAchievement(user, quest.rewardIdOrAmount, 1);
         } else if (quest.rewardType == RewardType.REPUTATION) {
             IReputationManager(quest.rewardContract).addReputation(user, quest.rewardIdOrAmount);
         } else {
